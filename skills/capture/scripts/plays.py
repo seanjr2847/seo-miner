@@ -161,7 +161,7 @@ def fresh(conn, pid: int, keys: set[str]) -> str | None:
     ages = [a for a in (_age_days(p["created_at"]) for p in cur) if a is not None]
     if not ages or min(ages) >= PLAY_FRESH_DAYS:
         return None
-    return (f"할 일이 {int(min(ages))}일 전에 만든 그대로입니다(후보 페이지가 같습니다) — "
+    return (f"할 일이 {int(min(ages))}일 전에 만든 그대로입니다(후보 페이지가 같습니다). "
             f"{PLAY_FRESH_DAYS}일 안이라 다시 만들지 않습니다. 새로 만들려면 --force.")
 
 
@@ -430,7 +430,7 @@ def title_of(g: dict, ev: dict) -> str:
     labels = list(dict.fromkeys(str(o.get("label") or o["kind"]) for o in g["opps"]))
     n = len(g["keywords"])
     tail = " · ".join(labels[:2]) + (f" · 검색어 {n}개" if n else "")
-    return f"{name} — {tail}"
+    return f"{name}: {tail}"
 
 
 def render_markdown(p: dict) -> str:
@@ -455,7 +455,7 @@ def render_markdown(p: dict) -> str:
                                                         ("H1", "h1"))]
         if any(v.get("new") for _, v in pairs):
             L += ["## 지금 → 고친 값", "| 자리 | 지금 | 고친 값 |", "| --- | --- | --- |"]
-            L += [f"| {lab} | {x(v.get('now')) or '—'} | {x(v.get('new')) or '—'} |"
+            L += [f"| {lab} | {x(v.get('now')) or '-'} | {x(v.get('new')) or '-'} |"
                   for lab, v in pairs if v.get("new")]
             L.append("")
         if res.get("sections"):
@@ -474,18 +474,18 @@ def render_markdown(p: dict) -> str:
             L += ["## 기대 효과 (추정)", res["expected"], ""]
     our = ev.get("our") or {}
     L += ["## 증거 요약",
-          f"- 우리 페이지: title {x(our.get('title')) or '—'} · H1 {x(our.get('h1')) or '—'} · "
-          f"본문 {our.get('words') if our.get('words') is not None else '—'}단어 "
+          f"- 우리 페이지: title {x(our.get('title')) or '-'} · H1 {x(our.get('h1')) or '-'} · "
+          f"본문 {our.get('words') if our.get('words') is not None else '-'}단어 "
           f"(읽은 길: {our.get('fetched_via') or 'none'})"]
     for r in ev.get("serp") or []:
         mark = " (우리)" if r.get("is_own") else ""
         hs = f" · 소제목 {len(r['headings'])}개" if r.get("headings") else ""
-        L.append(f"- 「{x(r['keyword'], 60)}」 {r.get('position') or '—'}위 {r.get('domain') or ''}"
-                 f"{mark} — {x(r.get('title'), 120) or '—'}{hs}")
+        L.append(f"- 「{x(r['keyword'], 60)}」 {r.get('position') or '-'}위 {r.get('domain') or ''}"
+                 f"{mark} · {x(r.get('title'), 120) or '-'}{hs}")
     for a in ev.get("aio") or []:
         state = ("AI 요약 없음" if not a.get("present") else
                  "AI 요약에 인용됨" if a.get("cited") else "AI 요약에 인용 안 됨")
-        doms = f" — 인용된 곳: {', '.join(a['domains'][:5])}" if a.get("domains") else ""
+        doms = f" · 인용된 곳: {', '.join(a['domains'][:5])}" if a.get("domains") else ""
         L.append(f"- 「{x(a['keyword'], 60)}」 {state}{doms}")
     if ev.get("gaps"):
         L.append("- 상위 글엔 있고 우리엔 없는 소제목: " + " · ".join(x(h, 80) for h in ev["gaps"]))
@@ -530,12 +530,12 @@ def collect(project: str, *,
                                "할 일로 묶고 수정안을 씁니다. 발급: https://openrouter.ai/keys")
             ask = _ask_openrouter
         if n_max <= 0:
-            return st.noop(reason="plays_max=0 — 이번 달 할 일을 끄셨습니다")
+            return st.noop(reason="plays_max=0: 이번 달 할 일을 끄셨습니다")
 
         d = dashboard.gather(conn, p, gated=False)
         groups = candidates(d, limit=n_max, exclude=_held_pages(conn, p["id"]))
         if not groups:
-            return st.skip("할 일로 묶을 기회가 없습니다 — 고칠 페이지가 정해진 열린 기회"
+            return st.skip("할 일로 묶을 기회가 없습니다. 고칠 페이지가 정해진 열린 기회"
                            f"({', '.join(PLAY_KINDS)})가 없습니다. 먼저 gaps 를 돌리세요.")
         keys = {g["key"] for g in groups}
         why_fresh = None if force else fresh(conn, p["id"], keys)
@@ -768,7 +768,7 @@ def _selfcheck() -> None:
     assert ev["aio"] == [{"keyword": "구찌가방", "present": 1, "cited": 0,
                           "domains": ["a.com", "b.com"]}], ev["aio"]
     assert "junk" not in p0["result"] and p0["result"]["sections"][0]["h2"] == "가방 가격", p0["result"]
-    assert p0["title"].startswith("여성 가방 — ") and "검색어 3개" in p0["title"], p0["title"]
+    assert p0["title"].startswith("여성 가방: ") and "검색어 3개" in p0["title"], p0["title"]
     assert "## 지금 → 고친 값" in p0["markdown"] and "## 증거 요약" in p0["markdown"], p0["markdown"]
     assert abs(r.cost - (0.00125 + 0.02 + 0.02)) < 1e-4, r.cost
     assert sorted(p0["opp_ids"]) == sorted(o["id"] for o in bags["opps"]), p0["opp_ids"]

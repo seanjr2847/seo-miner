@@ -288,21 +288,11 @@ section.sec-quiet details.why { display:none; }
 /* 검색어 열이 양 끝으로 벌어지지 않게 — 숫자 열이 남는 폭을 먹지 않는다. */
 #devgap .kwcell { min-width:16ch; max-width:36ch; }
 
-/* 이 표는 여덟 칸이라 크롤 표(다섯 칸)보다 더 심하게 쪼개진다 — 같은 방식으로 쌓는다. */
+/* 이 표는 여덟 칸이라 좁은 화면에서 줄을 카드로 쌓는다 — 쌓는 규칙과 칸 라벨은 셸의
+   table(..., "cards") 가 갖는다(라벨은 머리글 글자에서 단다. 여기 CSS 에 다시 적으면 두 벌이다).
+   여기에는 이 표만의 보정만 둔다: 첫 칸 폭 제한을 푼다(점수 칸 보정은 아래 크롤 표 규칙과 한 벌). */
 @media (max-width:560px) {
-  #devgap .tw thead { display:none; }
-  #devgap .tw table, #devgap .tw tbody, #devgap .tw tr, #devgap .tw td { display:block; }
-  #devgap .tw tr { padding:10px 0; border-bottom:1px solid var(--line); }
-  #devgap .tw tr:last-child { border-bottom:0; }
-  #devgap .tw td { padding:2px 0; border-bottom:0; text-align:left; }
-  #devgap .tw td:first-child { margin-bottom:4px; max-width:none; }
-  #devgap .tw td:nth-child(2)::before { content:"모바일 "; color:var(--sub); }
-  #devgap .tw td:nth-child(3)::before { content:"데스크톱 "; color:var(--sub); }
-  #devgap .tw td:nth-child(4)::before { content:"순위차 "; color:var(--sub); }
-  #devgap .tw td:nth-child(5)::before { content:"모바일 노출 "; color:var(--sub); }
-  #devgap .tw td:nth-child(6)::before { content:"모바일 CTR "; color:var(--sub); }
-  #devgap .tw td:nth-child(7)::before { content:"데스크톱 CTR "; color:var(--sub); }
-  #devgap .tw td:nth-child(8)::before { content:"기회 "; color:var(--sub); }
+  #devgap .tw td:first-child { max-width:none; }
 }
 
 /* GA4 기기별 전환율 — 순위 격차만으로는 「페이지를 고쳐야 하나」가 안 나온다. 전환율을
@@ -356,20 +346,11 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
   white-space:nowrap; }
 #crawl .tw td:nth-child(4) { min-width:22ch; max-width:52ch; }
 /* 390px 에서 다섯 칸이 한 줄에 못 들어가 칸마다 서너 줄로 쪼개지고 URL 도 끊겼다.
-   머리글을 접고 줄을 카드처럼 쌓는다 — URL 은 이미 첫 칸이라 그대로 제목 줄이 되고,
-   나머지 칸은 라벨을 붙인다. */
+   줄을 카드처럼 쌓는다(셸의 table(..., "cards") — URL 은 첫 칸이라 제목 줄이 되고, 나머지 칸의
+   라벨은 머리글 글자에서 온다). 여기에는 이 표만의 보정만 둔다. */
 @media (max-width:560px) {
-  #crawl .tw thead { display:none; }
-  #crawl .tw table, #crawl .tw tbody, #crawl .tw tr, #crawl .tw td { display:block; }
-  #crawl .tw tr { padding:10px 0; border-bottom:1px solid var(--line); }
-  #crawl .tw tr:last-child { border-bottom:0; }
-  #crawl .tw td { padding:2px 0; border-bottom:0; text-align:left; }
-  #crawl .tw td:first-child { margin-bottom:4px; max-width:none; }
-  #crawl .tw td:nth-child(2)::before { content:"문제 종류 "; color:var(--sub); }
-  #crawl .tw td:nth-child(3)::before { content:"심각도 "; color:var(--sub); }
-  #crawl .tw td:nth-child(4)::before { content:"무엇이 "; color:var(--sub); }
+  #crawl .tw td:first-child { max-width:none; }
   #crawl .tw td:nth-child(4) { max-width:none; }
-  #crawl .tw td.num::before { content:"기회 "; color:var(--sub); }
   /* 점수 칸은 표에서 오른쪽 정렬 44px 블록이다 — 카드 줄에서는 라벨 옆에 붙인다. */
   #crawl .tw td.num .score, #devgap .tw td.num .score { display:inline; width:auto; font-size:var(--fs-2); }
   #crawl .tw td.num .score .u, #devgap .tw td.num .score .u { display:inline; margin-left:1px; }
@@ -426,7 +407,8 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
   <details class="why"><summary>구글 응답을 그대로 쓴다는 뜻</summary>
     <p>구글 URL 검사 API 의 응답 그대로입니다. 크롤해서 추정한 값이 아닙니다.
       <b>페이지 속도·깨진 링크·중복 메타는 여기 안 나옵니다.</b>
-      검사는 노출 상위 페이지부터 하고, 하루 할당은 2,000회입니다.</p></details>
+      검사는 노출 상위 페이지부터 하고, 구글의 하루 할당이 차면 거기서 멈춥니다.
+      남은 주소는 다시 검사할 때 이어서 채웁니다.</p></details>
 </section>
 
 <section id="crawl-sec" class="card" data-mode="manage">
@@ -477,7 +459,7 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
   </div>
   <div id="vitals"><div class="skel box"></div></div>
   <details class="why"><summary>현장과 실험실은 다른 숫자다</summary>
-    <p><b>현장</b>은 실제 크롬 사용자 28일치입니다 — 검색이 보는 값이 그것입니다.
+    <p><b>현장</b>은 실제 크롬 사용자 28일치입니다. 검색이 보는 값이 그것입니다.
       트래픽이 적은 페이지에는 없고, 그때는 사이트 전체 값이 대신 옵니다(표에
       그렇다고 적습니다). <b>실험실</b>은 지금 한 번 열어 잰 값이라, 고친 뒤 바로
       움직이는 유일한 숫자입니다. 현장 값은 28일이 지나야 따라옵니다.</p></details>
@@ -687,8 +669,8 @@ function stSummary(blocked) {
       : id === "crawl-sec" ? CR_SEV_CLS[stCrawlTop(CR_D || {}).sev] : "warn";
     if (n == null) quiet++; else if (n) hit++;
     const val = n == null ? "미검사" : !n ? "이상 없음" : `${num(n)}건`;
-    const tip = n == null ? `${label} — 아직 검사하지 않았습니다`
-      : !n ? `${label} — 검사했고 문제가 없습니다` : `${label} 문제 ${num(n)}건`;
+    const tip = n == null ? `${label}: 아직 검사하지 않았습니다`
+      : !n ? `${label}: 검사했고 문제가 없습니다` : `${label} 문제 ${num(n)}건`;
     const small = n == null ? "아직 검사하지 않았습니다" : (of && of.t) || "";
     // 막대 = 모수 대비 문제 비율. 모수를 모르는 줄은 막대 자리만 비워 두어 열이 안 흔들린다.
     const frac = n && of && of.n > 0 ? Math.min(1, (of.k == null ? n : of.k) / of.n) : 0;
@@ -751,7 +733,7 @@ function stPlan(d) {
   // live() 로 감싼 절은 박제본에서 셸이 뗀다 — 남는 문장만으로 "지금 상태"가
   // 읽혀야 한다. 그래서 앞 문장은 언제나 사실이고, 뒷문장만 행동을 전제한다.
   if (stop) return {stage: "index", label: stageRun("index"), primary: true,
-    msg: `색인 검사가 ${stop.why ? esc(stop.why) + " 때문에 " : ""}끝까지 못 돌았습니다.`
+    msg: `색인 검사가 ${stStopWhy(stop) ? stStopWhy(stop) + " 때문에 " : ""}끝까지 못 돌았습니다.`
        + live(" 다시 검사하면 남은 주소부터 이어서 채웁니다.")};
   if (!crawled) return {stage: "crawl", label: stageName("crawl"), primary: true,
     msg: "사이트를 아직 한 바퀴도 안 돌았습니다."
@@ -797,21 +779,27 @@ function stNext(plan) {
    정렬은 tbody 를 통째로 재배치한다 — 펼친 줄이 부모와 떨어지므로 머리글을 누르면 먼저 접는다. */
 function stExpClose(host) {
   host.querySelectorAll("tr.exp").forEach(t => t.remove());
-  host.querySelectorAll('tr.rw[aria-expanded="true"]')
-      .forEach(t => t.setAttribute("aria-expanded", "false"));
+  host.querySelectorAll('tr.rw[aria-expanded="true"]').forEach(t => {
+    t.setAttribute("aria-expanded", "false");
+    t.removeAttribute("aria-controls");
+  });
 }
 
+let ST_EXP_N = 0;
 function stExpToggle(tr, detail) {
   const nx = tr.nextElementSibling;
   if (nx && nx.classList.contains("exp")) {
     nx.remove();
+    tr.removeAttribute("aria-controls");
     return tr.setAttribute("aria-expanded", "false");
   }
   tr.setAttribute("aria-expanded", "true");
   // 펼침 내용은 detail() 이 통째로 만든다 — 셸의 oppPanel() 은 이미 .det 를 달고
   // 나오므로 여기서 한 겹 더 두르면 같은 들여쓰기가 두 번 걸린다.
+  const id = "st-exp-" + (++ST_EXP_N);
   tr.insertAdjacentHTML("afterend",
-    `<tr class="exp"><td colspan="${tr.cells.length}">${detail(tr.dataset.k)}</td></tr>`);
+    `<tr class="exp" id="${id}"><td colspan="${tr.cells.length}">${detail(tr.dataset.k)}</td></tr>`);
+  tr.setAttribute("aria-controls", id);
 }
 
 function stExpBind(host, detail) {
@@ -830,7 +818,9 @@ function stExpBind(host, detail) {
 }
 
 // 행 하나가 여는 손잡이 — 표를 그리는 쪽은 이 속성만 달면 된다.
-const stRw = k => `class="rw" tabindex="0" role="button" aria-expanded="false"` +
+/* tr 에 role="button" 을 달면 표의 행·칸 의미가 사라져 스크린리더가 열 머리를 못 읽는다 —
+   행은 행으로 두고 펼침 상태(aria-expanded)와 펼친 줄(aria-controls)만 말한다. */
+const stRw = k => `class="rw" tabindex="0" aria-expanded="false"` +
   ` data-k="${esc(k)}" title="눌러서 무엇을 어떻게 고칠지 보기"`;
 
 /* ── 기회 한 벌에 물리기 ────────────────────────────────────────────
@@ -857,7 +847,7 @@ const ST_OPP_H = "기회?100점 만점으로 매긴 점수입니다. 세 표를 
   " 표는 이 순서로 서 있고, 눌러서 펼치면 왜 걸렸고 뭘 하면 되는지가 나옵니다.";
 
 /* ── 색인 상태 ──────────────────────────────────────────── */
-// bucket 라벨·심각도·고칠 곳. 원문 bucket 은 title 로 남긴다(scoring.index_issues 와 대조용).
+// bucket 라벨·심각도·고칠 곳. 원문 bucket(내부 식별자)은 사용자 툴팁에 내지 않는다 — title 은 사람 말(ST_IX_PLAY.what).
 // sev 1 = 막혀서 절대 색인 안 됨, 2 = 색인은 되는데 엉뚱한 URL 로, 3 = 아직 안 됨.
 // 순서는 scoring 이 정렬해 준 순서 그대로다 — 손대는 차례가 곧 심각도다.
 const ST_IX = {
@@ -896,6 +886,8 @@ function stIxChecked(d) {
    사용자는 그게 전부인 줄 안다. **실패했는가**의 정본은 셸의 runFailed 다(중단
    표시도, 프로세스가 죽어 finished_at 이 없는 것도 그쪽이 안다) — 화면은 그 판정을
    받아 사유 문구만 싣는다. */
+// 중단 사유 원문(run_verdict 가 만든 것)에서 끝 마침표를 뗀 토막. 두 자리(색인 띠·표 위 상자)가 같은 문장을 만든다.
+const stStopWhy = stop => stop && stop.why ? esc(stop.why.replace(/[.\s]+$/, "")) : "";
 function stIxStop(d) {
   const r = window.runFailed ? window.runFailed("index", d) : null;
   if (!r) return null;
@@ -999,7 +991,7 @@ function stIxHead() {
   for (const r of ST_IX_ROWS) counts[r.bucket] = (counts[r.bucket] || 0) + 1;
   const chips = ST_IX_ORDER.filter(b => counts[b]).map(b =>
     `<button class="chip ixchip s${ST_IX[b].sev}${ST_IX_B === b ? " on" : ""}"
-       data-b="${esc(b)}" onclick="stIxChip(this)" title="${esc(b)}"
+       data-b="${esc(b)}" onclick="stIxChip(this)" title="${esc((ST_IX_PLAY[b] || {}).what || ST_IX[b].label)}"
        aria-pressed="${ST_IX_B === b}"><em class="sw"></em>${esc(ST_IX[b].label)}
        <b>${counts[b]}</b></button>`).join("");
   stTools("ix-tools",
@@ -1024,7 +1016,7 @@ function stIxHead() {
 let ST_IX_STOP = null;
 const stIxStopBox = stop => !stop ? "" :
   `<div class="empty err"><b>색인 검사가 끝까지 못 돌았습니다</b>
-     <p>${stop.why ? esc(stop.why) + " — " : ""}여기까지 받은 것만 아래에 있습니다.${live(" 다시 검사하면 남은 주소부터 이어서 채웁니다.")}</p>
+     <p>${stStopWhy(stop) ? stStopWhy(stop) + ". " : ""}여기까지 받은 것만 아래에 있습니다.${live(" 다시 검사하면 남은 주소부터 이어서 채웁니다.")}</p>
      ${stAct("index", stageRun("index"))}</div>`;
 
 function stIxList() {
@@ -1044,10 +1036,10 @@ function stIxList() {
     list.map(r => {
       const b = ST_IX[r.bucket] || {label:r.bucket, sev:3};
       return `<tr ${stRw(r.url)}>
-        <td class="ixb s${b.sev}" title="${esc(r.bucket)}"><span class="badge ${
+        <td class="ixb s${b.sev}" title="${esc((ST_IX_PLAY[r.bucket] || {}).what || b.label)}"><span class="badge ${
           b.sev === 1 ? "bad" : b.sev === 2 ? "warn" : "muted"}">${esc(b.label)}</span></td>
         <td class="ixurl">${stUrl(r.url)}</td>
-        <td class="ixstate">${esc(r.coverage_state || r.verdict || "—")}</td>
+        <td class="ixstate">${esc(r.coverage_state || r.verdict || "-")}</td>
         <td class="ixfix">${esc(r.detail)}</td>${stOppCell(r.url)}</tr>`;
     }));
 }
@@ -1099,7 +1091,7 @@ function stIxDetail(url) {
   if (!r) return "";
   // 구글이 뭐라고 답했는지는 어느 쪽으로 가든 먼저 말한다 — 이 화면의 유일한 근거다.
   const said = [r.coverage_state, r.verdict].filter(Boolean).map(esc).join(" · ");
-  const head = `<p class="detn">구글 응답: ${said || "—"}</p>` +
+  const head = `<p class="detn">구글 응답: ${said || "-"}</p>` +
     (r.detail ? `<p class="detw">${esc(r.detail)}</p>` : "");
   const o = oppOf(url);
   if (o) return stOppDet(head, o);
@@ -1112,7 +1104,7 @@ function stIxDetail(url) {
     ${pageFix(ST_AUDITS[url], url)}
     ${askBlock({shape: "technical", url, audit: ST_AUDITS[url], acts: p.acts, queries: [],
                 deliver: ST_IX_DELIVER[r.bucket] || ST_IX_DELIVER._,
-                problem: `색인 문제(${esc(r.bucket)}) — ${r.detail || p.what || ""}`})}
+                problem: `색인 문제(${esc(r.bucket)}): ${r.detail || p.what || ""}`})}
     <p class="detn">이 URL 은 기회 목록에 없어 상태(완료·제외)를 못 답니다.
       기회는 마지막 채점 때 만들어집니다.</p></div>`;
 }
@@ -1219,7 +1211,7 @@ function stDevList() {
         <i class="dgap" style="width:${(r.dpos / mx * 100).toFixed(0)}%"></i></td>
       <td class="num">${num(r.mobile_imp)}</td>
       <td class="num">${r.mobile_ctr}%</td>
-      <td class="num">${r.desktop_ctr}%</td>${stOppCell(r.query)}</tr>`));
+      <td class="num">${r.desktop_ctr}%</td>${stOppCell(r.query)}</tr>`), "", "cards");
   stDevMark();   // 목록이 통째로 갈렸다 — 서랍이 떠 있으면 그 줄을 다시 표시한다
 }
 
@@ -1301,10 +1293,10 @@ function stDevDetail(q) {
     ${url ? `<p class="detw">고칠 페이지: <a href="${esc(url)}" target="_blank"
       rel="noopener">${esc(url)}</a></p>${pageFix(ST_AUDITS[url], url)}` : ""}
     ${askBlock({shape: "technical", url, audit: ST_AUDITS[url], acts: ST_DEV_PLAY.acts,
-                deliver: ["모바일에서 고칠 것 목록 — 레이아웃·이미지 크기 지정·지연 로드·전면 팝업(코드/설정 수준)",
+                deliver: ["모바일에서 고칠 것 목록: 레이아웃·이미지 크기 지정·지연 로드·전면 팝업(코드/설정 수준)",
                           "첫 화면에 무엇이 보여야 하는지",
                           "가로로 넘치는 표·코드 블록 처리 방법"],
-                problem: `모바일 격차 — 모바일 ${stP1(r.mobile_pos)}위 vs 데스크톱 `
+                problem: `모바일 격차: 모바일 ${stP1(r.mobile_pos)}위 vs 데스크톱 `
                          + `${stP1(r.desktop_pos)}위, 모바일 CTR ${r.mobile_ctr}%`,
                 queries: [{q, note: `모바일 노출 ${num(r.mobile_imp)}`}]})}
     <p class="detn">이 검색어는 기회 목록에 없어 상태(완료·제외)를 못 답니다.
@@ -1345,7 +1337,7 @@ function stDevChart(d) {
     {width: 320, unit: "%"});
   return `<div class="devchart"><p class="devchart-t">전환율 · GA4 사이트 전체</p>${cvrCh}
       <p class="kp-note"><span class="nw">데스크톱 <b>${kCvr}%</b></span> ·
-        <span class="nw">모바일 <b>${mCvr}%</b></span>${same ? " — 기기별 차이가 거의 없습니다" : ""}</p></div>` + (mCvr < kCvr
+        <span class="nw">모바일 <b>${mCvr}%</b></span>${same ? " · 기기별 차이가 거의 없습니다" : ""}</p></div>` + (mCvr < kCvr
     ? `<p class="devchart-verdict">모바일이 순위도 ${stP1(pos.d)}위 → ${stP1(pos.m)}위로 아래고
       전환율도 ${kCvr}% → ${mCvr}%로 아래입니다. 순위가 아니라 <b>페이지 자체를 의심</b>할 자리입니다.</p>`
     : "");
@@ -1359,8 +1351,7 @@ function stKpDev(d) {
       같은 검색어가 폰에서만 밀리는지 나옵니다.</p>`);
   const n = ST_DEV_ROWS.length;
   if (!n)
-    return stKp(J, T, `<div class="kp-v">0<small>개</small></div>
-      <div class="kp-pills"><span class="badge ok">모바일에서만 밀리는 검색어 없음</span></div>
+    return stKp(J, T, `<div class="kp-v">0<small>개, 모바일에서만 밀리는 검색어 없음</small></div>
       <p class="kp-note">${stNw(esc(d.device_date))} 기준 · 모바일 노출 ${num(RULES.device_min_imp)} 이상</p>`);
   const p = stDevPos();
   const imp = ST_DEV_ROWS.reduce((a, r) => a + (r.mobile_imp || 0), 0);
@@ -1370,7 +1361,7 @@ function stKpDev(d) {
     const hi = Math.max(p.m, p.d) * 1.12 || 1;
     const a = Math.min(p.m, p.d) / hi * 100, b = Math.max(p.m, p.d) / hi * 100;
     viz = `<div class="kp-viz"><div class="dbl" role="img"
-        aria-label="이 표에 걸린 검색어의 평균 순위 — 데스크톱 ${stP1(p.d)}위, 모바일 ${stP1(p.m)}위">
+        aria-label="이 표에 걸린 검색어의 평균 순위: 데스크톱 ${stP1(p.d)}위, 모바일 ${stP1(p.m)}위">
         <u style="left:${a.toFixed(1)}%;width:${(b - a).toFixed(1)}%"></u>
         <i style="left:${(p.d / hi * 100).toFixed(1)}%"></i>
         <i class="m" style="left:${(p.m / hi * 100).toFixed(1)}%"></i></div>
@@ -1433,10 +1424,10 @@ function renderDevice(d) {
 const VIT_DEV = {mobile: "모바일", desktop: "데스크톱"};
 const stEmptyKp = (id, jump, title, msg) =>
   $(id).innerHTML = stKp(jump, title, `<p class="kp-empty">${msg}</p>`);
-const vitSec = ms => (ms === null || ms === undefined) ? "—" : (ms / 1000).toFixed(1) + "초";
+const vitSec = ms => (ms === null || ms === undefined) ? "-" : (ms / 1000).toFixed(1) + "초";
 // 기준을 넘긴 값만 빨갛게. 안 잰 값(null)은 통과도 실패도 아니다 — 회색으로 둔다.
 const vitCell = (v, good, fmt) => (v === null || v === undefined)
-  ? `<td class="num muted">—</td>`
+  ? `<td class="num muted">-</td>`
   : `<td class="num ${v > good ? "bad" : "ok"}">${fmt(v)}</td>`;
 
 function vitRows(d) {
@@ -1459,23 +1450,30 @@ function stKpVit(d, rows, over, when) {
   }).filter(Boolean).sort((a, b) => b.L - a.L).slice(0, 16);
   const mx = Math.max(lcp * 1.25, ...vals.map(v => v.L));
   const viz = vals.length ? `<div class="kp-viz"><div class="vcol" role="img"
-      aria-label="LCP ${vals.length}건 — 기준 ${vitSec(lcp)}, 가장 느린 것 ${vitSec(vals[0].L)}">
+      aria-label="LCP ${vals.length}건, 기준 ${vitSec(lcp)}, 가장 느린 것 ${vitSec(vals[0].L)}">
       ${vals.map(v => `<i class="${v.L > lcp ? "over" : ""}" style="height:${(v.L / mx * 100).toFixed(1)}%"
         title="${esc(v.u)} · ${esc(VIT_DEV[v.dev] || v.dev)} · ${vitSec(v.L)}"></i>`).join("")}
       <u style="bottom:${(lcp / mx * 100).toFixed(1)}%"></u></div>
       <p class="kp-note">가로선이 LCP 기준 ${vitSec(lcp)}입니다.</p></div>` : "";
   return stKp("vit-sec", "속도", `<div class="kp-v">${num(over.length)}<small>${
-      over.length ? "건이 기준을 넘김" : "건 — 전부 기준 안"}</small></div>
+      over.length ? "건이 기준을 넘김" : "건, 전부 기준 안"}</small></div>
     <p class="kp-note">${when} 기준 · 잰 ${num(rows.length)}건${
       vals.length ? ` · 가장 느린 LCP ${vitSec(vals[0].L)}` : ""}</p>${viz}`);
 }
 
 /* 못 잰 행 — 표(기준 넘김만 그린다)에도 카드에도 안 들어가 「잰 10건 전부 기준 안」이
    되던 자리다(noti: 10건 중 9건이 NO_FCP). 잰 것만 세고, 못 잰 것은 사유를 **한 번만**
-   말한다. 사유 원문은 collect_vitals 가 사람 말로 적는다("측정 불가(NO_FCP) — …"). */
+   말한다. 사유는 collect_vitals 가 사람이 읽을 완성 문장으로 적고(page_vitals.error), 화면은
+   그 문장을 쪼개지 않고 통째로 보여 준다 — 구분자를 되짚으면 서버 문구가 바뀔 때 말없이 깨진다. */
 function vitMissWhy(miss) {
-  const e = String(miss[0][2].error || "");
-  return (e.includes(" — ") ? e.slice(e.indexOf(" — ") + 3) : e).replace(/[.\s]+$/, "") + ".";
+  const e = vitMissOld(String(miss[0][2].error || "").trim());
+  return /[.)]$/.test(e) ? e : e + ".";
+}
+/* 옛 행 호환 — 서버가 em dash 를 쓰던 때 저장된 "측정 불가(NO_FCP) \u2014 사유 \u2014 사유" 꼴.
+   다음 측정이 그 행을 덮어쓰면 쓸 일이 없다. 새 행과 같은 문장("사유. 사유. (측정기 코드 NO_FCP)")으로 편다. */
+function vitMissOld(e) {
+  const m = /^측정 불가\((\w+)\) \u2014 (.*)$/.exec(e);
+  return m ? m[2].replace(/ \u2014 /g, ". ") + ". (측정기 코드 " + m[1] + ")" : e;
 }
 function vitMissNote(miss) {
   return miss.length ? ` · 못 잰 ${num(miss.length)}건` + hint(vitMissWhy(miss)) : "";
@@ -1544,7 +1542,7 @@ function renderVitals(d) {
         + vitCell(f ? r.field_lcp_ms : r.lab_lcp_ms, lcp, vitSec)
         + vitCell(r.field_inp_ms, inp, v => v + "ms")
         + vitCell(f ? r.field_cls : r.lab_cls, cls, v => v)
-        + `<td class="num">${r.lab_score ?? "—"}</td><td class="micro">${esc(src)}</td></tr>`;
+        + `<td class="num">${r.lab_score ?? "-"}</td><td class="micro">${esc(src)}</td></tr>`;
     }), ""));
 }
 
@@ -1615,7 +1613,7 @@ function renderGoogleSeo(d) {
      ">점수?구글 Lighthouse SEO 점수(0~100).", "고칠 항목?항목에 마우스를 올리면 무엇을 고칠지와 예시가 보입니다."],
     rows.map(r => `<tr><td>${stUrl(r.url)}</td>`
       + `<td>${T[r.url] ? esc(T[r.url]) : '<span class="muted">검색결과에 없음</span>'}</td>`
-      + `<td class="num">${r.score ?? "—"}</td><td>${fixes(r)}</td></tr>`), ""));
+      + `<td class="num">${r.score ?? "-"}</td><td>${fixes(r)}</td></tr>`), ""));
 }
 
 // 펼침이 읽는 재료 — 표 행에는 없고 payload 에만 있다.
@@ -1637,7 +1635,7 @@ const CR_SEV = {bad: "심각", warn: "권고", info: "참고"};
 // 셸의 권고 배지(.badge.adv)가 그 자리다.
 const CR_SEV_CLS = {bad: "bad", warn: "adv", info: "muted"};
 const CR_sev = sev => `<span class="badge ${CR_SEV_CLS[sev] || "muted"}">`
-  + `${esc(CR_SEV[sev] || sev || "—")}</span>`;
+  + `${esc(CR_SEV[sev] || sev || "-")}</span>`;
 
 let CR_D = null;
 let CR_PICK = "";                 // "" = 전체
@@ -1686,7 +1684,8 @@ function CR_rows(d) {
   const rest = rows.length - CR_N;
   return (table(["URL", "문제 종류", "심각도", "무엇이", ST_OPP_H], rows.slice(0, CR_N),
     CR_PICK ? "<b>이 종류에는 없습니다</b><p>위 칩에서 전체를 고르면 다시 보입니다.</p>"
-            : "<b>이번 크롤에서 걸린 것이 없습니다</b><p>다시 크롤하면 새로 깨진 것만 여기 쌓입니다.</p>")
+            : "<b>이번 크롤에서 걸린 것이 없습니다</b><p>다시 크롤하면 새로 깨진 것만 여기 쌓입니다.</p>",
+    "cards")
     // 누르면 늘어나는 수와 남은 수를 가른다 — 「437건 더 보기」인데 50건만 펴졌다(10회차).
     + (rest > 0 ? `<div class="acts"><button class="go sec sm" onclick="CR_more()">${
         num(Math.min(CR_STEP, rest))}건 더 보기 (남은 ${num(rest)}건)</button></div>` : ""));
@@ -1707,7 +1706,7 @@ function CR_detail(k) {
   if (o) return stOppDet("", o);
   // 왜 버튼이 없는지를 말한다 — 없는 이유를 안 적으면 고장으로 읽힌다.
   const no = r.severity === "bad"
-    ? "이번 회차 기회 목록(심각한 것 20건까지)에는 안 들어갔습니다. 표에는 그대로 남습니다."
+    ? "이번 회차 기회 목록에는 안 들어갔습니다(심각한 것도 목록 상한 안에서만 올라갑니다). 표에는 그대로 남습니다."
     : `심각도 ${esc(CR_SEV[r.severity] || r.severity || "")} 는 기회 목록에 올리지 않습니다. `
       + "심각한 것부터 줄 세우려고 그렇게 잘랐습니다. 여기서 바로 고치면 됩니다.";
   const why = (CR_KIND[r.kind] || [, ""])[1];
@@ -1749,7 +1748,7 @@ function CR_csv() {
    .cr-diff 는 가로로 흐르는 배지 줄이라 목록은 한 줄을 통째로 쓴다. */
 const CR_fixed = f => !f.length ? "" :
   `<details style="flex-basis:100%"><summary>해결된 ${f.length}건이 무엇이었는지 보기</summary>
-     <ul class="deta">${f.map(x => `<li>${esc(CR_label(x.kind))} —
+     <ul class="deta">${f.map(x => `<li>${esc(CR_label(x.kind))}:
        <span class="cr-url">${esc(x.url || "")}</span></li>`).join("")}</ul></details>`;
 
 // 회차 비교 — 이 섹션의 결론. 첫 바퀴에는 비교할 게 없다고 그대로 말한다.
@@ -1776,10 +1775,9 @@ function stKpCrawl(d) {
   const crn = CR_all().length, cmp = c.compare || {}, cnt = CR_counts(d);
   const nw = (cmp.new || []).filter(x => !CR_INTL.has(x.kind)).length,
     fx = (cmp.fixed || []).filter(x => !CR_INTL.has(x.kind)).length;
-  const pills = !crn ? `<span class="badge ok">걸린 것 없음</span>` : cmp.prev_run_id
-    ? `<span class="badge ${nw ? "warn" : "muted"}">새로 생긴 ${num(nw)}건</span>`
-      + `<span class="badge ${fx ? "ok" : "muted"}">해결 ${num(fx)}건</span>`
-    : `<span class="badge muted">첫 크롤</span>`;
+  // 회차 비교는 아래 섹션의 .cr-diff 가 배지로 말한다 — 여기서 같은 배지를 또 세우지 않고 글 한 줄로만 요약한다.
+  const vs = !crn ? "" : cmp.prev_run_id
+    ? ` · 직전 대비 새로 생긴 ${num(nw)}건, 해결 ${num(fx)}건` : " · 첫 크롤";
   const sev = {}, sc = {bad: 0, warn: 0, info: 0};
   for (const r of CR_all()) { sev[r.kind] = sev[r.kind] || r.severity; sc[r.severity] = (sc[r.severity] || 0) + 1; }
   const top = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]).slice(0, 3);
@@ -1790,8 +1788,8 @@ function stKpCrawl(d) {
     + top.map(k => `<div class="kpl s-${sev[k] || "info"}"><i></i><span title="${esc(CR_label(k))}">${
       esc(CR_label(k))}</span><b>${num(cnt[k])}건</b></div>`).join("") : "";
   return stKp(J, T, `<div class="kp-v">${num(crn)}<small>건 걸림</small></div>
-    <p class="kp-note">${num(c.run.pages)}쪽을 돌았습니다 · ${esc(String(c.run.finished_at || "").slice(0, 10))}</p>
-    <div class="kp-pills">${pills}</div>${bars ? `<div class="kp-viz">${bars}</div>` : ""}`);
+    <p class="kp-note">${num(c.run.pages)}쪽을 돌았습니다 · ${esc(String(c.run.finished_at || "").slice(0, 10))}${vs}</p>
+    ${bars ? `<div class="kp-viz">${bars}</div>` : ""}`);
 }
 
 function renderCrawl(d) {
@@ -1844,7 +1842,7 @@ function renderIntl(d) {
   stSec("intl-sec", total);
   $("intl-sub").innerHTML = !total
     ? `언어 판 사이의 이음매(번역·링크·hreflang)를 크롤로 봤고 걸린 것이 없습니다.`
-    : `언어 판 사이의 이음매를 크롤로 봤습니다 — <b>${num(Object.keys(cnt).length)}갈래 ${num(total)}건</b>.`
+    : `언어 판 사이의 이음매를 크롤로 봤습니다. <b>${num(Object.keys(cnt).length)}갈래 ${num(total)}건</b>.`
       + hint("갈래마다 왜 문제인지와 걸린 자리를 적었습니다. 위치 페이지의 주소처럼 일부러 남긴 원문이면 그대로 둬도 됩니다.");
   if (!total) { $("intl").innerHTML = stOk("크롤한 언어 판 전부"); return; }
   const rank = k => ({bad: 0, warn: 1}[(rows.find(r => r.kind === k) || {}).severity] ?? 2);
@@ -1852,7 +1850,7 @@ function renderIntl(d) {
     const mine = rows.filter(r => r.kind === k);
     const sev = (mine[0] || {}).severity;
     const line = r => `<li><span class="cr-url">${esc(r.url || "")}</span>${
-      r.detail ? ` — ${esc(r.detail)}` : ""}</li>`;
+      r.detail ? `: ${esc(r.detail)}` : ""}</li>`;
     const head = mine.slice(0, IN_SHOW).map(line).join("");
     const rest = mine.slice(IN_SHOW);
     return `<div class="in-k"><p class="in-h"><b>${esc(CR_label(k))}</b> ${CR_sev(sev)}
@@ -1945,14 +1943,14 @@ function renderPagePerf(d) {
     PG_GA4 ? PG_PERF_HEAD.concat(PG_PERF_HEAD_GA4) : PG_PERF_HEAD,
     PG_PERF.map(r =>
     `<tr><td class="pgurl">${stUrl(r.page, {link: true})}</td>
-     <td class="num">${r.dclk == null ? "—" : (delta(r.dclk) || "0")}</td>
+     <td class="num">${r.dclk == null ? "-" : (delta(r.dclk) || "0")}</td>
      <td class="num">${num(r.clicks)}</td>
      <td class="num">${num(r.impressions)}</td>
      <td class="num">${r.ctr}%</td>
-     <td class="num">${r.position ?? "—"}</td>
+     <td class="num">${r.position ?? "-"}</td>
      <td class="num">${num(r.queries)}</td>${PG_GA4 ?
-       `<td class="num">${r.sessions == null ? "—" : num(r.sessions)}</td>
-        <td class="num">${r.key_events == null ? "—" : num(r.key_events)}</td>` : ""}</tr>`)));
+       `<td class="num">${r.sessions == null ? "-" : num(r.sessions)}</td>
+        <td class="num">${r.key_events == null ? "-" : num(r.key_events)}</td>` : ""}</tr>`)));
 }
 
 /* ── 아무도 안 오는 페이지 ─────────────────────────────── */
@@ -2000,10 +1998,10 @@ function renderPageDead(d) {
     <button class="go sec sm" onclick="pgDeadCsv()">CSV 내려받기</button>`);
   $("pg-dead").innerHTML = (table(PG_DEAD_HEAD, PG_DEAD.map(r =>
     `<tr><td class="pgurl">${stUrl(r.url, {link: true})}</td>
-     <td class="num">${r.depth ?? "—"}</td>
-     <td class="num">${r.words == null ? "—" : num(r.words)}</td>
+     <td class="num">${r.depth ?? "-"}</td>
+     <td class="num">${r.words == null ? "-" : num(r.words)}</td>
      <td class="num ${r.links_in ? "" : "pglow"}">${num(r.links_in)}</td>
-     <td class="pgtitle">${esc(r.title || "—")}</td></tr>`)));
+     <td class="pgtitle">${esc(r.title || "-")}</td></tr>`)));
 }
 
 /* ── 내부링크가 굶은 페이지 ────────────────────────────── */
@@ -2053,7 +2051,7 @@ function renderPageStarved(d) {
      <td class="num">${num(r.rank)}</td>
      <td class="num">${num(r.impressions)}</td>
      <td class="num">${num(r.clicks)}</td>
-     <td class="num">${r.position ?? "—"}</td>
+     <td class="num">${r.position ?? "-"}</td>
      <td class="num pglow">${num(r.links_in)}</td></tr>`)));
 }
 
@@ -2080,12 +2078,12 @@ function pgStarvedDetail(page) {
   const qs = stPageQueries(page);
   const anchors = qs.length
     ? `<ul class="deta">${qs.map(x => `<li><b>${esc(x.q)}</b>
-         <span class="muted"> — 노출 ${num(x.imp)}</span></li>`).join("")}</ul>`
+         <span class="muted"> · 노출 ${num(x.imp)}</span></li>`).join("")}</ul>`
     : `<p class="detn">이 페이지가 걸린 검색어를 이 수집본에서 못 찾았습니다. 추적 중인
-        검색어·기회·순위 변동에 걸린 것만 모아 둔 재료라 빠질 수 있습니다. 그때까지는
+        검색어·기회·순위 변동에 걸린 것만 모아 둔 자료라 빠질 수 있습니다. 그때까지는
         페이지 제목이나 핵심 문구를 앵커로 씁니다.</p>`;
   const head = `<p class="detw">노출 ${num(r.impressions)} · 클릭 ${num(r.clicks)} ·
-      평균 순위 ${r.position ?? "—"} · 내부링크 ${num(r.links_in)}개</p>`;
+      평균 순위 ${r.position ?? "-"} · 내부링크 ${num(r.links_in)}개</p>`;
   // 할 일이 먼저고 앵커 후보가 그 재료다 — acts 가 "아래 후보 검색어"라고 부른다.
   return `<div class="det">${head}
     ${playList(PG_ST_PLAY.what, PG_ST_PLAY.acts)}${anchors}
@@ -2095,7 +2093,7 @@ function pgStarvedDetail(page) {
     ${askBlock({shape: "fix_page", url: r.page, audit: ST_AUDITS[r.page], acts: PG_ST_PLAY.acts,
                 queries: qs.map(x => ({q: x.q, note: `노출 ${num(x.imp)}`})),
                 deliver: ["이 페이지로 링크를 걸 글과 앵커 텍스트"],
-                problem: `내부링크 굶음 — 노출 ${num(r.impressions)}인데 내부링크 ${num(r.links_in)}개`})}
+                problem: `내부링크 굶음: 노출 ${num(r.impressions)}인데 내부링크 ${num(r.links_in)}개`})}
     <p class="detn">이 페이지는 기회 목록에 없어 상태(완료·제외)를 못 답니다.
       내부링크 굶음은 아직 기회로 채점하지 않습니다.</p></div>`;
 }

@@ -123,7 +123,7 @@ def collect(project: str, *,
 
         urls = index_targets(conn, p["id"], limit)
         if not urls:
-            return st.skip("최신 GSC 스냅샷에 page 가 없습니다 — 먼저 `python collect_gsc.py "
+            return st.skip("최신 GSC 스냅샷에 page 가 없습니다. 먼저 `python collect_gsc.py "
                            f"--project {project}` 로 수집하세요. (page NULL 인 구버전 "
                            "스냅샷만 있어도 여기서 멈춥니다)")
 

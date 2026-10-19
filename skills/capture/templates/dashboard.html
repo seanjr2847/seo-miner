@@ -160,7 +160,8 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
   background:var(--accent-wash); color:var(--accent); place-items:center; font-weight:700; }
 .site .av img, .projmenu .pm-o .av img { width:68%; height:68%; border-radius:4px; object-fit:contain; }
 .site-b { position:relative; flex:1; min-width:0; height:100%; }
-.site-b small { position:absolute; top:9px; left:0; font:var(--micro); color:var(--mute);
+/* --mute 는 옅은 면(hover·열림의 accent-wash)에서 4.5:1 에 못 미친다 — 이 글자는 --sub. */
+.site-b small { position:absolute; top:9px; left:0; font:var(--micro); color:var(--sub);
   pointer-events:none; line-height:1.3; }
 .site-b small[hidden] { display:none; }
 #proj { display:none; }
@@ -195,6 +196,10 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
 .projmenu .pm-o svg { flex:none; width:16px; height:16px; stroke:var(--accent); fill:none;
   stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; visibility:hidden; }
 .projmenu .pm-o.act { background:var(--sunk); }
+/* --sunk 는 카드와 거의 같은 밝기라 면만으로는 어느 항목인지 안 보인다 — 키보드로 목록을 쥔
+   동안(목록 자신 또는 찾기 칸에 포커스)에는 활성 항목에 링을 두른다. */
+.projmenu .pm-ls:focus-visible .pm-o.act,
+.projmenu .pm-q:focus-visible ~ .pm-ls .pm-o.act { box-shadow:inset 0 0 0 2px var(--focus); }
 .projmenu .pm-o[aria-selected="true"] { font-weight:600; }
 .projmenu .pm-o[aria-selected="true"] .av { background:var(--accent-wash); color:var(--accent); }
 .projmenu .pm-o[aria-selected="true"] svg { visibility:visible; }
@@ -215,6 +220,8 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
 #nav button svg, #navfoot button svg { flex:none; width:18px; height:18px; stroke:currentColor;
   fill:none; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
 #nav button:hover, #navfoot button:hover { background:var(--sunk); color:var(--ink); }
+/* #nav 는 세로 레일에서 overflow 가 걸려 바깥 링이 잘린다 — 링을 안쪽으로 그린다. */
+#nav button:focus-visible, #navfoot button:focus-visible { outline-offset:-2px; }
 #nav button.on, #navfoot button.on { background:var(--accent-wash); color:var(--accent);
   font-weight:650; }
 /* 건수 — 그 화면에서 사람이 할 일이 몇 건인가(경고색 알약). */
@@ -666,7 +673,7 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
   background:var(--accent);
   -webkit-mask:var(--next-ico) center/18px 18px no-repeat;
           mask:var(--next-ico) center/18px 18px no-repeat; }
-:root { --next-ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 1.9 3.3 9.1h3.9L7 14.1l5.7-7.2H8.8z'/%3E%3C/svg%3E"); }
+:root { --next-ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 8h10M8.5 4l4 4-4 4'/%3E%3C/svg%3E"); }
 /* 돌고 있는 상태 — 면이 청회색으로 넘어가고 진행 막대가 선다. 산화동은 실패의 색이라
    도는 중에는 안 쓴다. */
 .next.run { background:var(--info-wash); }
@@ -826,8 +833,7 @@ main > * { max-width:1680px; margin-left:auto; margin-right:auto; }
   body { display:block; background:#fff; font-size:10.5pt; }
   /* 다음 행동 띠는 **문장만** 남긴다: "무엇을 왜"는 종이에서도 읽을 값이 있고, 그 옆의
      버튼만 거짓말이 된다. */
-  .next { border:0; border-left:2px solid var(--accent); border-radius:0;
-    background:none; padding:6px 0 6px 12px; box-shadow:none; }
+  .next { border:0; border-radius:0; background:none; padding:6px 0; box-shadow:none; }
   .next::before { display:none; }        /* 눈금은 누를 것을 가리킨다 — 종이에는 없다 */
   /* 그림자는 화면에서 "떠 있다"는 말이다. 종이에서는 회색 얼룩으로만 찍힌다. */
   .card, .opp, #docban, #err, .band .m, section > .tw { box-shadow:none; }
@@ -903,7 +909,7 @@ main > * { max-width:1680px; margin-left:auto; margin-right:auto; }
    부제)는 카드 밖 캔버스 위에 선다. */
 section { padding:0; margin-top:48px; border-top:0; }
 /* 눈썹 → 제목 → 부제. 부제는 설명문이 아니라 "이 섹션으로 무엇을 하라"는 문장이다. */
-.eyebrow { font:var(--micro); color:var(--mute); }
+.eyebrow { font:var(--micro); color:var(--sub); }   /* 캔버스 위라 --mute 는 4.5:1 에 못 미친다 */
 h2 { font:700 var(--fs-4)/1.35 var(--sans); margin:6px 0 4px; }
 .card h2, .card > .ch h2 { font:650 var(--fs-3)/1.4 var(--sans); }
 .sub { font-size:var(--fs-2); line-height:1.6; color:var(--sub); margin:0 0 16px; }
@@ -985,6 +991,10 @@ section > .tw { background:var(--card); border-radius:var(--r-card); box-shadow:
 #sm-boot .skel.box { margin:0; }
 /* 위 display:flex 가 id 특이도로 UA 의 [hidden] 을 이긴다 — 안 적으면 bootDone() 뒤에도 자리표가 본문을 민다 */
 #sm-boot[hidden] { display:none; }
+/* 사이트를 바꾸거나 다시 읽는 동안 옛 화면이 새 이름 아래 그대로 서 있으면 새 숫자로 읽힌다 —
+   응답이 오기까지 흐리게 하고 누를 수 없게 한다(load() 가 켜고 끈다). */
+/* 열린 서랍(.odr)은 화면 상자 안에 붙는다 - #content 통째로 흐리면 서랍도 흐려지고 먹통이 된다. */
+#content.loading > :not(.view), #content.loading > .view > :not(.odr):not(.odr-bg) { opacity:.5; pointer-events:none; transition:opacity .15s; }
 
 /* ── 토스트 ──────────────────────────────────────────────
    행동의 결과(복사됨·실행 시작·실패)를 그 자리에서 말한다. 우하단에 쌓이고
@@ -1056,7 +1066,7 @@ tr:last-child td { border-bottom:0; }
    열 이름은 "노출"·"평균 순위"처럼 한글이라, 등폭으로 찍으면 폴백 서체로 떨어져
    낱자가 벌어진다. 머리글은 정렬만 물려받고 서체는 본문 것을 쓴다. */
 .num, td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
-td.num, td .num { font-family:var(--mono); }
+td.num, td .num { font-family:var(--sans); }   /* "12위" 처럼 한글 단위가 붙는다 — 숫자 자리는 tabular-nums 가 맞춘다 */
 /* 좁은 화면에서 줄을 카드로 접는 뷰는 칸 이름을 ::before 로 붙인다 — 숫자 칸의
    등폭을 물려받으면 한글 이름이 폴백 서체로 떨어져 혼자 크게 찍힌다. */
 td.num::before { font-family:var(--sans); }
@@ -1149,6 +1159,7 @@ td.num::before { font-family:var(--sans); }
 tbody tr:hover { background:var(--sunk); }
 th[data-s] { cursor:pointer; user-select:none; }
 th[data-s]:hover { color:var(--accent); }
+th[data-s]:focus-visible { outline-offset:-2px; }   /* 표 상자(overflow)에 잘리지 않게 안쪽으로 */
 th[data-s]::after { content:"↕"; margin-left:5px; opacity:.32; font-size:var(--fs-1); }
 th[data-s].asc::after { content:"↑"; opacity:1; color:var(--accent); }
 th[data-s].desc::after { content:"↓"; opacity:1; color:var(--accent); }
@@ -1347,8 +1358,8 @@ tr.exp > td.expcell { padding:0; }
   cursor:pointer; white-space:nowrap; }
 .pb-h button:hover { color:var(--accent); background:var(--accent-wash); }
 .pbox textarea { width:100%; box-sizing:border-box; resize:vertical;
-  font:400 var(--fs-1)/1.6 var(--mono); color:var(--ink); background:var(--sunk);
-  border:0; border-radius:var(--r-in); padding:12px; }
+  font:400 var(--fs-1)/1.6 var(--sans); color:var(--ink); background:var(--sunk);
+  border:0; border-radius:var(--r-in); padding:12px; }   /* 내용은 한글 산문이다 — 등폭은 명령·URL 칩의 몫 */
 /* ── 상태 배지 ─────────────────────────────────────────────
    상태는 배지고, 행동은 버튼이다. 여태 이 둘이 같은 모양이었다 — "저장소 연결 필요"
    가 상태 버튼 옆에 같은 크기·같은 테두리로 서서, 누를 수 있는 것처럼 읽혔다.
@@ -1467,6 +1478,7 @@ button.chip.on { color:var(--accent); background:var(--accent-wash); font-weight
 .stp:not(.here) .cmd { color:var(--sub); }
 .stp:not(.here) .cmd::after { color:var(--mute); }
 .stp:not(.here) .cmd:hover { color:var(--accent); }
+.stp:not(.here) .cmd:hover::after { color:var(--accent); }
 /* 명령 칩 — 로컬에서는 이게 버튼 자리다. 그래서 .go 와 같은 높이·반지름(알약)으로 선다
    (안 그러면 같은 줄에서 두 배포의 주요 행동이 서로 다른 크기로 읽힌다).
    글자는 명령이라 등폭이 맞다 — 한글이 안 섞인 자리다. */
@@ -1488,6 +1500,29 @@ button.chip.on { color:var(--accent); background:var(--accent-wash); font-weight
   button.gov::after, button.badge::after, .lnk::after { content:""; position:absolute;
     left:-4px; right:-4px; top:50%; height:44px; transform:translateY(-50%); }
   button.chip { min-width:44px; }
+  /* 터치 타깃 44px — 모양은 그대로, 누르는 자리만 넓힌다 */
+  .hint::before { content:""; position:absolute; left:50%; top:50%; width:44px; height:44px;
+    transform:translate(-50%,-50%); }
+  /* 스크롤 상자(.tw) 맨 오른쪽 열의 (i) 는 누르는 자리가 상자 밖으로 13px 튀어나가 가짜 가로
+     스크롤을 만든다 — 오른쪽 끝을 (i) 에 맞추고 왼쪽으로만 넓힌다. */
+  .tw th:last-child .hint::before, .tw td:last-child .hint::before {
+    left:auto; right:0; transform:translateY(-50%); }
+  .odr-seg button { height:44px; }
+  .projmenu .pm-o { min-height:44px; }
+  .fixmore > summary { display:flex; align-items:center; min-height:44px; }
+  .step summary { padding-block:12px; }
+}
+/* 종류 목록(.qk-list)의 줄은 마우스에서는 촘촘해야 한 번에 훑힌다 — 44px 는 손가락이 있을 때만 */
+@media (hover:none) {
+  .qk-list .chip { min-height:44px; }
+}
+/* 가로 1000px 이상의 터치 기기(태블릿 가로)도 레일의 눌리는 것은 44px */
+@media (min-width:1000px) and (hover:none) {
+  /* 접기 단추는 보이는 크기(32px)를 두고 누르는 자리만 넓힌다 */
+  .fold { position:relative; }
+  .fold::after { content:""; position:absolute; inset:-6px; }
+  #nav button, #navfoot button { min-height:44px; }
+  .rail-foot .hbtn, .railcard .rail-foot > .cmd { min-height:44px; }
 }
 /* 보조 명령 칩 — 주요 행동 옆에서 물러난다(호스팅의 .go.sec 과 같은 자리).
    물러나는 것은 **바탕**이지 글자가 아니다. 글자를 흐리게 내리면 AA 를 못 넘겨
@@ -1598,7 +1633,7 @@ input[type="checkbox"], input[type="radio"] { width:auto; min-height:0; padding:
 /* 포커스 링은 전역 :focus-visible 한 벌이다 — 입력은 마우스로 눌러도 키보드처럼 링이 선다. */
 input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline:2px solid var(--focus); outline-offset:0; }
-input::placeholder, textarea::placeholder { color:var(--sub); opacity:.7; }
+input::placeholder, textarea::placeholder { color:var(--sub); }   /* 흐림은 색이 아니라 입력 글자(--ink)와의 차이로 */
 textarea { min-height:96px; padding:12px 14px; resize:vertical; }
 select { cursor:pointer; }
 .skiplink { position:absolute; left:-9999px; top:8px; z-index:1000; }
@@ -1750,11 +1785,11 @@ pre { font:400 var(--fs-1)/1.65 var(--mono); background:var(--sunk); border:0; b
   <div class="hax" id="axes" hidden></div>
   <section id="docban" hidden></section>
 
-  <div id="err" hidden></div>
+  <div id="err" role="alert" hidden></div>
 
   <!-- 첫 payload 전까지의 중립 자리표. render() 가 처음 불리면 스스로 숨는다
        (아래 render 첫 줄). 제목 있는 빈 section 대신 이 셋만 보인다. -->
-  <div id="sm-boot" aria-hidden="true">
+  <div id="sm-boot" role="status" aria-label="불러오는 중">
     <span class="skel box"></span>
     <span class="skel box"></span>
     <span class="skel box"></span>

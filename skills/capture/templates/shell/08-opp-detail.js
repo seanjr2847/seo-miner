@@ -16,7 +16,7 @@ SM.api.targetStat = t => {
   // 선이라고 부르지 않는다) — 그때는 숫자 석 장만 남는다.
   const pts = rows.filter(x => x.pos != null).map(x => ({x: x.d.slice(5), y: x.pos}));
   return `<div class="detw">${nums}${pts.length > 1
-    ? `<p class="detn">순위 추이 — 위로 갈수록 좋은 순위입니다.</p>`
+    ? `<p class="detn">순위 추이: 위로 갈수록 좋은 순위입니다.</p>`
       + window.chLine(pts, {unit: "위", height: 132, reverse: true})
     : ""}</div>`;
 };
@@ -41,7 +41,7 @@ SM.api.relPages = (pages, cur) => !pages || !pages.length ? "" :
    <span class="detn">이 검색어로 순위에 걸린 내 지면입니다. 순위는 서치콘솔 평균이라 나라·기기마다 섞인 값이고, 직접 검색한 순위와 다를 수 있습니다.</span>
    <ul class="detl">${pages.map(r => `<li><a href="${esc(r.page)}" target="_blank"
      rel="noopener">${esc(r.page)}</a> <span class="num">${num(r.impressions)}</span> 노출
-     · 평균 <span class="num">${r.position ?? "—"}</span>위${r.page === cur
+     · 평균 <span class="num">${r.position ?? "-"}</span>위${r.page === cur
        ? ` <span class="micro lat">·</span> 고칠 페이지` : ""}</li>`).join("")}</ul></div>`;
 
 // 이 페이지로 들어오는 검색어 — 정본은 서버가 센 d.page_queries 다. query_pages 를
@@ -54,7 +54,7 @@ SM.api.relQueries = url => {
     <span class="detn">이 페이지로 들어오는 검색어입니다.</span>
     <ul class="detl">${g.top.map(x => `<li>${esc(x.q)}
       <span class="num">${num(x.imp)}</span> 노출
-      · 평균 <span class="num">${x.pos ?? "—"}</span>위</li>`).join("")}</ul>${more > 0
+      · 평균 <span class="num">${x.pos ?? "-"}</span>위</li>`).join("")}</ul>${more > 0
     ? `<p class="detn">외 ${num(more)}개</p>` : ""}</div>`;
 };
 
@@ -90,7 +90,7 @@ SM.api.oppParts = o => {
       + "구글 검색어 목록에 그대로 잡히는 일이 드뭅니다. 아래 할 일은 새로 쓸 글 기준입니다.",
     backlink_prospect: "이 대상은 남의 도메인입니다. 고칠 내 페이지가 아니라 연락할 곳입니다.",
     backlink_mention: "이 대상은 우리 이름을 쓴 남의 도메인입니다. 고칠 내 페이지가 아니라 연락할 곳입니다.",
-    coverage: "이 대상은 주제 묶음입니다. 제목·H1 에 이 주제가 든 내 지면을 찾지 못했습니다 — "
+    coverage: "이 대상은 주제 묶음입니다. 제목·H1 에 이 주제가 든 내 지면을 찾지 못했습니다. "
       + "사이트에 아예 없다는 뜻은 아니니, 새로 쓰기 전에 사이트에서 먼저 찾아봅니다.",
   };
   // 주제 묶음은 검색어가 아니라 키워드 여럿이다 — 문장의 주어를 맞춘다.
@@ -167,8 +167,8 @@ function oppGroup(o) {
   const rows = g.variants.filter(v => !seen.has(v.target) && seen.add(v.target)).map((v, i) => `<tr><td>${esc(v.target)}${i === 0
       ? ` <span class="muted">대표</span>` : v.via === "serp" && g.via === "page"
       ? ` <span class="muted" title="우리 페이지는 없고, 검색 결과가 대표 검색어와 크게 겹쳐 붙었습니다">검색 결과 겹침</span>` : ""}</td>
-    <td class="n">${v.volume ? num(v.volume) : "—"}</td>
-    <td class="n">${Number.isFinite(v.score) ? Math.round(v.score) : "—"}</td>
+    <td class="n">${v.volume ? num(v.volume) : "-"}</td>
+    <td class="n">${Number.isFinite(v.score) ? Math.round(v.score) : "-"}</td>
     <td>${window.OPP_LABEL[v.status] || esc(v.status)}</td></tr>`).join("");
   const lead = g.variants[0] || {};
   return `<p class="detw"><b>묶인 검색어 ${oppTargets(g).length}개</b> · ${(GROUP_WHY[g.via] || GROUP_WHY.alone)(g)}${url

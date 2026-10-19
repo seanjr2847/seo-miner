@@ -2,7 +2,7 @@
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
 {"id": "aicite", "group": "ai", "title": "AI 인용", "aliases": ["ai"],
- "sub": "ChatGPT·Perplexity·Gemini 답변에 우리 링크가 붙는지, 안 붙으면 누가 그 자리를 가져갔는지 확인합니다.",
+ "sub": "AI 검색 엔진 답변에 우리 링크가 붙는지, 안 붙으면 누가 그 자리를 가져갔는지 확인합니다.",
  "sections": ["aicite", "ai-outranked", "ai-vs-search", "ai-visits"], "stages": ["ai", "gaps", "gsc"],
  "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.aicite"}, {"id": "manage", "label": "관리"}],
  "queue": {"mode": "work"}}
@@ -132,6 +132,8 @@
 .aishare .pc, .aishare .n { font:600 var(--fs-2)/1 var(--sans);
   font-variant-numeric:tabular-nums; text-align:right; color:var(--sub); }
 .aishare .r.us .dm { color:var(--accent); font-weight:600; }
+/* "← 우리" 는 한글이라 등폭(.dm)에 넣지 않는다. 도메인이 길어 잘려도 이 표식은 남는다. */
+.aishare .usn { flex:none; font:600 var(--fs-1)/1.4 var(--sans); color:var(--accent); white-space:nowrap; }
 .aishare .r.us .n, .aishare .r.us .pc { color:var(--ink); }
 .aishare:not(.open) .r.extra { display:none; }
 .aishare.aivis .bar i { background:var(--accent); }
@@ -165,10 +167,19 @@
 /* 엔진 로고 — 글자색을 따른다(currentColor). 엔진마다 브랜드색을 칠하지 않는다. */
 .ailogo { width:14px; height:14px; flex:none; fill:currentColor; vertical-align:-2px; }
 td .ailogo { margin-right:6px; }
-.aiengst { display:inline-flex; gap:8px; align-items:center; color:var(--rule); }
+/* 상태는 색만으로 말하지 않는다: 인용·언급만은 로고 옆에 글자(.st)가 붙고 안 나옴은 글자 없이 흐린 로고다.
+   각 로고의 aria-label("인용됨/이름만 언급/안 나옴")과 title(엔진별 수)이 같은 말을 하고, 키보드로도 닿는다(tabindex).
+   "안 나옴"은 --rule(약 1.3:1)이라 안 보였으므로 --mute 를 옅게 쓴다. 불투명도 .5 는 라이트 2.0:1·다크 2.4:1 이라
+   비텍스트 기준 3:1 에 못 미쳤다 - .8 이면 라이트 약 3.4:1, 다크 약 4:1. */
+.aiengst { display:inline-flex; gap:8px; align-items:center; color:var(--mute); }
+.aiengst .ailogo.z { opacity:.8; }
 .aiengst .ailogo { margin:0; }
 .aiengst .ailogo.m { color:var(--mute); }
 .aiengst .ailogo.c { color:var(--accent); }
+.aiengst > [role="img"] { display:inline-flex; align-items:center; gap:3px; }
+.aiengst > [role="img"]:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.aiengst .st { font:650 var(--fs-1)/1 var(--sans); color:var(--mute); }
+.aiengst .st.c { color:var(--accent); }
 .aieng .v { font:650 var(--fs-4)/1 var(--sans); font-variant-numeric:tabular-nums;
   letter-spacing:-.02em; }
 .aieng .tr { position:relative; height:8px; background:var(--sunk); border-radius:var(--r-pill);
@@ -253,12 +264,10 @@ td .ailogo { margin-right:6px; }
   font:var(--micro); color:var(--mute); }
 .aia-sh b { color:var(--ink); font-weight:700; font-variant-numeric:tabular-nums; }
 .aia-sh .lnk { font:var(--micro); }
-/* 답변 본문 — 읽는 면이다. 왼쪽 줄이 이 표본의 판정을 한 번 더 말한다(인용=accent, 안 나옴=warn). */
+/* 답변 본문 - 읽는 면이다. 이 표본의 판정은 위 한 줄(점 + 글자)이 이미 말하므로 왼쪽 색 줄로 한 번 더 말하지 않는다. */
 .aia-ans { padding:16px 18px; border-radius:var(--r-in); background:var(--sunk);
-  border-left:3px solid var(--rule); font:400 var(--fs-2)/1.8 var(--sans); color:var(--ink);
+  font:400 var(--fs-2)/1.8 var(--sans); color:var(--ink);
   overflow-wrap:anywhere; }
-.aia-ans.cited { border-left-color:var(--accent); }
-.aia-ans.none { border-left-color:var(--warn); }
 .aia-ans.clipped { max-height:30em; overflow:hidden;
   -webkit-mask-image:linear-gradient(#000 76%, transparent); mask-image:linear-gradient(#000 76%, transparent); }
 .aia-ans > :first-child { margin-top:0; }
@@ -293,7 +302,9 @@ td .ailogo { margin-right:6px; }
   font:650 var(--fs-1)/18px var(--sans); font-variant-numeric:tabular-nums; cursor:pointer;
   vertical-align:middle; }
 .aia-fn:hover { background:var(--accent); color:var(--accent-ink); }
-@media (hover:none), (max-width:999px) { .aia-fn { min-width:26px; height:26px; line-height:26px; } }
+/* 터치: 글줄 안 위첨자라 보이는 칩은 26px 로 두고, 눌리는 면만 44px 로 넓힌다(::after, 이웃 칩과 겹치면 뒤 칩이 이긴다). */
+@media (hover:none), (max-width:999px) { .aia-fn { position:relative; min-width:26px; height:26px; line-height:26px; }
+  .aia-fn::after { content:""; position:absolute; inset:-9px -9px; } }
 .aia-more { align-self:flex-start; }
 /* 인용 출처 목록 */
 .aia-cl { list-style:none; margin:0; padding:0; border:1px solid var(--line); border-radius:var(--r-in);
@@ -301,7 +312,7 @@ td .ailogo { margin-right:6px; }
 .aia-ci { display:grid; grid-template-columns:26px minmax(0,1fr); gap:0 12px; padding:12px 14px;
   border-top:1px solid var(--line); }
 .aia-ci:first-child { border-top:0; }
-.aia-ci.own { background:var(--accent-wash); box-shadow:inset 3px 0 0 var(--accent); }
+.aia-ci.own { background:var(--accent-wash); }
 .aia-ci.hit { outline:2px solid var(--accent); outline-offset:-2px; }
 .aia-cn { width:24px; height:24px; border-radius:50%; background:var(--sunk); color:var(--sub);
   font:600 var(--fs-1)/24px var(--mono); text-align:center; font-variant-numeric:tabular-nums; }
@@ -430,12 +441,12 @@ td .ailogo { margin-right:6px; }
 <section id="ai-eng-sec" class="card aic as5" hidden>
   <div class="ach">
     <div><h2>엔진별 인용</h2>
-      <p class="sub">인용과 언급의 차이가 클수록 링크로 이어질 자리를 놓치고 있습니다.</p></div>
+      <p class="sub">인용과 언급의 차이가 클수록 링크로 이어질 자리를 놓치고 있을 수 있습니다.</p></div>
   </div>
   <div class="aiengs" id="ai-engines"></div>
   <div class="chleg ailegend">
-    <span><i class="c"></i>인용 — 답변에 우리 링크가 붙음</span>
-    <span><i class="m"></i>언급 — 이름만 나옴</span>
+    <span><i class="c"></i>인용: 답변에 우리 링크가 붙음</span>
+    <span><i class="m"></i>언급: 이름만 나옴</span>
   </div>
   <h3 class="aisub3">카테고리별 인용률</h3>
   <p class="ainote" id="ai-matrix-note">칸을 누르면 그 조합의 질문 목록으로 내려갑니다. 진할수록 인용률이 높습니다.</p>
@@ -480,13 +491,13 @@ td .ailogo { margin-right:6px; }
         >i</span></p></div>
   </div>
   <details class="aichk">
-    <summary>질문마다 다시 말하지 않는 것. AI가 인용해 가는 페이지의 공통 조건 다섯</summary>
+    <summary>질문마다 다시 말하지 않는 것. AI 인용에 유리하다고 알려진 페이지 점검 항목</summary>
     <ol>
       <li>질문 문장 그대로가 <b>H2</b>로 있고, 바로 밑 2~3문장이 그 질문의 답입니다.</li>
-      <li>그 답에 숫자·단위·출처·갱신일이 박혀 있습니다. 검증되는 문장만 인용됩니다.</li>
+      <li>그 답에 숫자·단위·출처·갱신일이 박혀 있습니다. 검증할 수 있는 문장이 인용에 유리합니다.</li>
       <li>정의 한 문단과 비교표 하나가 있습니다. 그대로 떠가기 쉬운 모양입니다.</li>
-      <li>저자와 마지막 갱신일이 페이지에 드러납니다. 출처로 고를 근거가 됩니다.</li>
-      <li>화면의 저자·수정일이 Article 구조화 데이터와 같고, robots.txt 가 검색·인용용 AI 크롤러를 막지 않습니다. 학습용 크롤러만 막는 것은 인용과 무관합니다.</li>
+      <li>저자와 마지막 갱신일이 페이지에 드러납니다. 출처로 고르는 단서가 될 수 있습니다.</li>
+      <li>화면의 저자·수정일이 Article 구조화 데이터와 같고, robots.txt 가 검색·인용용 AI 크롤러를 막지 않습니다. 학습용 크롤러만 막는 것은 이 항목과 별개입니다. 이 목록은 이 사이트에서 잰 값이 아니라 일반적으로 알려진 점검 항목입니다.</li>
     </ol>
   </details>
   <div id="ai-prompts"></div>
@@ -512,7 +523,7 @@ td .ailogo { margin-right:6px; }
   <div class="card aic as7" id="ai-visits-pcard" hidden>
     <div class="ach">
       <div><h2>방문이 들어온 페이지</h2>
-        <p class="sub">AI 답변의 링크로 들어온 첫 페이지입니다. 세션이 많은 30곳까지 봅니다.</p></div>
+        <p class="sub">AI 답변의 링크로 들어온 첫 페이지입니다. 세션이 많은 곳부터 보여 줍니다.</p></div>
     </div>
     <div id="ai-visits-pages"></div>
   </div>
@@ -554,7 +565,7 @@ const AI_chart = (build, aria, box) =>
 function AI_trendChart(rows) {
   const n = rows.length, last = rows[n - 1], best = Math.max(...rows.map(r => r.cite_rate));
   const day = r => String(r.t || "").slice(0, 10);
-  const aria = `확인 ${n}회의 인용률 추이 — 최근 ${AI_PCT(last.cite_rate)}, 최고 ${AI_PCT(best)}`;
+  const aria = `확인 ${n}회의 인용률 추이, 최근 ${AI_PCT(last.cite_rate)}, 최고 ${AI_PCT(best)}`;
   const cv = AI_chart(T => ({type: "line",
     data: {labels: rows.map(r => day(r).slice(5)), datasets: [
       {label: "언급률", data: rows.map(r => r.mention_rate), borderColor: T.slate, borderWidth: 1.5,
@@ -603,7 +614,7 @@ function AI_mix(tot, cr, rankTxt, rankNote, missN, extra) {
   const c = tot.cited, o = Math.max(0, tot.mentioned - tot.cited),
     z = Math.max(0, tot.total - tot.mentioned);
   const pct = v => tot.total ? AI_PCT(AI_RATE(v, tot.total)) : "0%";
-  const aria = `답변 ${tot.total}건의 구성 — 링크 인용 ${c}건, 이름만 언급 ${o}건, 언급 없음 ${z}건`;
+  const aria = `답변 ${tot.total}건의 구성: 링크 인용 ${c}건, 이름만 언급 ${o}건, 언급 없음 ${z}건`;
   const cv = AI_chart(T => ({type: "doughnut",
     data: {labels: ["인용", "이름만 언급", "언급 없음"], datasets: [{
       data: tot.total ? [c, o, z] : [0, 0, 1],
@@ -622,7 +633,7 @@ function AI_mix(tot, cr, rankTxt, rankNote, missN, extra) {
     <div class="aitiles">${extra || ""}
       <div class="aitile"><div class="l">점유 순위</div><div class="v">${rankTxt}</div>
         <div class="b">${rankNote}</div></div>
-      <div class="aitile"><div class="l">안 잡힌 질문</div>
+      <div class="aitile"><div class="l">${AI_GAPS && AI_DRILL ? "인용 드문 질문" : "안 나온 질문"}</div>
         <div class="v${missN ? " down" : ""}">${num(missN)}<small class="muted"> 개</small></div>
         <div class="b">${AI_missWhat()}</div></div></div>`;
 }
@@ -691,7 +702,7 @@ function AI_shareBars(rows) {
     return `<div class="r${r.us ? " us" : over ? " over" : ""}${extra ? " extra" : ""}">
       <span class="rk">${i + 1}</span>
       <span class="who">${AI_av(r.domain, r.us)}${r.us
-        ? `<span class="dm" title="우리 도메인">${esc(r.domain)} ← 우리</span>`
+        ? `<span class="dm" title="우리 도메인">${esc(r.domain)}</span><span class="usn">← 우리</span>`
         : `<a class="dm" href="https://${esc(r.domain)}" target="_blank"
              rel="noopener noreferrer" title="${esc(r.domain)} 열기">${esc(r.domain)}</a>`}</span>
       <span class="bar"><i style="width:${Math.max(2, r.n / mx * 100).toFixed(1)}%"></i></span>
@@ -753,12 +764,12 @@ function AI_heat(m) {
   const rowsH = cats.map(c => `<span class="cat" title="${esc(AI_catName(c))}">${
     esc(AI_catName(c)) || "기타"}</span>` + engs.map(e => {
     const r = by[e + "\u0001" + c];
-    if (!r) return `<span class="c z" title="이 조합은 확인하지 않았습니다">—</span>`;
+    if (!r) return `<span class="c z" title="이 조합은 확인하지 않았습니다">-</span>`;
     const rate = AI_RATE(r.cited, r.total);
-    const tip = `${AI_engName(e)} · ${AI_catName(c) || "기타"} — 인용 ${r.cited}/${r.total} (${
+    const tip = `${AI_engName(e)} · ${AI_catName(c) || "기타"} · 인용 ${r.cited}/${r.total} (${
       AI_PCT(rate)}) · 언급 ${r.mentioned}/${r.total}`;
-    // 진하기는 인용률 그대로다(60%에서 멈춘다 — 그 위는 글자 대비가 모자란다).
-    const x = r.cited ? Math.round(12 + Math.min(rate, 100) * 0.48) : 0;
+    // 진하기는 인용률 그대로다(54%에서 멈춘다 - 그 위는 다크에서 글자 대비가 4.5:1 에 못 미친다).
+    const x = r.cited ? Math.round(12 + Math.min(rate, 100) * 0.42) : 0;
     return `<span class="c${r.cited ? " on" : ""}"${x ? ` style="background:color-mix(in srgb,var(--accent) ${
       x}%,var(--sunk))"` : ""}${AI_DRILL ? AI_drillAttrs(e, c, tip) : ` title="${esc(tip)}"`}
       aria-label="${esc(tip)}">${AI_PCT(rate)}</span>`;
@@ -778,7 +789,7 @@ function AI_heat(m) {
       줄을 펴면 그 질문에서 우리가 빠진 답변의 원문 발췌가 나온다 — 경쟁 도구는
       "몇 %"까지만 답하고, 우리는 "왜"까지 답한다. ── */
 let AI_ROWS = [], AI_Q = "", AI_CAT = "", AI_ST = "", AI_ENG = "";
-// AI_ST 는 인용 상태(인용됨·언급만·안 잡힘)다. 이건 다른 것 — 기회의 상태
+// AI_ST 는 인용 상태(인용됨·언급만·안 나옴)다. 이건 다른 것 — 기회의 상태
 // (할 일·진행 중·완료·자동 종료)다. 목록의 정본은 셸의 OPP_ST_OPT 한 벌이고
 // 기본은 「남은 것」이다(정본은 셸의 oppStMatch — 기회가 안 붙은 줄은 그대로 서고 끝낸 것·관찰 중은 빠진다).
 let AI_OST = "";
@@ -788,7 +799,7 @@ let AI_OST = "";
 let AI_NM = "";
 
 const AI_ST_OPT = [["", "전체"], ["gap", "인용 드묾"], ["cited", "인용됨"],
-  ["mention", "언급만"], ["none", "안 잡힘"]];
+  ["mention", "언급만"], ["none", "안 나옴"]];
 // 서버가 인용 공백으로 판정한 질문(d.ai_gap_rows — scoring.ai_is_gap 이 정본). 화면이
 // 인용 수로 다시 세면 판정이 두 벌이 된다: 6번 중 1번 인용된 질문은 "인용됨"이면서
 // 기회("챗봇 인용 드묾")이고, 예전 띠는 그런 질문만 남으면 "전부 인용된다"고 했다.
@@ -841,10 +852,19 @@ function AI_find(v) { AI_Q = v; AI_list(); }
 function AI_cat(v) { AI_CAT = v; AI_list(); }
 function AI_oppSt(v) { AI_OST = v; AI_list(); }
 function AI_stAll() { AI_OST = "all"; AI_render(); }
-function AI_engine(v) { AI_ENG = v; AI_render(); }   // 칩 수도 바뀌므로 통째로
+// 칩·선택 상자를 누르면 목록 영역을 통째로 다시 그려 초점이 body 로 떨어졌다 - 그린 뒤 같은 자리의 같은 요소에 돌려준다.
+function AI_keep(roots, draw) {
+  const a = document.activeElement, id = a && roots.find(x => $(x) && $(x).contains(a));
+  const tag = id && /^(BUTTON|SELECT)$/.test(a.tagName) ? a.tagName : "";
+  const i = tag ? [...$(id).querySelectorAll(tag)].indexOf(a) : -1;
+  draw();
+  const el = i >= 0 && $(id).querySelectorAll(tag)[i];
+  if (el) el.focus({preventScroll: true});
+}
+function AI_engine(v) { AI_ENG = v; AI_keep(["ai-prompts"], AI_render); }   // 칩 수도 바뀌므로 통째로
 function AI_status(el) {
   AI_ST = AI_ST === el.dataset.s ? "" : el.dataset.s;
-  AI_render();
+  AI_keep(["ai-prompts"], AI_render);
 }
 function AI_reset() { AI_Q = ""; AI_CAT = ""; AI_ST = ""; AI_OST = ""; AI_ENG = ""; AI_MK = ""; AI_render(); }
 // 시장으로 거르기 — 질문마다 묻는 시장(r.locale)이 있다. 이름표는 d.ai_markets 가 준다.
@@ -904,26 +924,26 @@ const AI_CHEV = `<svg class="chev" viewBox="0 0 16 16" fill="none" stroke="curre
 function AI_play(r) {
   const st = AI_stOf(r);
   if (st === "none") return {
-    what: "이 질문에 답하는 페이지가 아예 없거나, 있어도 AI가 못 찾습니다. 인용 이전에 답이 없는 상태입니다.",
+    what: "이 질문에 답하는 페이지가 없거나, 있어도 AI가 못 찾았을 수 있습니다. 인용 이전에 답이 없는 상태일 수 있습니다.",
     acts: ["질문 문장 그대로를 H2로 두고, 바로 밑 2~3문장으로 직답합니다.",
-      "그 답에 숫자·출처·갱신일을 박습니다. 검증되는 문장만 인용됩니다.",
-      "정의 블록과 비교표를 하나씩 넣습니다. 그대로 떠가기 쉬운 모양입니다.",
+      "그 답에 숫자·출처·갱신일을 박습니다. 검증할 수 있는 문장이 인용에 유리합니다.",
+      "정의 블록과 비교표를 하나씩 넣습니다. 그대로 가져가기 쉬운 모양입니다.",
       "이 질문을 정면으로 다루는 페이지가 없다면 한 장부터 만듭니다."],
     deliver: ["질문 그대로를 쓴 H2 와 그 아래 2~3문장 직답 문안",
               "숫자·출처·갱신일이 들어간 근거 블록(표 또는 목록) 하나",
               "다루는 페이지가 없다면 새 글 한 장의 제목과 목차"]};
   if (st === "mention") return {
-    what: "이름은 나오는데 링크가 안 걸립니다. 링크로 걸릴 근거가 우리 쪽에 없다는 뜻입니다.",
+    what: "이름은 나오는데 링크가 안 걸립니다. 링크로 걸릴 근거가 우리 쪽에 부족한 것일 수 있습니다.",
     acts: ["가격표·비교표·자체 조사처럼 원문 출처가 될 데이터를 한 덩이 만듭니다.",
-      "저자와 갱신일을 페이지에 드러냅니다. 출처로 고를 근거가 됩니다.",
+      "저자와 갱신일을 페이지에 드러냅니다. 출처로 고르는 단서가 될 수 있습니다.",
       "Article 구조화 데이터의 author·dateModified 를 화면의 저자·수정일과 같은 값으로 맞춥니다."],
     deliver: ["원문 출처가 될 데이터 한 덩이의 형태와 항목(가격표·비교표·자체 조사)",
               "저자·갱신일을 어디에 어떻게 드러낼지",
-              "Article 구조화 데이터(JSON-LD)의 author·dateModified 틀 — 화면의 저자·수정일과 같은 값으로"]};
+              "Article 구조화 데이터(JSON-LD)의 author·dateModified 틀(화면의 저자·수정일과 같은 값으로)"]};
   return {
     what: "이미 인용되고 있습니다. 여기서는 넓히기보다 지키는 것이 먼저입니다.",
     acts: ["같은 답변에 함께 인용된 곳이 무엇을 갖고 있는지 보고, 우리에게 없는 구간만 채웁니다.",
-      "숫자와 갱신일을 주기적으로 손봅니다. 낡은 페이지가 먼저 밀립니다.",
+      "숫자와 갱신일을 주기적으로 손봅니다. 낡은 페이지는 인용에서 밀릴 수 있습니다.",
       "이 질문의 파생 질문으로 같은 페이지의 H2를 늘립니다."],
     deliver: ["함께 인용된 곳에는 있고 우리에게 없는 구간 목록",
               "주기적으로 갱신할 숫자·날짜 항목",
@@ -961,7 +981,7 @@ function AI_detail(r, riv) {
   const ask = askBlock({
     shape: url ? "fix_page" : "new_content",   // 걸린 페이지가 있으면 고치고, 없으면 새로 쓴다
     url, audit: url ? (window.PAGE_AUDITS || {})[url] : null, acts: p.acts, deliver: p.deliver,
-    problem: `AI 인용 — ${p.what}` + (doms.length ? ` 지금 인용되는 곳: ${doms.join(", ")}` : ""),
+    problem: `AI 인용: ${p.what}` + (doms.length ? ` 지금 인용되는 곳: ${doms.join(", ")}` : ""),
     queries: [{q: r.prompt, note: `AI 답변 ${r.checks}건 중 인용 ${r.cited}건`}],
   });
   return `<div class="det">${playList(p.what, p.acts)}${AI_rival(riv)}
@@ -1009,18 +1029,20 @@ function AI_row(r) {
   // tr 에는 여백·괘선이 먹지 않고 :hover 는 표가 이미 같은 색으로 칠한다.
   const c = AI_cnt(r);
   const strip = Object.entries(r.by_engine || {}).sort().map(([k, v]) =>
-    `<span title="${esc(AI_engName(k))} · 인용 ${v.cited}/${v.checks} · 언급 ${v.mentioned}/${v.checks}"
-      >${AI_logo(k, v.cited ? "c" : v.mentioned ? "m" : "") || esc(k)}</span>`).join("");
+    `<span role="img" title="${esc(AI_engName(k))} · 인용 ${v.cited}/${v.checks} · 언급 ${v.mentioned}/${v.checks}"
+      aria-label="${esc(AI_engName(k))}: ${v.cited ? "인용됨" : v.mentioned ? "이름만 언급" : "안 나옴"}, 인용 ${v.cited}/${v.checks}, 언급 ${v.mentioned}/${v.checks}"
+      tabindex="0">${AI_logo(k, v.cited ? "c" : v.mentioned ? "m" : "z") || esc(k)}${
+        v.cited ? '<span class="st c">인용</span>' : v.mentioned ? '<span class="st">언급</span>' : ""}</span>`).join("");
   return `<tr${o ? ` class="opp"` : ""}>
-    <td class="num">${o ? oppScore(o) + oppMeter(o) : '<span class="muted">—</span>'}</td>
+    <td class="num">${o ? oppScore(o) + oppMeter(o) : '<span class="muted">-</span>'}</td>
     <td>${q}</td>
     <td class="kwcell">${esc(AI_catName(r.category))}${Object.keys(AI_MK_LABEL).length > 1 && r.locale
       ? `<br><span class="muted">${esc(AI_mkName(r.locale))}</span>` : ""}</td>
-    <td><span class="aiengst">${strip || '<span class="muted">—</span>'}</span></td>
+    <td><span class="aiengst">${strip || '<span class="muted">-</span>'}</span></td>
     <td class="num ${c.cited ? "up" : "muted"}">${c.cited}</td>
     <td class="num ${c.mentioned ? "" : "muted"}">${c.mentioned}</td>
     <td class="num muted">${c.checks}</td>
-    <td class="aidoms">${chips || '<span class="muted">—</span>'}</td></tr>`;
+    <td class="aidoms">${chips || '<span class="muted">-</span>'}</td></tr>`;
 }
 
 /* 채워진 화면에도 다음 한 걸음을 준다 — 지금까지 다음 명령은 빈 화면에만 있었고,
@@ -1087,7 +1109,7 @@ function AI_nextStep(d, has, missN, canFilter) {
     // 되는지(비용이 드는지) 판단할 근거가 없었다(8회차). 사실: POST /api/ai/prompts 는
     // 초안 20개만 심고 인용 확인(엔진 호출)은 하지 않는다(dash.html makePrompts).
     return put("<b>물어볼 질문이 아직 없습니다.</b>" + live(
-        "눌러서 이 사이트에 맞는 질문 초안 20개를 만듭니다. AI에 묻는 인용 확인은 따로 누를 때만 합니다."),
+        "눌러서 이 사이트에 맞는 질문 초안을 만듭니다. AI에 묻는 인용 확인은 따로 누를 때만 합니다."),
       W(AI_makeCmd("", true),
         `<button class="go" data-sm-act="make-prompts">질문 만들기</button>${AI_makeCmd("", false)}`));
   if (!has)
@@ -1112,7 +1134,7 @@ function AI_nextStep(d, has, missN, canFilter) {
     return put("확인이 1회뿐이라 지금 값이 표본인지 흐름인지 아직 모릅니다."
       + live("한 번 더 확인하면 갈립니다."), SM.ui.act("ai"));
   return put(AI_GAPS ? "인용이 드문 질문이 없습니다." : "확인한 질문 전부에서 인용되고 있습니다."
-    + live("주기적으로 다시 확인하면 지켜집니다."), SM.ui.act("ai"));
+    + live("주기적으로 다시 확인하면 인용이 빠지는 때를 일찍 알 수 있습니다."), SM.ui.act("ai"));
 }
 
 function AI_render() {
@@ -1163,7 +1185,7 @@ function AI_list() {
   $("ai-plist").innerHTML = AI_card(table(
     [">점수?인용이 드문 질문에만 붙는 기회 점수입니다. 100점 만점, 높을수록 먼저",
      "질문?누르면 그 질문에서 받은 답변 발췌가 엔진별로 펼쳐집니다", "카테고리",
-     "엔진?진한 녹청은 인용, 회색은 언급, 흐린 것은 둘 다 없음. 로고 위에 올리면 수가 보입니다",
+     "엔진?로고 옆 글자가 인용·언급을 말하고, 글자 없이 흐린 로고는 둘 다 없음입니다. 로고에 올리거나 초점을 두면 수가 보입니다",
      ">인용?답변의 인용 링크에 우리 도메인이 들어간 응답 수",
      ">언급?답변 본문에 우리 브랜드 이름이 나온 응답 수",
      ">응답?질문 × 엔진 × 샘플. 이 질문에 실제로 받은 답변 수",
@@ -1211,7 +1233,7 @@ function AI_vsBody(r) {
     // 인용 0회만이 아니다 — 기회와 같은 판정(scoring.ai_is_gap)이라 1/6 도 여기 선다
     problem: `검색 ${r.pos}위로 이기는데 AI 질문에서는 인용이 드묾` +
       (r.checks ? ` (인용 ${r.cited || 0}/${r.checks})` : "") +
-      (r.rivals.length ? ` — 대신 인용된 곳: ${r.rivals.join(", ")}` : ""),
+      (r.rivals.length ? `, 대신 인용된 곳: ${r.rivals.join(", ")}` : ""),
     queries: [{q: r.query, note: `평균 ${r.pos}위 · 노출 ${num(r.imp)}`}],
   });
   return `<div class="aiq-d"><div class="det">${playList("", acts)}
@@ -1223,14 +1245,14 @@ function AI_vsBody(r) {
 function AI_vsRow(r, i) {
   return `<tr>
     <td><button class="aiq-t" aria-haspopup="dialog" data-k="v" data-i="${i}"
+        aria-label="${esc(r.prompt)} (검색어 ${esc(r.query)})"
         onclick="AI_ev(this)">${AI_CHEV}<span>${esc(r.prompt)}</span></button></td>
-    <td class="kwcell"><button class="aiq-t" aria-haspopup="dialog" data-k="v" data-i="${i}"
-        onclick="AI_ev(this)"><span>${esc(r.query)}</span></button></td>
+    <td class="kwcell">${esc(r.query)}</td>
     <td class="num up">${r.pos}</td>
     <td class="num muted">${num(r.imp)}</td>
     <td class="aidoms">${r.rivals.length
       ? r.rivals.map(x2 => `<span class="chip">${esc(x2)}</span>`).join("")
-      : '<span class="muted">—</span>'}</td></tr>`;
+      : '<span class="muted">-</span>'}</td></tr>`;
 }
 
 function AI_vsSearch(x, gscDate) {
@@ -1257,8 +1279,8 @@ function AI_vsSearch(x, gscDate) {
       </div>`];
   const sub = `검색에서는 우리가 위인데 AI 답변에서는 인용이 드문 질문
     <b>${rows.length}개</b>입니다.<span class="hint" tabindex="0"
-      data-tip="순위가 모자란 게 아니라 인용될 모양이 아니라는 뜻입니다. 그 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2 와 숫자·출처·갱신일을 얹는 것이 가장 싼 손질입니다."
-      aria-label="순위가 모자란 게 아니라 인용될 모양이 아니라는 뜻입니다. 그 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2 와 숫자·출처·갱신일을 얹는 것이 가장 싼 손질입니다."
+      data-tip="순위가 모자란 게 아니라 인용될 모양이 아닐 수 있습니다. 그 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2 와 숫자·출처·갱신일을 얹는 것부터 해 볼 만합니다."
+      aria-label="순위가 모자란 게 아니라 인용될 모양이 아닐 수 있습니다. 그 검색어로 이미 걸린 페이지에 질문 문장 그대로의 H2 와 숫자·출처·갱신일을 얹는 것부터 해 볼 만합니다."
       >i</span>`;
   return [sub, AI_card(table(
     ["질문?누르면 이 검색어로 걸린 내 페이지와 고칠 곳이 펼쳐집니다",
@@ -1294,15 +1316,15 @@ function AI_outranked(o) {
   // 표가 아니라 줄이다 — 5칸 카드에 네 칸 표는 들어가지 않는다. 숫자 둘은 알약이 말한다:
   // 그 도메인이 AI 에서 인용된 수(warn), 검색에서 우리가 위인 검색어 수(accent).
   return [`${sub}<span class="hint" tabindex="0"
-      data-tip="순위를 더 올릴 자리가 아닙니다. 이미 이긴 검색어의 페이지에 원문 출처가 될 데이터(가격표·비교표·자체 조사)와 저자·갱신일을 얹으면 같은 답변에서 우리가 걸립니다."
-      aria-label="순위를 더 올릴 자리가 아닙니다. 이미 이긴 검색어의 페이지에 원문 출처가 될 데이터(가격표·비교표·자체 조사)와 저자·갱신일을 얹으면 같은 답변에서 우리가 걸립니다."
+      data-tip="순위를 더 올릴 자리가 아닙니다. 이미 이긴 검색어의 페이지에 원문 출처가 될 데이터(가격표·비교표·자체 조사)와 저자·갱신일을 얹으면 같은 답변에서 우리가 인용될 수 있습니다."
+      aria-label="순위를 더 올릴 자리가 아닙니다. 이미 이긴 검색어의 페이지에 원문 출처가 될 데이터(가격표·비교표·자체 조사)와 저자·갱신일을 얹으면 같은 답변에서 우리가 인용될 수 있습니다."
       >i</span>`,
     `<div class="aior">${rows.map(r => `<div class="row">
       <div class="hd"><span class="who">${AI_av(r.domain)}<a class="dm" href="https://${esc(r.domain)}"
           target="_blank" rel="noopener noreferrer">${esc(r.domain)}</a></span>
         <span class="ps"><span class="badge warn"
             title="이번 확인에서 이 도메인이 인용된 답변 수">AI 인용 ${num(r.cites)}건</span>
-          <span class="badge ok"
+          <span class="muted"
             title="경쟁 검색어 중 우리 순위가 더 높은 것의 수">검색은 우리가 위 ${num(r.won)}개</span></span></div>
       <p class="kws">${r.top.map(w => {
         const pages = (window.QUERY_PAGES || {})[w.keyword] || [];
@@ -1374,7 +1396,7 @@ function AI_visits(d) {
       ">세션?그 페이지에서 시작된, AI 출처의 세션 수",
       ">키 이벤트?그 세션에서 난 GA4 key events 합",
       "출처?어느 AI 답변에서 왔나. 숫자는 세션 수"],
-      pages.slice(0, 30).map(p => `<tr><td>${cell(p.page)}</td>
+      pages.slice(0, AI_PAGES_MAX).map(p => `<tr><td>${cell(p.page)}</td>
         <td class="num">${num(p.sessions)}</td>
         <td class="num ${p.key_events ? "" : "muted"}">${num(p.key_events)}</td>
         <td>${Object.entries(p.sources || {}).sort((a, b) => b[1] - a[1]).map(([h, n]) =>
@@ -1476,7 +1498,7 @@ function AI_emptyState(d) {
   const pr = d.progress || {};
   // 비용은 결제 벽이 아니라 눈금이다 — 무엇이 얼마나 나가는지만 한 줄로 말한다.
   // 키가 누구 몫인지도 같은 줄에 붙인다: 상자를 문단으로 채우면 아무도 안 읽는다.
-  const cost = `<p class="detn">확인 1회는 질문마다 엔진 세 곳에 요청이 나갑니다. ${W(
+  const cost = `<p class="detn">확인 1회는 질문마다 설정된 엔진 각각에 요청이 나갑니다. ${W(
     `<a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
        >openrouter.ai/keys</a>에서 받은 OpenRouter 키가 ${window.go("settings")}에
      있어야 합니다.`,
@@ -1490,7 +1512,7 @@ function AI_emptyState(d) {
         chip);
   return pr.ai_prompts === 0
     ? `<div class="empty"><b>물어볼 질문이 없습니다</b>
-        <p>질문을 채우면 엔진 세 곳이 누구를 인용하는지 세어 줍니다.</p>
+        <p>질문을 채우면 AI 엔진이 누구를 인용하는지 세어 줍니다.</p>
         ${act1("add",
           `<div class="acts"><button class="go sec"
              data-sm-act="make-prompts">질문 만들기</button></div>`)}</div>`
@@ -1517,14 +1539,14 @@ function AI_bots(rows) {
     (!!b.rule - !!a.rule) || (!!b.citing - !!a.citing));
   const cut = sorted.filter(r => r.rule && r.citing).length;
   const sub = cut
-    ? `검색·인용용 크롤러 <b>${num(cut)}개</b>가 robots.txt 에 막혀 있습니다. 막힌 채로는 그 엔진이 답을 만들 때 우리 글을 읽지 못합니다.`
+    ? `검색·인용용 크롤러 <b>${num(cut)}개</b>가 robots.txt 에 막혀 있습니다. 막혀 있으면 그 엔진이 답을 만들 때 우리 글을 못 읽을 수 있습니다.`
     : (sorted.some(r => r.rule)
-      ? "검색·인용용 크롤러는 열려 있습니다. 막힌 것은 학습용이라 인용과 무관합니다."
+      ? "검색·인용용 크롤러는 열려 있습니다. 막힌 것은 학습용이라 인용 항목과 별개입니다."
       : "robots.txt 가 AI 크롤러를 막지 않습니다.");
   const body = AI_card(table(
-    ["크롤러", "엔진", "용도?학습용 봇을 막는 것은 인용과 무관합니다. 검색·인용용과 사용자 요청 페치 봇이 막히면 그 엔진 답변의 출처로 실리기 어렵습니다",
+    ["크롤러", "엔진", "용도?학습용 봇을 막는 것은 인용 항목과 별개입니다. 검색·인용용과 사용자 요청 페치 봇이 막히면 그 엔진 답변의 출처로 실리기 어렵습니다",
      "robots.txt"],
-    sorted.map(r => `<tr><td>${esc(r.bot)}</td><td>${esc(r.engine || r.vendor || "—")}</td>
+    sorted.map(r => `<tr><td>${esc(r.bot)}</td><td>${esc(r.engine || r.vendor || "-")}</td>
       <td>${esc(r.purpose_label || "모름")}</td>
       <td>${r.rule
         ? `<span class="badge ${r.citing ? "warn" : ""}">막힘</span> <span class="muted">${esc(r.rule)}</span>`
@@ -1678,6 +1700,7 @@ function AI_md(src, o) {
    인용 목록을 받아 엔진 탭 → 표본 알약 → 답변 전문 → 인용 출처 순으로 그린다. 목록 줄이 가진
    280자 발췌는 이걸 대신하지 못한다(검색·CSV 용으로만 남는다).
    판정(인용됨·언급만·안 나옴)은 서버가 체크마다 센 cited·mentioned 그대로다. */
+const AI_PAGES_MAX = 30;                          // 방문 페이지 표가 보여 주는 줄 수 - 화면 문구에는 숫자를 적지 않는다
 const AI_V_TXT = {cited: "인용됨", mention: "언급만", none: "안 나옴"};
 const AI_V_LONG = {cited: "우리가 인용됨", mention: "이름만 언급됨 · 링크는 없음", none: "우리가 안 나옴"};
 const AI_V_RANK = {cited: 2, mention: 1, none: 0};
@@ -1739,8 +1762,13 @@ function AI_aEmpty() {
     "가장 최근 인용 확인에서 이 질문을 묻지 않았거나, 아직 확인을 돌리지 않았습니다. 질문을 켜 둔 채 " +
     "인용 확인을 다시 돌리면 답변과 출처가 여기에 쌓입니다.");
 }
-function AI_aErr(msg) {
-  return `<div class="empty err"><b>답변을 불러오지 못했습니다</b><p>${esc(msg || "")}</p>
+// 예외 원문(영어일 수 있다)은 사용자 문장에 붙이지 않는다 - 콘솔에만 남기고 사람 말로 안내한다.
+function AI_aErr(e) {
+  if (e) console.error("AI 답변 서랍", e);
+  const code = e && e.status ? ` (서버 응답 코드 ${esc(String(e.status))})` : "";
+  const why = e && e.reason ? esc(String(e.reason)) : "답변을 가져오거나 그리는 중에 문제가 생겼습니다";
+  return `<div class="empty err"><b>답변을 불러오지 못했습니다</b>
+    <p>${why}${code}. 다시 시도해도 같으면 인용 확인을 한 번 더 돌린 뒤 이 질문을 다시 열어 주세요.</p>
     <div class="acts"><button type="button" class="go sec" onclick="AI_aRetry()">다시 시도</button></div></div>`;
 }
 function AI_aHtml() {
@@ -1790,7 +1818,7 @@ function AI_aHtml() {
       ? `<button type="button" class="lnk" onclick="AI_aCopy()">답변 복사</button>` : ""}</h3>
     ${body}
     <h3 class="aia-sh"><span>이 답변이 인용한 곳 <b>${cites.length}</b></span></h3>${citeBody}</div>
-    <p class="aia-note">답변은 매번 달라집니다 — 이 질문은 표본 ${all.length}건(엔진 ${gs.length}곳)을 받았습니다.
+    <p class="aia-note">답변은 매번 달라집니다. 이 질문은 표본 ${all.length}건(엔진 ${gs.length}곳)을 받았습니다.
       탭과 표본을 넘겨 가며 읽습니다.</p>`;
 }
 function AI_aBox() {
@@ -1800,10 +1828,17 @@ function AI_aBox() {
 function AI_aPaint(focus) {
   const box = AI_aBox();
   if (!box) return;
-  box.innerHTML = AI_aHtml();
-  box.setAttribute("aria-busy", "false");
-  const f = focus && box.querySelector(focus);
-  if (f) f.focus({preventScroll: true});
+  // 탭·표본·펼치기 전환도 여기로 오므로 그림 그리다 던져도 옛 화면에 멈추지 않고 오류와 [다시 시도]를 보인다.
+  try {
+    box.innerHTML = AI_aHtml();
+    box.setAttribute("aria-busy", "false");
+    const f = focus && box.querySelector(focus);
+    if (f) f.focus({preventScroll: true});
+  } catch (e) {
+    if (AI_A) AI_ANS.delete(AI_NM + "\n" + AI_A.prompt);   // 같은 응답으로 같은 예외를 되풀이하지 않게 비운다
+    box.innerHTML = AI_aErr(e);
+    box.setAttribute("aria-busy", "false");
+  }
 }
 async function AI_aFetch(prompt) {
   const key = AI_NM + "\n" + prompt;
@@ -1812,8 +1847,13 @@ async function AI_aFetch(prompt) {
                           "&prompt=" + encodeURIComponent(prompt));
   let body = null;
   try { body = await res.json(); } catch (e) { /* 아래에서 상태 코드로 말한다 */ }
-  if (!res.ok || !body || !Array.isArray(body.checks))
-    throw new Error((body && body.error) || `서버가 ${res.status} 로 답했습니다.`);
+  if (!res.ok || !body || !Array.isArray(body.checks)) {
+    const why = body && typeof body.error === "string" ? body.error : "";
+    const err = new Error(why || `status ${res.status}`);
+    err.status = res.status;
+    if (/[가-힣]/.test(why)) err.reason = why;    // 서버가 사람 말로 준 사유만 화면에 낸다 - 영어 예외 문구는 콘솔로만
+    throw err;
+  }
   AI_ANS.set(key, body);
   return body;
 }
@@ -1829,11 +1869,13 @@ async function AI_aStart(r) {
     AI_aPaint();
   } catch (e) {
     if (AI_A !== a || !AI_aBox()) return;
-    AI_aBox().innerHTML = AI_aErr(e && e.message);
+    AI_ANS.delete(AI_NM + "\n" + r.prompt);
+    AI_aBox().innerHTML = AI_aErr(e);
     AI_aBox().setAttribute("aria-busy", "false");
   }
 }
-const AI_aRetry = () => { if (AI_A) AI_aStart(AI_A.row); };
+// 다시 시도는 캐시를 비우고 서버에서 새로 받는다 - 캐시된 응답을 다시 그리면 같은 예외가 되풀이된다.
+const AI_aRetry = () => { if (AI_A) { AI_ANS.delete(AI_NM + "\n" + AI_A.prompt); AI_aStart(AI_A.row); } };
 function AI_aTab(btn) {
   const gs = AI_aGroups(AI_A.data.checks), g = gs.find(x => x.k === btn.dataset.e);
   if (!g) return;
@@ -1933,11 +1975,11 @@ VIEW("aicite", function (d) {
   const share = d.cite_share || d.gap_domains || [];
   const sameScale = !!d.cite_share;
   const ours = sameScale ? (d.project.domain || "").replace(/^www\./, "") : "";
-  // 점유 순위 — cite_share 는 상위 15곳까지만 온다. 밖이면 밖이라고 말한다.
+  // 점유 순위 — cite_share 는 서버가 상위 몇 곳만 자른 목록이다(개수는 서버 몫 - 숫자를 박지 않고 온 길이를 쓴다). 밖이면 밖이라고 말한다.
   const above = share.filter(s => s.n > tot.cited).length;
-  const capped = share.length >= 15 && tot.cited < share[share.length - 1].n;
-  const rankTxt = !sameScale || tot.cited === 0 ? "—"
-    : capped ? "15위 밖" : `${above + 1}위`;
+  const capped = share.length > 0 && tot.cited < share[share.length - 1].n;
+  const rankTxt = !sameScale || tot.cited === 0 ? "-"
+    : capped ? `${share.length}위 밖` : `${above + 1}위`;
   const byPrompt = d.ai_by_prompt || [];
   AI_DRILL = byPrompt.length > 0;
   AI_GAPS = Array.isArray(d.ai_gap_rows) ? new Set(d.ai_gap_rows.map(r => r.prompt)) : null;
@@ -2001,7 +2043,7 @@ VIEW("aicite", function (d) {
     $("ai-share-sub").innerHTML = (!sameScale
       ? "우리가 인용되지 않은 답변에서 대신 인용된 도메인입니다."
       : tot.cited
-      ? "우리 위에 있는 곳이 우리가 차지했어야 할 자리입니다."
+      ? "우리 위에 있는 곳은 우리보다 더 자주 인용된 곳입니다."
       : "우리 도메인은 아직 한 번도 인용되지 않아 이 목록에 없습니다.") +
       ` ${SM.ui.hint(SHARE_TIP, {title: false})}`;
     const shareRows = AI_shareRows(share, ours, tot.cited);

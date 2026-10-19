@@ -29,7 +29,7 @@ SM.api.OPP_TAG_TIP = {
   better: "새 데이터가 목표를 이뤘다고 확인했습니다. 다시 나빠지면 저절로 다시 열립니다.",
   merged: "같은 일을 다른 기회 줄이 맡습니다. 할 일은 그 줄 하나입니다.",
   misjudged: "판정 규칙을 고쳤거나 나중에 들어온 데이터로 판단이 바뀌어, 지금 기준으로는 이 기회가 서지 않습니다. 좋아진 것이 아닙니다.",
-  out: "판단할 조건 밖으로 나가 더 볼 수 없습니다(추적을 껐거나, 노출이 적거나, 순위·범위 밖으로 밀림). 좋아진 것이 아닙니다 — 나빠진 것일 수도 있습니다."};
+  out: "판단할 조건 밖으로 나가 더 볼 수 없습니다(추적을 껐거나, 노출이 적거나, 순위·범위 밖으로 밀림). 좋아진 것이 아닙니다. 나빠진 것일 수도 있습니다."};
 // 기회 한 건의 상태 배지 — 도구가 닫은 것이면 갈래까지 말하고, 마우스를 올리면 뜻을 푼다.
 SM.api.oppStBadge = (o, el = "span") => {
   const t = o.status === "resolved" && window.OPP_TAG_LABEL[o.status_tag] ? o.status_tag : "";
@@ -127,7 +127,7 @@ SM.api.oppOf = t => (OPP_INDEX[oppKey(t)] || [])[0] || null;
 SM.api.oppScore = o => Number.isFinite(o && o.score)
   ? `<div class="score" title="${o.score}점 / 100점. 높을수록 먼저 손댑니다.">`
     + `${Math.round(o.score)}<span class="u">점</span></div>`
-  : `<div class="score none" title="이 줄에는 아직 붙은 기회가 없습니다.">—</div>`;
+  : `<div class="score none" title="이 줄에는 아직 붙은 기회가 없습니다.">-</div>`;
 
 SM.api.oppMeter = o => Number.isFinite(o && o.score)
   ? `<div class="meter${isDefensive(o) ? " def" : ""}" title="${o.score}점 / 100점">
@@ -141,7 +141,7 @@ const isDefensive = o => o && (o.is_defensive
 // 프로젝트는 지금까지와 똑같다.
 SM.api.gaBadge = o => o && o.ga4_mult != null
   ? `<span class="gm lat ${o.ga4_mult > 1 ? "gm-up" : "gm-down"}"
-       title="GA4 전환 반영 전 ${o.ga4_pre_score ?? "—"}점 → ${o.ga4_mult > 1 ? "전환 확인" : "전환 0 확인"} ×${o.ga4_mult}"
+       title="GA4 전환 반영 전 ${o.ga4_pre_score ?? "-"}점 → ${o.ga4_mult > 1 ? "전환 확인" : "전환 0 확인"} ×${o.ga4_mult}"
        >GA4 ${o.ga4_mult > 1 ? "▲" : "▼"} ×${o.ga4_mult}</span>` : "";
 
 // 이 기회로 실제로 고친 것이 있나 — 접힌 줄에서 "열어만 놓음"과 "적용까지 함"을 가른다.
@@ -163,7 +163,7 @@ SM.api.madeBadge = o => {
               : merged ? `적용 ${made.length}건 · 머지 ${merged}`
               : `적용 ${made.length}건`;
   return `<span class="badge made" title="이 기회로 고친 파일이 ${made.length}건 기록돼 있습니다${
-    merged ? ` (그중 ${merged}건 머지됨)` : " — 아직 머지된 것은 없습니다"
+    merged ? ` (그중 ${merged}건 머지됨)` : ". 아직 머지된 것은 없습니다"
   }. [완료]는 '완료 후 관찰'을 보고 직접 누르세요.">${label}</span>`;
 };
 
@@ -264,7 +264,8 @@ SM.api.oppPanel = (o, extra) => o ? oppDetail(o, extra) : "";
 async function runTool(id, ids) {
   const [ok, r] = await post("/api/setup/run-tool",
                              {project: $("proj").value, id, ids: ids || [id]});
-  if (!ok || !r.ok) return toast((r && r.error) ||
+  // post() 는 실패도 [false, {error: 사람 말}] 로 돌려준다 — 그 말을 그대로 보인다.
+  if (!ok || !r.ok) return toast((r && (r.error || r.detail)) ||
     "열지 못했습니다. [설정]에서 도구를 확인한 뒤 다시 눌러 주세요.", "bad");
   const t = ((window.SETUP || {}).terminals || []).find(x => x.id === r.terminal);
   toast((t ? t.label : r.terminal) + "에서 열었습니다." +
@@ -308,7 +309,7 @@ async function prAsk(id) {
   const project = $("proj").value;
   const d = prDialog();
   const paint = (body, acts) => {
-    d.innerHTML = `<h3 id="prbox-h">PR 만들기 — 시작하기 전에</h3>${body}` +
+    d.innerHTML = `<h3 id="prbox-h">PR 만들기: 시작하기 전에</h3>${body}` +
       `<div class="prbox-acts">${acts}</div>`;
   };
   const close = `<button class="go sm ghost" onclick="$('prbox').close()">닫기</button>`;
@@ -321,7 +322,7 @@ async function prAsk(id) {
   } catch (e) { /* 아래서 안내 */ }
   if (!d.open) return;                          // 확인하는 사이 닫았다
   if (!r || !r.ok)
-    return paint(`<p class="prbox-warn">저장소를 확인하지 못했습니다 — ${esc((r && r.error) || "대시보드에 닿지 않습니다")}</p>`,
+    return paint(`<p class="prbox-warn">저장소를 확인하지 못했습니다: ${esc((r && r.error) || "대시보드에 닿지 않습니다")}</p>`,
                  `<button class="go sm" onclick="prAsk(${+id})">다시 확인</button>${close}`);
   const row = (k, v) => v ? `<dt>${k}</dt><dd class="mono">${esc(v)}</dd>` : "";
   const facts = `<dl class="prbox-facts">${row("페이지", r.page)}${row("저장소 폴더", r.cwd)}` +
@@ -342,7 +343,7 @@ async function prAsk(id) {
     (r.off_base
       ? `<p class="prbox-warn">지금 브랜치가 기본 브랜치(${esc(r.base)})가 아닙니다. 새 브랜치는 지금 브랜치에서 갈라지므로 ` +
         `그 브랜치의 커밋이 PR 에 같이 실립니다. 기본 브랜치에서 시작하려면 먼저 옮겨 두세요.</p>` : "") +
-    (r.git_ok ? "" : `<p class="sub">git 상태를 읽지 못했습니다 — 시작하면 돌리는 쪽이 다시 확인합니다.</p>`) +
+    (r.git_ok ? "" : `<p class="sub">git 상태를 읽지 못했습니다. 시작하면 돌리는 쪽이 다시 확인합니다.</p>`) +
     `<p>이 PC 가 위 폴더에서 새 브랜치를 만들어 수정안을 적용하고, 커밋·push 한 뒤 PR 을 엽니다. ` +
     `몇 분 걸리고 창을 닫아도 계속 돕니다. 머지는 직접 합니다.</p>`,
     `<button class="go sm" onclick="$('prbox').close();prApply(${+id})">시작</button>` +
@@ -355,7 +356,7 @@ async function prApply(id, btn) {
   if (!ok || !r.ok) {
     if (btn) btn.disabled = false;
     if (r && r.job) prWatch(project, r.job);
-    return toast((r && r.error) || "PR 만들기를 시작하지 못했습니다. 잠시 뒤 다시 눌러 주세요.", "bad");
+    return toast((r && (r.error || r.detail)) || "PR 만들기를 시작하지 못했습니다. 잠시 뒤 다시 눌러 주세요.", "bad");
   }
   toast("PR 만들기를 시작했습니다. 저장소에서 고치고 PR 을 여는 데 몇 분 걸립니다.", "ok");
   prWatch(project, r.job);
@@ -374,12 +375,15 @@ function prWatch(project, j) {
                              "&id=" + encodeURIComponent(j.id))).json();
     } catch (e) { return; }                   // 한 번 못 물었다고 멈추지 않는다
     const now = r && r.job;
+    // 응답은 왔는데 그 일이 없다(서버가 잊었거나 재시작) — 더 물어도 안 나온다. 안 끊으면
+    // 이 타이머가 화면을 닫을 때까지 4초마다 영원히 돈다.
+    const gone = !!r && r.ok !== false && !r.error && !r.detail && !now;
+    if (gone || now && now.status !== "running") { clearInterval(PR_POLL[key]); delete PR_POLL[key]; }
     if (!now || now.status === "running") return;
-    clearInterval(PR_POLL[key]); delete PR_POLL[key];
     if ($("proj").value !== project) return;  // 그새 다른 사이트로 갔다 — 돌아오면 playSync 가 다시 받는다
     s.jobs[j.id] = now;
     if (now.status === "done") toast("PR 을 열었습니다. 서랍의 [PR 보기]로 갑니다.", "ok");
-    else toast("PR 을 못 만들었습니다 — " + (now.error || "이유를 못 받았습니다."), "bad");
+    else toast("PR 을 못 만들었습니다: " + (now.error || "이유를 못 받았습니다."), "bad");
     load();
   }, 4000);
 }

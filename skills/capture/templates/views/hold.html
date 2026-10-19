@@ -81,7 +81,8 @@
   background:var(--sunk); cursor:pointer; }
 #hold-sec .hd-row:hover { background:var(--accent-wash); }
 #hold-sec .hd-who { min-width:0; display:flex; flex-direction:column; align-items:flex-start; gap:2px; }
-#hold-sec .hd-jump { all:unset; box-sizing:border-box; max-width:100%; cursor:pointer; overflow-wrap:anywhere;
+#hold-sec .hd-jump { all:unset; box-sizing:border-box; display:inline-flex; align-items:center; min-height:44px;
+  max-width:100%; cursor:pointer; overflow-wrap:anywhere;
   font:500 var(--fs-2)/1.45 var(--mono); color:var(--ink); border-radius:6px; }
 #hold-sec .hd-jump:hover { color:var(--accent); }
 #hold-sec .hd-jump:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
@@ -192,7 +193,6 @@
 #holds .hd-ol .opp.hd-on { background:var(--accent-wash); }
 /* 서랍 본문 — 공용 서랍(.sdr)은 body 끝에 서서 #holds 밖이다. 비교 표 조각은 .hd-dr 로 같은 모양을 받는다. */
 .hd-dr .v { font-variant-numeric:tabular-nums; white-space:nowrap; }
-.hd-dr .chip { margin:0; white-space:nowrap; }
 .hd-dr .det { padding-left:0; }
 .hd-dr .hd-why { margin:0 0 var(--sp-3); }
 .hd-dr .hd-sec { margin:var(--sp-4) 0 var(--sp-2); font:650 var(--fs-2)/1.4 var(--sans); }
@@ -204,7 +204,6 @@
 /* 접힌 줄의 한 줄 — 고치기 전 → 지금. 숫자만 tabular-nums. */
 #holds .hd-ba1 { font-size:var(--fs-1); color:var(--sub); margin:4px 0 0; display:flex; flex-wrap:wrap;
   align-items:center; gap:4px 8px; }
-#holds .hd-ba1 .chip { margin:0; white-space:nowrap; }
 /* 빈 상태 */
 #holds .hd-empty { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
   gap:var(--sp-3) var(--sp-5); }
@@ -233,7 +232,7 @@
     </div>
     <div class="card c4" id="hd-donut"></div>
   </div>
-  <div id="holds"></div>
+  <div id="holds"><span class="skel box" role="status" aria-label="관찰 중인 페이지를 불러오는 중"></span></div>
 </section>
 
 <script>
@@ -249,7 +248,9 @@ let HD_CTX = { hs: [], byId: {}, sort: {} };
 let HD_BOUND = false;
 const HD_md = s => String(s || "").slice(5);
 // 알약 안은 한 덩어리다 — 칩이 flex 라 자식마다 사이가 벌어진다.
-const HD_pill = (cls, html) => `<span class="chip ${cls}"><span>${html}</span></span>`;
+// 눌리지 않는 값 표시라 토글 칩(.chip)이 아니라 배지다. 호출부의 ne/up/dn 은 배지 색조로 옮긴다.
+const HD_PILL_CLS = {ne: "muted", up: "ok", dn: "warn"};
+const HD_pill = (cls, html) => `<span class="badge ${HD_PILL_CLS[cls] || cls}"><span>${html}</span></span>`;
 // 변화 알약 — 순위는 작을수록 좋다. 올랐으면 up, 내렸으면 dn, 같거나 흔들리면(thin — 서버 판정) ne.
 function HD_posPill(b, a, thin) {
   const d = Math.round((b - a) * 10) / 10;
@@ -266,18 +267,18 @@ function HD_numPill(b, a, unit) {
 function HD_baLine(x) {
   if (!x || !x.after) return `<div class="hd-ba1">고친 뒤 수집한 실적이 아직 없습니다.</div>`;
   const b = x.before, a = x.after;
-  const m = v => v ? `<span class="v">${v.position}</span>위 · 클릭 <span class="v">${num(v.clicks)}</span>` : "—";
+  const m = v => v ? `<span class="v">${v.position}</span>위 · 클릭 <span class="v">${num(v.clicks)}</span>` : "-";
   return `<div class="hd-ba1"><span>고치기 전 ${m(b)} → 지금 ${m(a)}</span>${b ? HD_posPill(b.position, a.position, x.thin) : ""}${
     x.thin ? `<span>노출이 적어 순위는 흔들립니다</span>` : ""}</div>`;
 }
 // 전·후 비교 아래의 주석 — 어느 쪽이 비었는지, 실적 창에 고치기 전 날이 며칠 섞였는지, 흔들림.
 function HD_note(x) {
   const b = x.before, a = x.after;
-  const note = !a ? "고친 뒤 수집한 실적이 아직 없습니다 — 다음 수집부터 '지금'이 찹니다."
-    : !b ? "고치기 전 수집분에 이 대상이 없습니다(노출이 없었거나 수집 전) — '지금'만 봅니다."
-    : x.pre_days > 0 ? `'지금'의 실적${HD_PER ? `(${HD_PER}일)` : ""} 중 ${x.pre_days}일이 고치기 전입니다 — 관찰이 끝날 때쯤 온전한 비교가 됩니다.`
+  const note = !a ? "고친 뒤 수집한 실적이 아직 없습니다. 다음 수집부터 '지금'이 찹니다."
+    : !b ? "고치기 전 수집분에 이 대상이 없습니다(노출이 없었거나 수집 전). '지금'만 봅니다."
+    : x.pre_days > 0 ? `'지금'의 실적${HD_PER ? `(${HD_PER}일)` : ""} 중 ${x.pre_days}일이 고치기 전입니다. 관찰이 끝날 때쯤 온전한 비교가 됩니다.`
     : `'지금'의 실적${HD_PER ? `(${HD_PER}일)` : ""}이 전부 고친 뒤입니다.`;
-  const thin = x.thin ? " 노출이 적은 쪽이 있어 순위 변화는 흔들림일 수 있습니다 — 노출·클릭을 먼저 봅니다." : "";
+  const thin = x.thin ? " 노출이 적은 쪽이 있어 순위 변화는 흔들림일 수 있습니다. 노출·클릭을 먼저 봅니다." : "";
   return note + thin;
 }
 // 순위 자 — 작을수록 좋아서 막대 길이로 그리면 거꾸로 읽힌다. 1위가 왼쪽인 자 위에 전·후 점 둘.
@@ -305,7 +306,7 @@ function HD_cmp(x, what) {
     const mx = Math.max(vb || 0, va || 0) || 1;
     const one = (cls, tag, val) => `<div class="hd-br ${cls}"><span class="t">${tag}</span>
       <span class="tr"><i style="width:${val == null ? 0 : Math.max(2, val / mx * 100)}%"></i></span>
-      <span class="n">${val == null ? "—" : fmt(val)}</span></div>`;
+      <span class="n">${val == null ? "-" : fmt(val)}</span></div>`;
     return `<div class="hd-cr" role="row"><span class="nm" role="rowheader">${name}</span>
       <div class="hd-vis" role="cell">${one("was", "전", vb)}${one("now", "지금", va)}</div>
       <span class="chg" role="cell">${b && a ? chg() : ""}</span></div>`;
@@ -313,8 +314,8 @@ function HD_cmp(x, what) {
   const rank = () => {
     const pb = b ? b.position : null, pa = a ? a.position : null;
     return `<div class="hd-cr" role="row"><span class="nm" role="rowheader">평균 순위</span>
-      <div class="hd-vis" role="cell"><div class="hd-rk"><span class="was">${pb != null ? `<span class="v">${pb}</span>위` : "—"}</span>
-        <span class="now">${pa != null ? `지금 <span class="v">${pa}</span>위` : "—"}</span></div>${HD_scale(pb, pa, x.thin)}</div>
+      <div class="hd-vis" role="cell"><div class="hd-rk"><span class="was">${pb != null ? `<span class="v">${pb}</span>위` : "-"}</span>
+        <span class="now">${pa != null ? `지금 <span class="v">${pa}</span>위` : "-"}</span></div>${HD_scale(pb, pa, x.thin)}</div>
       <span class="chg" role="cell">${b && a ? HD_posPill(b.position, a.position, x.thin) : ""}</span></div>`;
   };
   const rate = m => m.impressions ? m.clicks * 100 / m.impressions : null;
@@ -341,7 +342,7 @@ function HD_rows(list, mode) {
   // 줄은 한 줄 요약뿐이다. 누르면 펼쳐지지 않고 오른쪽 서랍(SM.drawer)이 열린다 — 개요와 같다.
   // <details> 를 그대로 둔 건 접힌 줄의 격자·칩 CSS 를 빌리기 위해서고, 토글은 HD_bind 가 막는다.
   return ord.map(o => `<details class="opp${HD_DR === o.id ? " hd-on" : ""}" data-opp="${o.id}">
-      <summary>${oppScore(o)}<div>${window.oppWhy(o)}${HD_baLine(o.hold)}</div></summary></details>`).join("");
+      <summary aria-haspopup="dialog">${oppScore(o)}<div>${window.oppWhy(o)}${HD_baLine(o.hold)}</div></summary></details>`).join("");
 }
 // 서랍 — 줄 하나의 전·후 비교와 할 일 패널. 기회가 [관찰 중] 묶음에서 빠지면(상태를 바꿨다) 닫는다.
 let HD_DR = null;
@@ -407,7 +408,7 @@ function HD_row(h, i, byId) {
       aria-label="${esc(urlPath(h.page))} 상세로 이동">${esc(urlPath(h.page))}</button>
       <span class="hd-meta">작업 ${nw}건${no ? ` · 뺀 기회 ${no}건` : ""}</span></div>
     <div class="hd-chg">${chg}</div>
-    <div class="hd-left">${left != null ? `<span class="v">${left}</span>일 남음` : "—"}</div>
+    <div class="hd-left">${left != null ? `<span class="v">${left}</span>일 남음` : "-"}</div>
     <div class="hd-track"${label ? ` role="img" aria-label="${esc(label)}"` : ""}>
       <div class="hd-bar">${pct == null ? "" : `<i class="f" style="width:${pct.toFixed(1)}%"></i>`}${ticks}</div>
       <div class="hd-ax"><span>${esc(HD_md(h.since))} 시작</span>${pct == null ? "" : `<span class="mk" style="left:${at}%">오늘</span>`}
@@ -446,7 +447,7 @@ function HD_card(h, byId, i) {
         <p class="hd-cs">관찰이 끝나면 할 일 목록으로 돌아옵니다.</p></div>${sortBar}</div>
         ${opps.length ? `<div class="hd-ol" data-hd-list="${i}">${HD_rows(opps, mode)}</div>`
           : more > 0 ? "" : `<p class="none">이 페이지에 새로 선 기회는 없습니다.</p>`}
-        ${more > 0 ? `<p class="none">목록 밖 ${more}건은 점수가 낮아 화면 목록(상위 200건)에 안 실린 기회입니다 — 관찰이 끝나면 같이 돌아옵니다.</p>` : ""}
+        ${more > 0 ? `<p class="none">목록 밖 ${more}건은 점수가 낮아 화면 목록(상위 200건)에 안 실린 기회입니다. 관찰이 끝나면 같이 돌아옵니다.</p>` : ""}
       </article>
     </div></div>`;
 }
@@ -485,19 +486,19 @@ function HD_kpis(A) {
   const who = esc(urlPath(f.page));
   const end = HD_kpiCard(multi ? "가장 먼저 끝나는 관찰" : "관찰 끝까지",
     HD_pill("ne", `<span class="hd-day">${esc(HD_md(f.until))}</span> 종료`),
-    pr.left != null ? pr.left : "—", pr.left != null ? "일 남음" : "",
+    pr.left != null ? pr.left : "-", pr.left != null ? "일 남음" : "",
     pr.pct == null ? "" : `<div class="hd-bar" role="img" aria-label="관찰 ${pr.total}일 중 ${Math.round(pr.total - pr.left)}일 지남"><i class="f" style="width:${pr.pct.toFixed(1)}%"></i></div>`,
     pr.pct == null ? who : `${who} · ${pr.total}일 관찰 중 ${Math.round(pr.total - pr.left)}일 지남`);
   const rk = A.pos ? HD_kpiCard("평균 순위", HD_posPill(A.pos[0], A.pos[1], A.thin),
       A.pos[1], "위", HD_scale(A.pos[0], A.pos[1], A.thin),
       `고치기 전 ${A.pos[0]}위${multi ? " · 페이지 평균" : ""}${A.thin ? " · 노출이 적어 흔들립니다" : ""}`)
-    : HD_kpiCard("평균 순위", HD_pill("ne", "비교 전"), "—", "", "", "고친 뒤 수집한 실적이 아직 없습니다.");
+    : HD_kpiCard("평균 순위", HD_pill("ne", "비교 전"), "-", "", "", "고친 뒤 수집한 실적이 아직 없습니다.");
   const mx = Math.max(A.cb, A.ca) || 1;
   const mini = (cls, t, v) => `<div class="hd-mini ${cls}"><span>${t}</span><span class="tr"><i style="width:${Math.max(2, v / mx * 100)}%"></i></span></div>`;
   const ck = A.both ? HD_kpiCard("클릭", HD_numPill(A.cb, A.ca, ""), num(A.ca), "회",
       mini("was", "전", A.cb) + mini("now", "지금", A.ca),
       `고치기 전 ${num(A.cb)}회 · 노출 ${num(A.ib)} → ${num(A.ia)}`)
-    : HD_kpiCard("클릭", HD_pill("ne", "비교 전"), "—", "", "", "고친 뒤 수집한 실적이 아직 없습니다.");
+    : HD_kpiCard("클릭", HD_pill("ne", "비교 전"), "-", "", "", "고친 뒤 수집한 실적이 아직 없습니다.");
   const avs = A.opps ? `<div class="hd-avs">${hsAvs(A)}</div>` : "";
   const oc = HD_kpiCard("뺀 기회", HD_pill("ne", `페이지 ${A.n}곳`), A.opps, "건", avs,
     "관찰이 끝나면 할 일 목록으로 돌아옵니다.");
@@ -511,7 +512,7 @@ function hsAvs(A) {
 function HD_donut(A) {
   const head = `<div class="hd-ch"><div><h3 class="hd-ct">고친 뒤 실적의 몫</h3>
     <p class="hd-cs">${HD_PER ? `지금 실적 ${HD_PER}일 중 고친 뒤에 쌓인 날` : "지금 실적의 창 길이가 없습니다"}${A.n > 1 ? " · 페이지 합산" : ""}</p></div></div>`;
-  if (!A.win) return head + `<p class="none">고친 뒤 수집한 실적이 아직 없습니다 — 다음 수집부터 채워집니다.</p>`;
+  if (!A.win) return head + `<p class="none">고친 뒤 수집한 실적이 아직 없습니다. 다음 수집부터 채워집니다.</p>`;
   const ring = window.chDonut ? window.chDonut([
     { label: `고친 뒤 ${A.post}일`, value: A.post, on: true },
     { label: `고치기 전 ${A.pre}일`, value: A.pre }], { width: 132, unit: "일" }) : "";

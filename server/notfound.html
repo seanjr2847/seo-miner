@@ -3,17 +3,19 @@
 <style>
 /* 404 — 방침(privacy.html)과 같은 판의 팔레트다(랜딩 토큰과 값이 다르다 — 디자인 결정이라
    합치지 않았다). 서체 스택·로고·서체 링크는 사본이 아니라 슬롯이다(docs/adr/0004). */
-:root{--sans:@@SANS@@;--mono:@@MONO_PLEX@@}
-body{margin:0;background:#E6E9E4}
+:root{--sans:@@SANS@@;--mono:@@MONO_PLEX@@;--stone:#E6E9E4;--ink:#121714}
+@media (prefers-color-scheme:dark){ :root{--stone:#101513;--ink:#E4EBE7} }
+body{margin:0;background:var(--stone)}
 .nf-bar{background:#121714}
 .nf-bar > div{max-width:1120px;margin:0 auto;padding:12px 24px;display:flex;
   align-items:center;gap:16px}
-.nf-mark{font:600 15px/1 var(--mono);letter-spacing:.06em;color:#E6E9E4;text-decoration:none}
+.nf-mark{font:600 15px/1 var(--mono);letter-spacing:.06em;color:#E6E9E4;text-decoration:none;
+  display:inline-flex;align-items:center;min-height:44px}
 .nf-mark b{color:#57B49C;font-weight:600}
 .nf-sp{flex:1}
 .nf-act{font:500 13px/1 var(--sans);color:#F7F8F5;background:#22705F;border-radius:3px;
-  padding:0 15px;min-height:40px;display:inline-flex;align-items:center;text-decoration:none}
-.nf-main{font:15px/1.7 var(--sans);color:#121714;max-width:36rem;margin:0 auto;
+  padding:0 15px;min-height:44px;display:inline-flex;align-items:center;text-decoration:none}
+.nf-main{font:15px/1.7 var(--sans);color:var(--ink);max-width:36rem;margin:0 auto;
   padding:12vh 24px 0;word-break:keep-all}
 .nf-main h1{font-size:23px;margin:0 0 8px}
 .nf-row{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:20px}
@@ -28,6 +30,6 @@ body{margin:0;background:#E6E9E4}
 </div></header>
 <main class="nf-main">
   <h1>페이지를 찾을 수 없습니다</h1>
-  <p>주소가 바뀌었거나 잘못 적혔습니다. seo·miner는 서치콘솔 숫자로 다음에 고칠 검색어를 고르는 도구입니다.</p>
+  <p>주소가 바뀌었거나 잘못 적혔습니다.</p>
   <p class="nf-row"><a class="nf-home" href="/">처음으로</a></p>
 </main>

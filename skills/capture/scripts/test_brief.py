@@ -96,7 +96,7 @@ def test_mention_asks_for_the_link_and_quotes_where_we_were_named():
     assert brief.shape_of("backlink_mention") == "mention"
     assert t.startswith(brief.SHAPES["mention"]["intro"]), t[:200]
     assert "연락할 도메인 (우리 이름을 쓴 곳): www.news.example" in t
-    assert "https://www.news.example/a — 포럼 성료 (2026-04-02 · ko)" in t
+    assert "https://www.news.example/a | 포럼 성료 (2026-04-02 · ko)" in t
     assert "찾은 이름 '디아더 피부과': \"왼쪽부터 디아더 피부과 이승주 대표원장\"" in t
     assert "이미 링크한 기사" not in t
     # 연락 꼴의 '링크를 달라고 하지 말라'가 실리면 머리말과 규칙이 부딪친다
@@ -148,7 +148,7 @@ def test_fix_page_carries_h2_list_and_advice():
     t = brief.text(_opp("striking_distance", "검색어", band="page2"), ctx, "ko-KR")
     assert "H2 (3개): 첫째 / 둘째 / 셋째" in t
     assert "내부 링크 1개 · 외부 링크 2개 · 이미지 3개 (alt 없음 2개)" in t
-    assert "## 진단 — 고쳐야 할 것" in t and "[title]" in t
+    assert "## 진단: 고쳐야 할 것" in t and "[title]" in t
     assert ("구글 실적 2026-08-25, 최근 28일 평균 (검색어 하나): 평균 12.4위 · 노출 1,204 · 클릭 8 · "
             "1페이지까지 2.4칸") in t, t
     assert "기간 평균 게재순위" in t
@@ -277,7 +277,7 @@ def test_ai_gap_ladder_on_recommendation_questions_only():
     assert "추천은 내 글보다 웹 전반의 평판" in t, t
     old = _ai_row(category="비교", recommended=None, rec_checks=0)
     t2 = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [old]}, "ko-KR")
-    assert "추천 목록 — (이 판정이 생기기 전에 받은 답이라 안 봤습니다)" in t2, t2
+    assert "추천 목록: (이 판정이 생기기 전에 받은 답이라 안 봤습니다)" in t2, t2
     assert "추천 목록 0/" not in t2 and "웹 전반의 평판" not in t2
     t3 = brief.text(_opp("ai_citation_gap", "무슨 도구가 좋아?"), {"ai_by_prompt": [_ai_row()]},
                     "ko-KR")
@@ -316,7 +316,7 @@ def test_coverage_and_pseo_bring_sibling_keywords():
                                         {"keyword": "도구 요금제", "volume": None}]}}
     t = brief.text(_opp("coverage", "cluster:가격"), ctx, "ko-KR")
     assert "주제 (추적 키워드 묶음): 가격" in t
-    assert "| 도구 가격 | 320 |" in t and "| 도구 요금제 | — |" in t
+    assert "| 도구 가격 | 320 |" in t and "| 도구 요금제 | - |" in t
     t2 = brief.text(_opp("pseo_pattern", "서울 세무사 추천"),
                     {"query_pages": {"서울 세무사 추천": _pages(URL)}, "pseo_groups": [_pseo_group()]},
                     "ko-KR")
@@ -347,11 +347,11 @@ def test_pseo_brief_speaks_frame_and_values():
            "pseo_groups": [_pseo_group()]}
     body = brief.build(_opp("pseo_pattern", "서울 세무사 추천"), ctx, "ko-KR")["body"]
     tgt = body.split("## 대상")[1].split("\n## ")[0]
-    assert "틀 '{X} 세무사 추천' — 바뀌는 값 3개" in tgt, tgt
+    assert "틀 '{X} 세무사 추천', 바뀌는 값 3개" in tgt, tgt
     ev = body.split("## 근거")[1].split("\n## ")[0]
     assert "| 바뀌는 값 | 검색어 |" in ev, ev
     assert "| 서울 | 서울 세무사 추천 (+ 세무사 추천 서울) | 110 | 0 | 14.1위 | " + URL + " (전용) |" in ev, ev
-    assert "| 부산 | 부산 세무사 추천 | 80 | 1 | 18.0위 | — |" in ev, ev
+    assert "| 부산 | 부산 세무사 추천 | 80 | 1 | 18.0위 | - |" in ev, ev
     assert "낱말 2개 이상 겹침" not in body and "아무 검색어 추천" not in body, body
     # 찍을 값과 이미 전용 페이지가 있는 값을 나눠 적는다 — 값마다 페이지가 있는 무리를 '찍을
     # 자리'로 세우던 때는 받는 쪽이 표의 페이지 칸을 읽고 짐작했다(noti #41)
@@ -381,7 +381,7 @@ def test_pseo_brief_uses_the_ranked_seed_page_as_hub():
     assert "새 글이 색인되고" not in body, body
     # 맨 위 세 줄과 상위 글 H2 절도 '새 글'을 말하지 않는다 — 일은 틀 한 벌이다
     summ = body.split(brief.SUMMARY_HEAD)[1].split("\n## ")[0]
-    assert "- 일: 템플릿 설계 — 틀 '{X} 세무사 추천'" in summ and "새 글" not in summ, summ
+    assert "- 일: 템플릿 설계: 틀 '{X} 세무사 추천'" in summ and "새 글" not in summ, summ
     assert "허브 페이지에 더할 링크 목록" in summ, summ        # 잘려서 '기존 페이지를 만들라'로 안 읽힌다
     assert "새 글" not in body and brief.SERP_OUTLINE_HEAD in body and "상위 글의 형식" in body, body
     goal = body.split(brief.GOAL_HEAD)[1].split("\n## ")[0]
@@ -691,7 +691,7 @@ def test_static_html_caveat_when_page_is_a_js_shell():
     plain = brief.build(_opp("ctr_gap", "검색어"),
                         {"query_pages": {"검색어": _pages(URL)},
                          "page_audits": {URL: _audit(js_shell=0)}})["body"]
-    assert "구조화 데이터: (없음) — 정적 HTML 기준" in plain, plain
+    assert "구조화 데이터: (없음) (정적 HTML 기준)" in plain, plain
     assert "자바스크립트로 그리는 것으로 보입니다" not in plain
 
     spa = brief.build(_opp("ctr_gap", "검색어"),
@@ -841,7 +841,7 @@ def test_technical_findings_do_not_pad_a_content_todo_list():
            "vitals_date": "2026-09-09", "vitals": {URL: {"mobile": _vitals()}}}
 
     fix = brief.build(_opp("ctr_gap", "검색어"), ctx)["body"]
-    todo = fix.split("## 진단 — 고쳐야 할 것")[1].split("##")[0]
+    todo = fix.split("## 진단: 고쳐야 할 것")[1].split("##")[0]
     assert "[title]" in todo and "[모바일]" not in todo and "[속도]" not in todo, todo
     aside = fix.split("## 이 페이지에서 같이 눈에 띈 것")[1].split("##")[0]
     assert "[모바일]" in aside and "[속도]" in aside, aside
@@ -885,8 +885,8 @@ def test_ai_bot_block_is_its_own_request_and_warns_the_citation_brief():
     body = b["body"]
     assert "막힌 AI 크롤러 (robots.txt 의 User-agent): OAI-SearchBot" in body, body
     # 막힌 것만 주면 "이것만 열면 되나" 로 읽힌다 — 허용도, 용도도 같은 표에 놓는다
-    assert "| OAI-SearchBot | 검색·인용 색인 | ChatGPT 검색 | 차단 — 인용 막힘 | Disallow: / |" in body, body
-    assert "| GPTBot | 학습 | OpenAI 모델 학습 | 학습만 막음 — 인용과 무관(권장되는 중간 지점) |" in body, body
+    assert "| OAI-SearchBot | 검색·인용 색인 | ChatGPT 검색 | 차단: 인용 막힘 | Disallow: / |" in body, body
+    assert "| GPTBot | 학습 | OpenAI 모델 학습 | 학습만 막음. 인용과 무관(권장되는 중간 지점) |" in body, body
     assert "| ClaudeBot | 학습 | Claude 모델 학습 | 허용 |" in body, body
     assert "검색·인용용 1개가 막혀 있습니다 (학습용 1개 차단은 인용과 무관)" in body, body
     assert "여는 것이 늘 정답은 아닙니다" in body, "의도적 차단을 되돌리라고 시킨다"
@@ -911,7 +911,7 @@ def test_ai_bot_block_is_its_own_request_and_warns_the_citation_brief():
     legacy = brief.build(_opp("ai_citation_gap", "질문"), {
         "ai_bots": [bot("GPTBot", None, None, "Disallow: /")], **ask})["body"]
     assert "먼저 볼 것" not in legacy, legacy
-    assert "| GPTBot | 모름 | — | 차단 — 용도 모름 |" in brief.build(
+    assert "| GPTBot | 모름 | - | 차단: 용도 모름 |" in brief.build(
         _opp("ai_bot_blocked", "GPTBot"), {"ai_bots": [bot("GPTBot", None, None, "Disallow: /")]})["body"]
 
     # Bingbot 은 AI 만의 문제가 아니다
@@ -1328,9 +1328,9 @@ _FLAT = dict(tables=0, lists=0, h2_questions=0, lead_words=0, author="")   # 추
 
 
 def _diag(body: str) -> str:
-    """요청문의 '진단 — 고쳐야 할 것' 구간만. 산출물·상태 줄과 섞어 보면 늘 참인 검사가 된다."""
-    return body.split("## 진단 — 고쳐야 할 것")[1].split("\n## ")[0] \
-        if "## 진단 — 고쳐야 할 것" in body else ""
+    """요청문의 '진단: 고쳐야 할 것' 구간만. 산출물·상태 줄과 섞어 보면 늘 참인 검사가 된다."""
+    return body.split("## 진단: 고쳐야 할 것")[1].split("\n## ")[0] \
+        if "## 진단: 고쳐야 할 것" in body else ""
 
 
 def test_extract_diagnosis_rides_only_on_ai_kinds():
@@ -1506,10 +1506,10 @@ def test_fix_page_brief_is_scoped_to_the_page_not_the_query():
     # 대괄호만 두면 "[템플릿 패턴]" 이 채우다 만 자리처럼 읽힌다 — 종류 이름이라고 밝힌다.
     # 다른 종류라 이 요청문이 덮지 않는다(test_page_siblings_cover_only_same_deliverables).
     assert ("같은 검색어로 선 다른 종류의 기회: "
-            + scoring.kind_label("pseo_pattern") + " — ") in sib, sib
+            + scoring.kind_label("pseo_pattern") + ". ") in sib, sib
     assert "기회: [" not in sib, "종류 이름이 빈칸처럼 읽히는 대괄호로 남아 있다"
     assert "다른 검색어의 열린 기회가 7건 있습니다" in sib, sib
-    assert f"] milia vs syringoma —" not in sib, "누른 검색어가 다른 기회로 또 세어진다"
+    assert not re.search(r"\] milia vs syringoma(?=[:,]|$)", sib, re.M), "누른 검색어가 다른 기회로 또 세어진다"
     # 검색어 하나에 종류가 여럿이면 **한 줄**이다 — 종류마다 줄을 세우면 같은 검색어·같은
     # 수치가 두 줄로 나와 "다른 기회 2건"이 사실상 하나가 된다.
     sv = [ln for ln in sib.splitlines() if ln.startswith("- ") and "syringoma vs milia" in ln]
@@ -1522,7 +1522,7 @@ def test_fix_page_brief_is_scoped_to_the_page_not_the_query():
     assert "기회가 선 시점의 값입니다" in sib, sib
     assert f"[{scoring.kind_label('aio_exposure')}] milia vs syringoma\n" not in sib + "\n", \
         "누른 기회가 자기 목록에 있다"
-    assert f"[{scoring.kind_label('ctr_gap')}] syringoma —" not in sib, "닫힌(done) 기회가 실렸다"
+    assert not re.search(re.escape(f"[{scoring.kind_label('ctr_gap')}] syringoma") + r"(?=[:,]|$)", sib, re.M), "닫힌(done) 기회가 실렸다"
     assert "다른 페이지 검색어" not in sib and _SM not in sib, sib
     # 화면 버튼이 어떻게 도는지는 요청문을 받는 쪽이 쓸 데가 없다 — 모델에게 필요 없는
     # UI 설명이 섞여 있었다. 결과("같이 닫힌다")만 말한다.
@@ -1624,7 +1624,7 @@ def test_output_language_follows_the_page_not_the_site():
     o = {**_opp("aio_exposure", "seoul juvelook", band="beyond"), "band": "beyond"}
     body = brief.build(o, ctx, "ko-KR")["body"]
     target = body.split("## 대상")[1].split("\n## ")[0]
-    assert "- 페이지 언어: 영어 (주소의 /en/) — 사이트 기본(한국어)과 다릅니다" in target, target
+    assert "- 페이지 언어: 영어 (주소의 /en/). 사이트 기본(한국어)과 다릅니다" in target, target
     assert "산출물은 영어로 쓰고, 길이 기준은 title 60자 이내, meta description 160자 이내" in target
     # 주소의 /en/ 이 html lang 보다 먼저다 — 템플릿째 html lang=ko 를 단 /en/ 페이지에
     # "산출물 언어: 한국어(사이트 기본)"가 나갔다
@@ -1794,14 +1794,14 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     body = brief.build(ctx["opps"][0], ctx, "ko-KR")["body"]
     # 1. 숫자의 범위를 밝힌다 — 검색어 하나(페이지 2개 합) vs 이 페이지, 그리고 페이지 합계
     ev = body.split("## 근거")[1].split("\n## ")[0]
-    assert "(검색어 하나 — 내 페이지 2개 합, 순위는 페이지별 평균): 평균 6.3위 · 노출 39" in ev, ev
+    assert "(검색어 하나: 내 페이지 2개 합, 순위는 페이지별 평균): 평균 6.3위 · 노출 39" in ev, ev
     # 페이지가 둘 이상이면 어느 페이지끼리 나눠 갖는지가 새 정보라 그대로 그린다
     assert "| 이 검색어 하나의 내 페이지 |" in ev, ev
     assert "이 페이지 합계: 검색어 2개 · 노출 44 · 클릭 0" in body, body
     # '다른 기회'에 자기 검색어가 또 세어지지 않고, 옛 근거 문장(08-25·0.0칸) 대신 최신 값
     sib = body.split(brief.PAGE_SIBLINGS_HEAD)[1].split("\n## ")[0]
     assert "같은 검색어로 선 다른 종류의 기회" in sib and "다른 검색어의 열린 기회가 1건" in sib, sib
-    assert "ptt korea — 이 페이지 3.6위 · 노출 12 · 클릭 0" in sib and "0.0칸" not in sib, sib
+    assert "ptt korea: 이 페이지 3.6위 · 노출 12 · 클릭 0" in sib and "0.0칸" not in sib, sib
     # 3. 1페이지 안 클릭 0 — 순위가 아니라 스니펫·의도라고 먼저 말한다
     assert "1페이지 안(5.8위)인데 노출 39에 클릭 0입니다" in ev, ev
     assert "순위를 더 올려도 이대로면 클릭은 늘지 않습니다" in ev, ev
@@ -1826,8 +1826,8 @@ def test_striking_brief_on_page_one_with_zero_clicks():
     assert "'안 고침'" in form and "뒤로 미루는 '이번 아님'은 쓰지 않습니다" in form, form
     # 6. 진단이 놓치던 것 — 링크 과다·그림 위주·앵커에 검색어 말 없음·Person
     diag = body.split("## 진단")[1].split("\n## ")[0]
-    assert "내보내는 내부 링크 64개 — 본문 11단어당 1개" in diag, diag
-    assert "이미지 12개에 본문 697단어 — 그림 위주입니다" in diag, diag
+    assert "내보내는 내부 링크 64개, 본문 11단어당 1개" in diag, diag
+    assert "이미지 12개에 본문 697단어라 그림 위주입니다" in diag, diag
     # 앵커 지시·Person 안내는 그 산출물(이 페이지로 걸 링크·저자)이 있는 요청문에서만 선다 —
     # 이 요청문(1페이지 클릭)에는 둘 다 없다(theotherskin #61 이 바로 이 꼴이었다)
     assert "를 담은 것이 하나도 없습니다" not in body, body
@@ -2680,7 +2680,7 @@ def test_top_results_formats_and_serp_features_reach_the_brief():
                                                     "tables": 2, "lists": 3, "images": 6, "videos": 1}},
            "rank_by_kw": {"검색어": {"features": ["video", "people_also_ask", "ai_overview"]}}}
     body = brief.build(_opp("ctr_gap", "검색어"), ctx, "ko-KR")["body"]
-    assert "| 1위 | 900 | 2 | 3 | 6 | 1 |" in body and "| 우리 페이지 | 120 | 0 | 1 | 3 | — |" in body, body
+    assert "| 1위 | 900 | 2 | 3 | 6 | 1 |" in body and "| 우리 페이지 | 120 | 0 | 1 | 3 | - |" in body, body
     assert brief.SERP_FORMAT_HINT["video"] in body and brief.SERP_FORMAT_HINT["people_also_ask"] in body
     # 옛 행(형식 칸 NULL)에는 형식 표가 안 선다 — 0 을 지어내지 않는다
     ctx["serp_outlines"]["https://r.example/1"].update(tables=None, lists=None, images=None,
@@ -2702,7 +2702,7 @@ def test_ctr_brief_carries_what_the_rank_check_saw():
                                    "features": ["ai_overview", "people_also_ask"]}}}
     o = _opp("ctr_gap", "검색어", band="aio")
     body = brief.build(o, ctx, "ko-KR")["body"]
-    assert "구글 AI 요약 있음 — 우리 링크를 인용합니다 (2026-09-24 순위 조회)" in body, body
+    assert "구글 AI 요약 있음. 우리 링크를 인용합니다 (2026-09-24 순위 조회)" in body, body
     assert "- 순위 조회: 8위" in body and "(검색어 하나, 모든 기기·지역)" in body, body
     assert "우리 페이지는 같은 조회에서 이 표 밖(8위)입니다" in body, body
     assert "단정하지 않습니다" in body and "순위가 아니라 제목·설명 문제입니다" not in body
@@ -2781,7 +2781,7 @@ def test_brief_names_past_work_on_the_page_and_the_mixed_window():
            "holds": [{"page": URL, "until": "2026-10-09", "since": "2026-09-11"}]}
     body = brief.build(_opp("ctr_gap", "검색어"), ctx, "ko-KR")["body"]
     assert brief.WORK_HEAD in body and "2026-09-11 · [구글 AI 요약 빠짐] syringomas vs milia (기회 #201)" in body
-    assert "· 머지됨" in body and "관찰 중 — 2026-10-09까지" in body, body
+    assert "· 머지됨" in body and "관찰 중: 2026-10-09까지" in body, body
     # 8/31~9/27 중 9/11 전은 11일
     assert "(2026-08-31~2026-09-27, 28일) 중 11일이 마지막 작업 전입니다" in body, body
     top = body.split("## 이 페이지")[0]
@@ -3031,7 +3031,7 @@ def _sib_ctx(page, rows):
 
 
 def _sib_line(sib, q):
-    return next(ln for ln in sib.splitlines() if ln.startswith("- ") and f" {q} —" in ln)
+    return next(ln for ln in sib.splitlines() if ln.startswith("- ") and f" {q}:" in ln)
 
 
 def test_page_siblings_cover_only_same_deliverables():
@@ -3060,10 +3060,10 @@ def test_page_siblings_cover_only_same_deliverables():
 
     s609, s61 = sib_of(609), sib_of(61)
     for sib in (s609, s61):
-        assert "이 요청문이 덮습니다 — 기회 종류" not in sib, sib
+        assert "이 요청문이 덮습니다. 기회 종류" not in sib, sib
         assert "그 전부를 덮습니다" not in sib, sib
     # #609 — 같은 검색어의 다른 종류는 덮지 않는다고 말한다
-    assert (f"같은 검색어로 선 다른 종류의 기회: {lab['striking_distance']}, {lab['pseo_pattern']} — "
+    assert (f"같은 검색어로 선 다른 종류의 기회: {lab['striking_distance']}, {lab['pseo_pattern']}. "
             "만들 것·끝나는 조건이 달라 이 요청문을 끝내도 닫히지 않습니다") in s609, s609
     # 같은 종류([클릭률 미달] syringoma vs milia)만 덮고, 다른 종류는 '(따로)'
     ln = _sib_line(s609, "syringoma vs milia")
@@ -3107,7 +3107,7 @@ def test_fix_page_tail_allows_the_hold_answer_the_body_asks_for():
                                  "target": "검색어", "opp_id": 709}]},
            "holds": [{"page": URL, "until": "2026-10-26", "since": "2026-09-28"}]}
     t = brief.text(_opp("ctr_gap", "검색어"), ctx, "ko-KR")
-    answer = f"'안 바꿈 — {brief.HOLD_MARK}'"
+    answer = f"'안 바꿈: {brief.HOLD_MARK}'"
     assert answer in t.split("## 답의 형식")[0], t          # 본문이 시키는 답
     card = _fix_card("fix_page")
     # 같은 말이 표의 칸에 쓸 수 있는 답으로 있고, 미루기 금지는 그대로다
@@ -3283,7 +3283,7 @@ def test_gsc_rank_line_names_the_page_it_belongs_to():
     body = brief.build(o, ctx, "ko-KR")["body"]
     ev = body.split("## 근거")[1]
     line = next((x for x in ev.splitlines() if x.startswith("- 구글 실적 평균")), "")
-    assert "43위" in line and page in line and "11위" not in line.split(" — ")[0], line
+    assert "43위" in line and page in line and "11위" not in line.split(", ")[0], line
     assert "아는 순위가 모두 43위 밖" in ev, ev
     # 고칠 페이지를 모르면(표만 있으면) 가장 앞선 값을 쓰되 어느 페이지의 값인지 밝힌다
     L = brief._rank_sources(None, ctx["query_pages"]["sofwave"], ctx)
@@ -3340,7 +3340,7 @@ def test_link_overlap_ignores_stopwords_and_the_site_name():
     outs = {r["page"] for r in brief._outlink_candidates(ctx, _SM)}
     assert outs == {pages["milia"]}, outs
     body = "\n".join(brief._site_facts(ctx, _SM, link_candidates=True))
-    assert f"| {pages['home']} | 93 | 10 | 5.9위 | — |" in body, body
+    assert f"| {pages['home']} | 93 | 10 | 5.9위 | - |" in body, body
     # title 꼬리가 한 페이지에만 있으면 사이트 이름이 아니다 — 주제 낱말을 지우지 않는다
     one = {"page_audits": {_SM: {"title": "Syringoma | Milia Guide"}}}
     assert not {"milia", "guide"} & brief._site_name_words(one), brief._site_name_words(one)
@@ -3358,7 +3358,7 @@ def test_striking_scope_says_one_query_not_all_queries():
     assert "최근 28일 평균 (검색어 하나): 평균 12.4위 · 노출 1,204 · 클릭 8" in t, t
     ctx["query_pages"] = {"검색어": _pages(URL, URL2)}
     t2 = brief.text(_opp("striking_distance", "검색어", band="page2"), ctx, "ko-KR")
-    assert "(검색어 하나 — 내 페이지 2개 합, 순위는 페이지별 평균): 평균 12.4위" in t2, t2
+    assert "(검색어 하나: 내 페이지 2개 합, 순위는 페이지별 평균): 평균 12.4위" in t2, t2
 
 
 def test_cannibal_lead_line_says_clicks_tie():
@@ -3680,7 +3680,7 @@ def test_content_gap_goal_never_targets_a_reference_site():
                query_pages={"melasma treatment": _pages(URL), "melasma cream": _pages(URL)})
     body = brief.build(_opp("content_gap", "melasma treatment", gap_kind="weak"), ctx, "ko-KR")["body"]
     g = _goal(body)
-    assert "clinic.example(4위)보다 위 — 지금 우리는 61위." in g, g
+    assert "clinic.example(4위)보다 위, 지금 우리는 61위." in g, g
     assert "| clinic.example | 4위 | 61위 |" in body, body
     assert "pmc.ncbi" not in body, body
     body = brief.build(_opp("content_gap", "melasma cream", gap_kind="weak"), ctx, "ko-KR")["body"]
@@ -3877,9 +3877,9 @@ def test_ctr_gap_brief_sorts_the_cause_before_asking_for_titles():
     head = body.split("## 근거")[1].split("\n## ")[0]
     assert brief.CTR_CAUSE_HEAD in head, head
     cause = head.split(brief.CTR_CAUSE_HEAD)[1]
-    assert "제목 불일치 — 걸림" in cause and "'milia'" in cause, cause
-    assert "의도 어긋남 — 걸림" in cause, cause          # 비교 꼴 검색어 ↔ 비교 꼴 아닌 title
-    assert "스니펫 약함 — 걸림" in cause, cause
+    assert "제목 불일치(걸림)" in cause and "'milia'" in cause, cause
+    assert "의도 어긋남(걸림)" in cause, cause          # 비교 꼴 검색어 ↔ 비교 꼴 아닌 title
+    assert "스니펫 약함(걸림)" in cause, cause
     assert "단정하지 않습니다" in head or "추정" in head, head
     want = body.split("## 만들어 줄 것")[1].split("\n## ")[0]
     assert "까닭 판정 표" in want.splitlines()[1], want
@@ -3887,8 +3887,8 @@ def test_ctr_gap_brief_sorts_the_cause_before_asking_for_titles():
     ok = _ctr_case("Milia vs Syringoma: How to Tell Them Apart", "Milia and syringoma look alike. "
                    "Here is how a dermatologist tells them apart and treats each.")
     cause = ok.split(brief.CTR_CAUSE_HEAD)[1].split("\n## ")[0]
-    assert "제목 불일치 — 안 걸림" in cause and "의도 어긋남 — 안 걸림" in cause \
-        and "스니펫 약함 — 안 걸림" in cause, cause
+    assert "제목 불일치(안 걸림)" in cause and "의도 어긋남(안 걸림)" in cause \
+        and "스니펫 약함(안 걸림)" in cause, cause
     # 페이지를 점검하지 않았으면 가르지 못했다고 말한다(지어내지 않는다)
     o = _opp("ctr_gap", "milia vs syringoma")
     none = brief.build(o, {"query_pages": {"milia vs syringoma": _pages(URL)}}, "ko-KR")["body"]

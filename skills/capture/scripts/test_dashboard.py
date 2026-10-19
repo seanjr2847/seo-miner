@@ -925,10 +925,10 @@ def test_fixed_page_holds_its_open_opportunities_out_of_the_todo_list():
     body = ctr["brief"]["body"]
     import brief as _brief
     assert _brief.WORK_HEAD in body and "title·설명 교체" in body, body
-    assert f"관찰 중 — {until}까지" in body and "주의: 이 페이지는 관찰 중" in body, body
+    assert f"관찰 중: {until}까지" in body and "주의: 이 페이지는 관찰 중" in body, body
     # 결과 위에 AI 요약이 선 클릭률 미달은 "제목·설명 문제"라고 단정하지 않는다
     assert ctr["band"] == "aio" and "단정하지 않습니다" in ctr["play"]["what"], ctr["play"]
-    assert "구글 AI 요약 있음 — 우리 링크를 인용합니다" in body, body
+    assert "구글 AI 요약 있음. 우리 링크를 인용합니다" in body, body
     assert "순위 조회: 8위" in body, body
     assert by[("striking_distance", "딴 검색어")]["brief"]["body"].count(_brief.WORK_HEAD) == 0
 
@@ -1592,7 +1592,7 @@ def test_groups_quota_skip_is_not_a_measured_day():
     잼"이라 말하고 주기 점이 꺼진다. 한도 전에 몇 건이라도 쟀으면(api_calls>0) 잰 날이다."""
     import collect_vitals
     conn, pid = _brain("grp_quota")
-    q = f"urls=5 rows=0 | quota={collect_vitals.QUOTA_STATUS} — {collect_vitals.QUOTA_REASON}"
+    q = f"urls=5 rows=0 | quota={collect_vitals.QUOTA_STATUS}: {collect_vitals.QUOTA_REASON}"
     _runs(conn, pid, [("vitals", "2026-09-20T00:00:00Z", "rows=10"),
                       ("vitals", "2026-09-23T00:00:00Z", q)])
     conn.execute("UPDATE runs SET api_calls=10 WHERE finished_at LIKE '2026-09-20%'")

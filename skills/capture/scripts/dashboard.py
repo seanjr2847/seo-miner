@@ -200,12 +200,12 @@ def _assemble(variant: str = "local") -> bytes:
     # 채운다. 매니페스트에는 안 싣는다: 조립본 안에서 그 표를 읽는 자리가 없다.
     # (등록 화면 app.html 의 window.__LOCALES__ 는 server/app.py 가 따로 실어 보낸다.)
     locale_opts = "".join(f'<option value="{htmlsafe.attr(c)}">'
-                          f"{htmlsafe.attr(c)} — {htmlsafe.attr(t)}</option>"
+                          f"{htmlsafe.attr(c)} · {htmlsafe.attr(t)}</option>"
                           for c, t in serp_adapter.LOCALES)
     # 사이트 종류도 같은 길이다(PROJECT_TYPES). 이 화면은 id 를 보여 준다 — 언어-지역
-    # 과 같은 `id — 라벨` 꼴이다. 고르개가 값으로 보내는 게 그 id 다.
+    # 과 같은 `id · 라벨` 꼴이다. 고르개가 값으로 보내는 게 그 id 다.
     type_opts = "".join(f'<option value="{htmlsafe.attr(i)}">'
-                        f"{htmlsafe.attr(i)} — {htmlsafe.attr(t)}</option>"
+                        f"{htmlsafe.attr(i)} · {htmlsafe.attr(t)}</option>"
                         for i, t in PROJECT_TYPES)
     manifest = (f"<script>{hosted_flag}window.__VIEWS__={views_json};"
                 f"window.__STAGES__={stages_json};window.__AIQ_CATS__={cats_json};</script>")
@@ -333,7 +333,7 @@ def save_keys(values: dict) -> dict:
     for k, table in CHOICE_FIELDS.items():
         v = str(values.get(k, "")).strip()
         if v and not any(v == row[0] for row in table):
-            return {"ok": False, "error": "화면에 없는 값이 왔습니다 — 새로 고침한 뒤 "
+            return {"ok": False, "error": "화면에 없는 값이 왔습니다. 새로 고침한 뒤 "
                                           "다시 골라 주세요."}
     cur = {}
     if ENV_FILE.exists():
@@ -428,7 +428,7 @@ def create_project(f: dict, *, auto_gsc: bool = True) -> dict:
     conn = db.connect()
     try:
         if conn.execute("SELECT 1 FROM projects WHERE name=?", (name,)).fetchone():
-            return {"ok": False, "error": f"{name} 은 이미 있습니다 — 다른 이름을 쓰세요."}
+            return {"ok": False, "error": f"{name} 은 이미 있습니다. 다른 이름을 쓰세요."}
         db.register_project(conn, cfg)
     finally:
         conn.close()
@@ -460,7 +460,7 @@ def carry_pack(project: str) -> dict:
     try:
         import yaml
     except ImportError:
-        return {"ok": False, "error": "기본 부품(pyyaml)이 아직 없습니다 — 1번을 먼저 눌러 주세요."}
+        return {"ok": False, "error": "기본 부품(pyyaml)이 아직 없습니다. 1번을 먼저 눌러 주세요."}
     doc = yaml.safe_load(path.read_text("utf-8")) or {}
     f = {}
     for k in PREFILL_KEYS:
@@ -1648,8 +1648,8 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
                     f"밀렸습니다 (구글 실적 {st['prev']}과 {st['at']} 비교). "
                     + (f"최신 구글 실적 {st['cur']}에서는 평균 {st['now']}위 · 노출 "
                        f"{st['imp'] or 0:,} · 클릭 {st['clk'] or 0:,}"
-                       + (" — 떨어지기 전 순위로 돌아왔습니다" if scoring.decay_recovered(st)
-                          else " — 아직 떨어지기 전 순위로 못 돌아왔습니다")
+                       + (". 떨어지기 전 순위로 돌아왔습니다" if scoring.decay_recovered(st)
+                          else ". 아직 떨어지기 전 순위로 못 돌아왔습니다")
                        if st["now"] is not None else
                        f"최신 구글 실적 {st['cur']}에는 이 검색어가 잡히지 않습니다"))
         if o["kind"] == "striking_distance":
@@ -1670,7 +1670,7 @@ def _axis_opps(conn, pid: int, at: str | None, striking: list[dict], kw_gap: lis
                     f"평균 {p}위 · 노출 {imp:,} · 클릭 {clk:,}. 이번 구글 실적에서는 밀면 오를 "
                     f"검색어 조건({scoring.STRIKING_LO}~{scoring.STRIKING_HI}위 · 노출 "
                     f"{scoring.STRIKING_MIN_IMP} 이상) 밖입니다"
-                    + (" — 이미 상단 3위권이라 남은 일은 클릭입니다" if p < scoring.STRIKING_LO else "")
+                    + (". 이미 상단 3위권이라 남은 일은 클릭입니다" if p < scoring.STRIKING_LO else "")
                     + f" (구글 실적 {cur} 기준)")
         elif o["kind"] == "ctr_gap":
             # 결과 맨 위에 구글 AI 요약이 섰나 — 순위 조회가 본 그 행(ranks)에서 읽는다.
@@ -3008,7 +3008,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, b"not found", "text/plain")
         # 토큰은 로컬 전용 경로에도 똑같이 건다 — pip 실행·파일 쓰기가 여기 있다.
         if self.headers.get("X-Token") != TOKEN:
-            return self._json({"error": "이 창은 만료됐습니다 — 대시보드를 다시 띄워 주세요."},
+            return self._json({"error": "이 창은 만료됐습니다. 대시보드를 다시 띄워 주세요."},
                               403)
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -3324,7 +3324,7 @@ def run_tool(body: dict) -> dict:
         # 설계도·제안서만 낸 답에는 채울 '바꾼 파일'이 없다. 다만 같은 대화가 이어서
         # 본문·패치까지 쓰는 요청문이 있어(새 글 설계 → 승인 → 본문) "제안서만"이 언제
         # 끝나는지를 같이 적는다 — 안 적으면 파일을 바꾸고도 기록이 안 남는다.
-        + "- 설계도·제안서까지만 냈으면 기록하지 않습니다 — 채울 '바꾼 파일'이 없습니다.\n"
+        + "- 설계도·제안서까지만 냈으면 기록하지 않습니다. 채울 '바꾼 파일'이 없습니다.\n"
         + "- 같은 대화에서 이어서 파일을 바꿨으면(승인 뒤 본문·패치를 넣은 경우 포함)\n"
         + "  그 시점에 기록합니다(바꾼 파일·브랜치를 채워서):\n"
         # 숫자만 있으면 그게 무엇인지 알 수 없고(실제로 "156이 뭐냐"는 물음이 왔다),
@@ -3335,7 +3335,7 @@ def run_tool(body: dict) -> dict:
         + f'python "{createdb}" done {project} {opp_id} --path <바꾼 파일> --branch <브랜치>\n'
         + "```\n"
         + f"  · {opp_id} 는 이 기회의 번호입니다(요청문 파일 이름 opp-{opp_id}.md 와 같은 번호).\n"
-        + "  · 위 경로에는 지금 설치된 플러그인 버전이 박혀 있습니다 — 안 맞으면 그 자리에\n"
+        + "  · 위 경로에는 지금 설치된 플러그인 버전이 박혀 있습니다. 안 맞으면 그 자리에\n"
         + "    설치된 seo-miner 의 skills/create/scripts/createdb.py 를 쓰세요.\n"
         + "- 이 명령이 없는 곳(원격·클라우드)에서 돌고 있으면 건너뜁니다.\n",
         "utf-8")

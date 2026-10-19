@@ -85,7 +85,7 @@ FATAL_FIX = {
 }
 # 한도는 키를 봐도 안 낫는다 — 잔액 확인으로 보내면 엉뚱한 데를 뒤지게 된다.
 # {rpm} 은 계정 한도가 아니라 **우리가 부르는 빠르기**다(기본 10, 한도는 12).
-RATE_LIMIT_FIX = (f"계정 전체의 분당 한도에 걸렸습니다(지금 분당 {{rpm:g}}회로 부름) — "
+RATE_LIMIT_FIX = (f"계정 전체의 분당 한도에 걸렸습니다(지금 분당 {{rpm:g}}회로 부름). "
                   "잠시 뒤 다시 돌리거나 SEOMINER_DFS_RPM 로 간격을 조절하세요")
 # 상태 코드가 402 여도 본문이 한도라고 말하면 한도다 — fatal() 이 이걸 먼저 본다.
 _RATE_LIMIT_SAYS = re.compile(r"rates?[\s-]*limit|too\s*many\s*requests", re.I)
@@ -105,7 +105,7 @@ def fatal(who: str, status: int, detail: str = "") -> Fatal:
     fix = (RATE_LIMIT_FIX.format(rpm=_rpm() or DFS_RPM) if rate
            else FATAL_FIX.get(who, "키를 확인하세요"))
     name = _STATUS_NAME.get(RATE_LIMIT if rate else status, "호출 실패")
-    return Fatal(f"{who} {name}({status}) — {fix}{tail}")
+    return Fatal(f"{who} {name}({status}): {fix}{tail}")
 
 
 # ── DataForSEO 호출 간격 ────────────────────────────────────────────────────
@@ -363,7 +363,7 @@ def raise_for(r, who: str = "DataForSEO") -> None:
         w = why(r)
         if not w:
             raise
-        raise requests.HTTPError(f"{e} — {w}") from e
+        raise requests.HTTPError(f"{e}: {w}") from e
 
 
 class _FakeResp:

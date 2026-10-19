@@ -310,7 +310,7 @@ def home(request: Request):
         request.session["carry"] = request.query_params["carry"][:8000]
     uid = _uid(request)
     if uid is None:
-        return _html(pages.chrome(pages.page("landing.html")), "seo-miner — 검색·AI 답변 가시성 추적")
+        return _html(pages.chrome(pages.page("landing.html")), "검색·AI 답변 가시성 추적 | seo-miner")
     with store.session(uid) as conn:
         rows = store.sites(conn, uid)
     # 처음 온 사람의 "/" 는 온보딩이다 — 빈 사이트 목록을 보여 주고 거기서 등록을
@@ -341,7 +341,7 @@ def home(request: Request):
                else '<span class="badge ok">분석 완료</span>'
                     f'<span class="when">{e(str(r["last_run_at"])[:16])}</span>')
             + '</div>'
-            + f'<a class="go sm{"" if r["last_run_at"] else " sec"}"'
+            + f'<a class="go{"" if r["last_run_at"] else " sec"}"'
               f' href="/d#{quote(str(r["project"]), safe="")}">대시보드 열기</a>'
             + ('' if r["last_run_at"] else
                '<div class="prog"><div class="progress"><i></i></div>'
@@ -354,16 +354,18 @@ def home(request: Request):
                  '<p class="sub">첫 분석이 끝나면 이 줄에서 대시보드로 들어갑니다.</p>'
                  f'<ul class="sites">{items}</ul>')
         if any(not r["last_run_at"] for r in rows):
-            block += ('<p class="wait-note">키워드 · 순위 · 사이트 점검 순으로 몇 분에 걸쳐 '
-                      '수집됩니다. 창을 닫아도 계속 진행됩니다.</p>')
+            block += ('<p class="wait-note">키워드 · 순위 · 사이트 점검 순으로 수집합니다. '
+                      '창을 닫아도 계속 진행됩니다.</p>')
         block += "</section>"
     doc = pages.fill(pages.entry_page("app.html"),
                      USER=_user_bar(request), SITES=block)
     doc = pages.data(doc,
                      # 단계 이름표는 한 벌이다 — app.html 도 사본을 안 갖는다
                      # (대시보드가 window.__STAGES__ 로 받는 것과 같은 표다).
-                     __STAGES__=stage.STAGE_LABELS)
-    return _html(doc, "사이트 관리 — seo-miner")
+                     __STAGES__=stage.STAGE_LABELS,
+                     # 측정 현황 막대 밑의 묶음 이름 — 정본은 run_all.GROUPS(id → 이름만 뽑는다).
+                     __GROUPS__={g["id"]: g["name"] for g in run_all.GROUPS})
+    return _html(doc, "사이트 관리 | seo-miner")
 
 
 def _user_bar(request: Request) -> str:
@@ -398,7 +400,7 @@ def start(request: Request, uid: int = Depends(_require_uid)):
                      # 사이트 종류(id·라벨)도 한 벌이다(dashboard.PROJECT_TYPES) —
                      # 받는 쪽 검증이 보는 표를 화면이 그대로 그린다.
                      __TYPES__=dashboard.PROJECT_TYPES)
-    return _html(doc, "시작하기 — seo-miner")
+    return _html(doc, "시작하기 | seo-miner")
 
 
 def _begin(request: Request, provider: str, *, connect: bool = False) -> RedirectResponse:
@@ -436,7 +438,11 @@ def auth_connect(request: Request, next: str = "/"):
 
 
 @app.get("/auth/callback")
-def auth_callback(request: Request, code: str, state: str):
+def auth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    # 구글 동의 화면에서 [취소]를 누르면 code 없이 error=access_denied 로 돌아온다.
+    # 422 JSON 대신 처음 화면으로 보낸다(랜딩이 ?login=cancelled 안내를 띄운다).
+    if error or not code:
+        return RedirectResponse("/?login=cancelled", status_code=302)
     carry = _carry(request, "google", state)
     acct = identity.finish("google", code, carry)
     conn = store.connect()
@@ -471,7 +477,7 @@ def logout(request: Request):
 
 @app.get("/privacy")
 def privacy():
-    return _html(pages.chrome(pages.page("privacy.html")), "개인정보처리방침 — seo-miner")
+    return _html(pages.chrome(pages.page("privacy.html")), "개인정보처리방침 | seo-miner")
 
 
 def _require_google() -> None:
@@ -716,7 +722,7 @@ def _stage_opts(raw) -> dict[str, str | list[str]]:
             valid = sorted(s.name for s in run_all.STAGES if s.knobs)
             raise HTTPException(
                 status_code=400,
-                detail=f"알 수 없는 옵션입니다: {k} — '단계.키' 모양이어야 하고, "
+                detail=f"알 수 없는 옵션입니다: {k}. '단계.키' 모양이어야 하고, "
                        f"옵션을 받는 단계는 {', '.join(valid)} 입니다.")
         # 리스트는 접지 않는다 — str(["a.com"]) 은 "['a.com']" 이 되고 _coerce 가 그걸
         # 문자열로 되돌려 수집기가 도메인 하나도 못 읽는다(competitors.domain 이 그 자리다).
@@ -1014,7 +1020,7 @@ def api_brain(t=Depends(TENANT)):
     src = db.db_path()
     if not src.exists():
         raise HTTPException(status_code=404,
-                            detail="서버에 아직 보관함이 없습니다 — 먼저 한 번 측정해 주세요.")
+                            detail="서버에 아직 보관함이 없습니다. 먼저 한 번 측정해 주세요.")
     fd, tmp = tempfile.mkstemp(prefix="brain-", suffix=".db")
     os.close(fd)
     try:
@@ -1338,10 +1344,17 @@ async def _http_exception(request: Request, e: StarletteHTTPException):
         return RedirectResponse("/?login=required", status_code=302)
     # 사람이 연 주소(오타·옛 링크)가 없으면 JSON 한 줄 대신 돌아갈 길이 있는 화면을 준다.
     # /api/* 는 클라이언트가 detail 을 읽으므로 JSON 그대로.
+    # 로그인 도중 세션이 사라진 400 은 사람이 브라우저로 만난다 — 돌아갈 링크를 준다.
+    if e.status_code == 400 and request.url.path == "/auth/callback":
+        return HTMLResponse(
+            pages.document('<p style="font:16px/1.7 sans-serif;max-width:36rem;margin:12vh auto;padding:0 24px">'
+                           f'{html.escape(str(e.detail))} <a href="/">처음으로</a></p>',
+                           "로그인 만료 | seo-miner"),
+            status_code=400)
     if e.status_code == 404 and not request.url.path.startswith("/api/"):
         return HTMLResponse(
             pages.document(_not_found(_uid(request) is not None),
-                           "페이지를 찾을 수 없습니다 — seo-miner"),
+                           "페이지를 찾을 수 없습니다 | seo-miner"),
             status_code=404)
     return await http_exception_handler(request, e)
 

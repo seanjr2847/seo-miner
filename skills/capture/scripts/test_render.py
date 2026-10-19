@@ -360,13 +360,13 @@ MUSTS = [
      "펼침 패널이 대상의 노출·클릭·CTR·순위를 안 그렸다"),
     # 순위 추이 — 두 회차(14위 → 9위)가 있으니 선이 선다. 캔버스만 보면 빈 차트도
     # 통과하므로, 축을 뒤집었다고 말하는 안내 줄과 같이 본다.
-    (r'순위 추이 — 위로 갈수록 좋은 순위입니다\.</p>\s*<div class="chwrap"[^>]*>\s*<canvas data-ch=',
+    (r'순위 추이: 위로 갈수록 좋은 순위입니다\.</p>\s*<div class="chwrap"[^>]*>\s*<canvas data-ch=',
      "펼침 패널이 순위 추이 차트를 안 세웠다"),
     # 진단은 한 줄이고 표는 접혀 있다 — 한 줄에 tag 가 서고, 표는 그 details 안이다.
-    # 일곱 줄(같은 tag 둘 포함)이 '손댈 곳 7군데 — title, meta description, H1, 본문
+    # 일곱 줄(같은 tag 둘 포함)이 '손댈 곳 7군데: title, meta description, H1, 본문
     # 외 2종' 한 줄이 된다. 수는 줄 수(7)고 이름은 **중복 없는** tag 다 — 둘을 같이
     # 보는 이유: 한쪽만 보면 tag 를 세는 실수(6군데)가 그대로 지나간다.
-    (r'<details class="fixmore"><summary>손댈 곳 7군데 — '
+    (r'<details class="fixmore"><summary>손댈 곳 7군데: '
      r'title, meta description, H1, 본문 외 2종</summary>\s*'
      # tableFade() 가 그린 뒤 넘침 표식(tw over/end)을 덧붙인다 — 클래스를 통째로
      # 못 박으면 그 표식이 붙는 순간 이 검사가 어긋난다.
@@ -399,7 +399,7 @@ MUSTS = [
     (r'class="ovw-r"(?:(?!class="ovw-r").)*' + WATCH_AIO_KW
      + r'(?:(?!class="ovw-r").)*그때 <span class="nw">순위 밖 · AI 요약 인용 안 됨'
      r'(?:(?!class="ovw-r").)*지금 <span class="nw">7위 · AI 요약 인용됨'
-     r'(?:(?!class="ovw-r").)*class="chip up"[^>]*>AI 요약 인용</span>',
+     r'(?:(?!class="ovw-r").)*class="badge ok"[^>]*>AI 요약 인용</span>',
      "순위 확인으로 잰 완료 기회가 그때·지금·변화를 안 그렸다"),
     # AI 에서 온 방문 — 페이지 줄에 그 페이지의 세션이 선다(섹션 상자가 서는 것과 다르다).
     (r'id="ai-visits"(?:(?!</section>).)*' + re.escape(AI_VISIT_PAGE)
@@ -645,7 +645,7 @@ ANS_MUSTS = [
      "인용 목록 1번 줄에 도메인·제목·URL 링크가 없다"),
     (_ans(1, r'class="aia-ci own" id="aia-c-2"(?:(?!id="__aians_).)*<span class="aia-b own"[^>]*>우리</span>'),
      "인용 목록에서 우리 도메인 줄에 own 배지가 없다"),
-    (_ans(1, r'답변은 매번 달라집니다 — 이 질문은 표본 4건\(엔진 2곳\)'),
+    (_ans(1, r'답변은 매번 달라집니다\. 이 질문은 표본 4건\(엔진 2곳\)'),
      "표본 N건 문구(답변은 매번 달라진다)가 없다"),
     ("!" + _ans(1, r'class="aiev"'), "280자 발췌 블록(.aiev)이 서랍에 남았다 — 새 구성요소가 대신한다"),
     # ③ 옛 행 — 도메인만, URL 없음, 안내 한 줄
@@ -695,7 +695,7 @@ REPORT_MUSTS = [
     (r'id="content"(?![^>]*hidden)', "본문(#content)이 숨은 채로 남았다"),
     (r'id="meta"[^>]*>[^<]*\d{4}-\d{2}-\d{2}', "머리말이 기준 수집일을 안 적었다"),
     # 종이 표지 — 인쇄하면 레일이 빠지므로 여기 말고는 "누구의 무엇을 언제"가 없다.
-    (r'id="printhead"[^>]*>\s*<div class="t">[^<]+—', "종이 표지가 안 채워졌다"),
+    (r'id="printhead"[^>]*>\s*<div class="t">[^<]+: 검색·AI 가시성 보고서', "종이 표지가 안 채워졌다"),
     # 손댈 수 없는 기록이라고 말만 하고 손잡이를 남겨 두면 안 된다.
     (r"!검색어·주소로 찾기", "박제본에 기회 찾기 칸이 남아 있다 — 서버가 없어 아무 일도 안 한다"),
     (r"!상태로 거르기", "박제본에 상태 필터가 남아 있다"),
@@ -741,7 +741,7 @@ LOCAL_MUSTS = [
      + re.escape(_GRP["search"]["name"]) + "</b>",
      "[순위 추적] 머리줄에 묶음 이름(검색 성과)이 없다 — 모바일에서 '이 묶음'이 무엇인지 모른다"),
     (r'<button[^>]*data-grp="search"[^>]*aria-label="[^"]*'
-     + re.escape(_GRP["search"]["name"]) + ": "
+     + re.escape(_GRP["search"]["name"]) + r"\): "
      + re.escape(" · ".join(_STAGE_T[s] for s in _GRP["search"]["stages"])) + '"',
      "[이 묶음 다시 재기]의 이름표가 다시 재는 단계를 안 말한다"),
     # '다시 ~' 버튼은 화면당 하나다(2026-09-27 제품 결정) — 단계별 다시 재기 칩은 전부
@@ -765,7 +765,7 @@ RUN_MUSTS = LOCAL_MUSTS[3:]
 KWM_LOCAL_MUSTS = [
     (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"(?:(?!</section>).)*<label class="kwr">',
      "로컬 [키워드 관리]에 추적 편집기 줄이 안 섰다 — 로컬 서버의 /api/keywords 를 못 읽었다"),
-    (r'id="sm-kw"(?:(?!</section>).)*<div class="kwprog" role="img"(?![^>]*hidden)',
+    (r'id="sm-kw"(?:(?!</section>).)*<div class="kwprog" role="progressbar"(?![^>]*hidden)',
      "로컬 [키워드 관리]의 추적 진행 막대가 안 그려졌다"),
     (r'!id="kwm-here"', "옛 로컬 안내 상자(kwm-here)가 남았다 — 편집기와 두 벌이다"),
 ]
@@ -774,7 +774,7 @@ KWM_LOCAL_MUSTS = [
 KWM_HOSTED_MUSTS = [
     (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"',
      "추적 편집기(sm-kw)가 [키워드 관리] 화면에 안 붙었다"),
-    (r'id="sm-kw"(?:(?!</section>).)*<div class="kwprog" role="img"(?![^>]*hidden)[^>]*'
+    (r'id="sm-kw"(?:(?!</section>).)*<div class="kwprog" role="progressbar"(?![^>]*hidden)[^>]*'
      r'aria-label="추적 \d+개, 한도 \d+개"><i style="width: [\d.]+%',
      "추적 진행 막대가 안 그려졌다 — KM_wireTrack 이 .cnt 를 못 읽었거나 안 불렸다"),
     # [개요]의 할 일 쪽 알림 — 추적 0 인 시장(일본)이 있으면 선다. 화면은 검색 성과 묶음에 두고
@@ -840,14 +840,14 @@ HOSTED_MUSTS = MUSTS + RUN_MUSTS + [
     # 자리를 화면 상자(view-kwmanage)부터 잡는다.
     (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"(?:(?!</section>).)*class="kwmk"'
      r'(?:(?!</section>).)*<span class="g">한국 구글</span>'
-     r'(?:(?!</button>).)*<span class="c">\d+/\d+</span>',
+     r'(?:(?!</button>).)*<span class="c">(?:<span class="mn">)?\d+/\d+</span>',
      "[키워드 관리]의 시장 탭이 나라(한국 구글)와 추적 수/한도를 안 말한다"),
     (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"(?:(?!</section>).)*'
-     r'<span class="g">일본 구글</span>(?:(?!</button>).)*<span class="c warn">0/\d+</span>',
+     r'<span class="g">일본 구글</span>(?:(?!</button>).)*<span class="c warn">(?:<span class="mn">)?0/\d+</span>',
      "[키워드 관리]가 추적 0 인 시장(일본)을 경고로 안 세운다"),
     # 줄마다 재는 곳과 지금 순위 — 켜 둔 검색어의 결과를 보려면 다른 화면으로 가야 했다
     (r'id="view-kwmanage"(?:(?!id="view-).)*id="sm-kw"(?:(?!</section>).)*<label class="kwr">'
-     r'(?:(?!</label>).)*class="mkt"[^>]*>한국 구글</span><span class="rk"[^>]*>\d+위<small>',
+     r'(?:(?!</label>).)*class="mkt"[^>]*>한국 구글</span><span class="rk"[^>]*>(?:<span class="rkn">)?\d+(?:</span>)?위<small>',
      "[키워드 관리]의 추적 중 줄에 재는 곳(한국 구글)·지금 순위가 안 선다"),
     (r'!id="sm-fail"', "조립 실패 배너가 떴다 — 애드온 초기화가 터졌다(fail() 이 만든다)"),
     # 애드온이 서버 응답을 못 받았을 때 하는 단 한 가지 말(dash.html 의 OFFLINE).

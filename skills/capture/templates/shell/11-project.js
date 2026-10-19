@@ -16,12 +16,28 @@ async function refreshToken() {
     return true;
   } catch (e) { return false; }
 }
+// 늘 [ok, 본문] 으로 돌려준다 — 던지지 않는다. 네트워크가 끊기거나 서버가 JSON 이 아닌 것을
+// 주면 던지던 시절에는 부른 쪽(누른 버튼)이 아무 말도 못 하고 조용했다. 실패는 사람 말로
+// 접어 본문의 error 로 돌려주니, 부르는 쪽은 !ok 에서 r.error 를 보이면 끝난다.
 async function post(path, body) {
   const send = () => fetch(path, {method:"POST", body: JSON.stringify(body),
     headers:{"Content-Type":"application/json", "X-Token": TOKEN}});
-  let res = await send();
-  if (res.status === 403 && await refreshToken()) res = await send();
-  return [res.ok, await res.json()];
+  try {
+    let res = await send();
+    if (res.status === 403 && await refreshToken()) res = await send();
+    let r = null;
+    try { r = await res.json(); } catch (e) { r = null; }
+    if (!r || typeof r !== "object") r = {};
+    // FastAPI 422 의 detail 은 배열이다 — 글자로 찍으면 [object Object] 가 된다.
+    if (Array.isArray(r.detail)) r.detail = "입력이 올바르지 않습니다. 값을 확인한 뒤 다시 눌러 주세요.";
+    if (!res.ok && !r.error && !r.detail)
+      r.error = res.status === 403
+        ? "이 창이 만료됐습니다. [화면 다시 불러오기]를 누른 뒤 다시 눌러 주세요."
+        : `서버가 오류(${res.status})로 답했습니다. 잠시 뒤 다시 눌러 주세요.`;
+    return [res.ok, r];
+  } catch (e) {
+    return [false, {error: "서버에 닿지 않았습니다. 연결을 확인한 뒤 다시 눌러 주세요."}];
+  }
 }
 
 // 임계값은 서버 payload(d.rules)에서만 온다 — JS 리터럴 기본값은 두지 않는다.
@@ -79,7 +95,7 @@ function projSync() {
   const p = $("proj"), b = $("projbtn");
   if (!p || !b) return;
   $("projnm").textContent = p.value || "";
-  b.setAttribute("aria-label", "보는 사이트: " + (p.value || "없음") + " — 바꾸기");
+  b.setAttribute("aria-label", "보는 사이트: " + (p.value || "없음") + ", 바꾸기");
   if (PM.open) projPaint();
 }
 

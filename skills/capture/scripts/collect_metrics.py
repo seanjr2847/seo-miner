@@ -251,18 +251,18 @@ def collect(project: str, *,
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
         if not serp_adapter.has_dataforseo():
-            return st.skip("키워드 지표는 유료 — DATAFORSEO_LOGIN/PASSWORD 설정. "
+            return st.skip("키워드 지표는 유료: DATAFORSEO_LOGIN/PASSWORD 설정. "
                            "발급: https://dataforseo.com")
 
         s = st.settings(ap, argparse.Namespace(limit=limit, max_age=max_age))
         limit = s["limits.metrics_limit"]
         max_age_days = s["metrics_max_age_days"]
         if limit <= 0:
-            return st.noop(reason="--limit 0 — 키워드 지표 수집을 껐습니다.")
+            return st.noop(reason="--limit 0: 키워드 지표 수집을 껐습니다.")
 
         rows = _targets(conn, p["id"], _cutoff(max_age_days), limit)
         if not rows:
-            reason = (f"'{p['name']}' 의 키워드 지표가 모두 {max_age_days}일 안쪽입니다 — "
+            reason = (f"'{p['name']}' 의 키워드 지표가 모두 {max_age_days}일 안쪽입니다. "
                       "다시 살 것이 없습니다. 더 오래된 것까지 갱신하려면 --max-age 0.")
             print(f"[metrics] {reason}")
             return st.noop(reason=reason)
@@ -371,7 +371,7 @@ def collect(project: str, *,
 
             if bad:
                 # 끝까지 거절된 것들 — 이름을 적는다. 다음에 BAD_CHARS 를 넓힐 단서다.
-                st.fail(f"DataForSEO 가 끝까지 거절한 키워드 {len(bad)}개 — "
+                st.fail(f"DataForSEO 가 끝까지 거절한 키워드 {len(bad)}개: "
                         + ", ".join(bad[:3]) + ("…" if len(bad) > 3 else ""), item=loc)
                 # 한 번 이름을 남긴 뒤에는 max-age 동안 다시 안 고른다. 안 찍으면
                 # _targets 가 NULL 을 맨 앞에 세우므로 같은 행이 런마다 맨 앞에서 또
@@ -771,7 +771,7 @@ def _selfcheck() -> None:
 
     def broke_post(path, body):
         hits.append(path)
-        raise collector.Fatal("DataForSEO 잔액 없음(402) — 충전하세요")
+        raise collector.Fatal("DataForSEO 잔액 없음(402): 충전하세요")
 
     try:
         with contextlib.redirect_stderr(io.StringIO()):

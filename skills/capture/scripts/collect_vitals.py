@@ -180,7 +180,7 @@ def parse_images(lh: dict) -> str | None:
 
 
 QUOTA_STATUS = 429
-QUOTA_REASON = ("PageSpeed 오늘 한도 — 내일 다시 "
+QUOTA_REASON = ("PageSpeed 오늘 한도를 다 썼습니다. 내일 다시 "
                 "(PAGESPEED_API_KEY 를 넣으면 한도가 커집니다)")
 
 
@@ -194,7 +194,9 @@ QUOTA_REASON = ("PageSpeed 오늘 한도 — 내일 다시 "
 #   PAGE_HUNG            페이지가 멈춰 측정을 끝내지 못했다
 #   NO_SPEEDLINE_FRAMES  그려진 프레임을 하나도 못 모았다
 UNMEASURABLE = ("NO_FCP", "NO_LCP", "PAGE_HUNG", "NO_SPEEDLINE_FRAMES")
-UNMEASURABLE_WHY = ("구글 측정기(Lighthouse)가 이 페이지에서 화면이 그려지는 것을 못 봤습니다 — "
+# 화면(site.html 의 vitMissWhy)은 page_vitals.error 를 쪼개지 않고 **통째로** 보여 준다 —
+# 그래서 이 문장은 사람이 읽을 완성 문장이고, 코드는 맨 끝 괄호 한 곳에만 있다(test_seams 가 대조).
+UNMEASURABLE_WHY = ("구글 측정기(Lighthouse)가 이 페이지에서 화면이 그려지는 것을 못 봤습니다. "
                     "첫 화면이 자바스크립트가 끝난 뒤에야 나타나거나(투명도 0 에서 시작하는 등장 "
                     "효과·로딩 화면) 측정기를 막으면 납니다. 사람 눈에는 보여도 구글 렌더러에는 "
                     "빈 화면일 수 있으니 그 자체로 확인할 거리입니다")
@@ -205,7 +207,7 @@ UNMEASURABLE_DAYS = 28
 
 def unmeasurable(error: str | None) -> str | None:
     """오류 문장 → 측정 불가 코드(NO_FCP 등) | None. 옛 행의 원문("HTTP 400 · Lighthouse
-    returned error: NO_FCP …")과 새 행("측정 불가(NO_FCP) — …")을 다 읽는다."""
+    returned error: NO_FCP …")과 새 행("…확인할 거리입니다. (측정기 코드 NO_FCP)")을 다 읽는다."""
     for code in UNMEASURABLE:
         if error and code in error:
             return code
@@ -290,7 +292,7 @@ def fetch(url: str, strategy: str, *, timeout: int | None = None) -> dict:
         code = unmeasurable(detail)
         if code:
             return {"url": url, "strategy": strategy, "status": r.status_code,
-                    "unmeasurable": code, "error": f"측정 불가({code}) — {UNMEASURABLE_WHY}"}
+                    "unmeasurable": code, "error": f"{UNMEASURABLE_WHY}. (측정기 코드 {code})"}
         return {"url": url, "strategy": strategy, "status": r.status_code,
                 "error": f"HTTP {r.status_code}" + (f" · {detail}" if detail else "")}
     try:
@@ -331,7 +333,7 @@ def collect(project: str, *,
         want = [x.strip() for x in str(s["strategy"] or "").split(",") if x.strip()]
         bad = [x for x in want if x not in STRATEGIES]
         if bad or not want:
-            return st.skip(f"기기 이름이 틀렸습니다: {', '.join(bad) or '(비어 있음)'} — "
+            return st.skip(f"기기 이름이 틀렸습니다: {', '.join(bad) or '(비어 있음)'}. "
                            f"쓸 수 있는 값: {', '.join(STRATEGIES)}")
 
         # 잴 페이지의 정본은 페이지 감사와 같다 — 두 단계가 서로 다른 페이지를 보면
@@ -344,7 +346,7 @@ def collect(project: str, *,
             print(f"[vitals] 최근 측정 불가(NO_FCP 등)였던 {len(dead)}곳은 "
                   f"{UNMEASURABLE_DAYS}일 동안 다른 페이지로 바꿔 잽니다")
         if not urls:
-            return st.skip("잴 페이지가 없습니다 — 먼저 gsc 를 수집하세요 "
+            return st.skip("잴 페이지가 없습니다. 먼저 gsc 를 수집하세요 "
                            "(page 분해가 있어야 어느 URL 인지 알 수 있습니다).")
 
         jobs = [(u, dev) for u in urls for dev in want]
@@ -387,7 +389,7 @@ def collect(project: str, *,
                 raise collector.ItemFailed(row["error"])
             lcp = row.get("field_lcp_ms") or row.get("lab_lcp_ms")
             score = row.get("lab_score")
-            print(f"  ✓ [{dev}] {url} — 점수 {score if score is not None else '—'}"
+            print(f"  ✓ [{dev}] {url} - 점수 {score if score is not None else '-'}"
                   + (f" · LCP {lcp}ms" if lcp else ""))
 
         quota = ""
@@ -407,7 +409,7 @@ def collect(project: str, *,
                        f"rows={len(rows)} checked={checked} "
                        + (f"unmeasurable={len(unmeas)} " if unmeas else "")
                        + f"{st.err_note}"
-                       + (f" | quota={QUOTA_STATUS} — {QUOTA_REASON}" if quota else ""))
+                       + (f" | quota={QUOTA_STATUS}: {QUOTA_REASON}" if quota else ""))
 
         bad_rows = [x for x in rows if x.get("error")]
         print(f"\nsaved {len(rows)} vitals rows (errors={st.errors})"
@@ -614,7 +616,8 @@ def _quota_and_key_check(sample: dict) -> None:
         conn = db.connect()
         errs = [r["error"] for r in conn.execute(
             "SELECT error FROM page_vitals WHERE checked_date=date('now') AND error IS NOT NULL")]
-        assert errs and all(e.startswith("측정 불가(NO_FCP)") for e in errs), errs
+        assert errs and all(e.startswith(UNMEASURABLE_WHY) and e.endswith("(측정기 코드 NO_FCP)")
+                                for e in errs), errs
         # 다음 회차 — 측정 불가였던 두 곳은 빼고 다음 페이지를 잰다
         asked: list = []
         collect_page.target_urls = lambda c, pid, limit: (asked.append(limit) or

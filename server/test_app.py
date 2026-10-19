@@ -272,6 +272,17 @@ def demo() -> None:
         assert "sched@example.com" in r.text and "sc-domain:p1.com" in r.text, "슬롯이 비었다"
         assert 'href="/start"' in r.text, "사이트 목록에 [사이트 추가](온보딩) 손잡이가 없다"
         assert r.text.index("window.__STAGES__") < r.text.index("const $ = id =>"),             "값이 페이지 스크립트보다 뒤에 실린다 — 화면이 undefined 를 읽는다"
+        # 묶음 이름은 run_all.GROUPS 가 정본이다 — 사이트 목록 화면(app.html)이 window.__GROUPS__ 로
+        # 읽는데 서버가 안 실으면 막대 밑 묶음 이름이 늘 빈다(2회차 재감사에서 발견).
+        # 주의: app.html 이 `window.__GROUPS__` 를 읽는 코드로 이미 갖고 있어서 글자만 찾으면 서버가
+        # 안 실어도 통과한다. 서버가 앞에 세우는 대입문(`window.__GROUPS__={...};`)을 읽어 값을 비교한다.
+        import json as _json
+        import re as _re
+        import run_all as _ra
+        _m = _re.search(r"window\.__GROUPS__=(\{.*?\});", r.text, re.S)
+        assert _m, "사이트 목록에 묶음 이름(__GROUPS__)이 안 실렸다"
+        assert _json.loads(_m.group(1)) == {_g["id"]: _g["name"] for _g in _ra.GROUPS}, \
+            "__GROUPS__ 가 run_all.GROUPS 의 id·이름과 다르다"
 
         # 온보딩 — 사이트가 없는 사람의 "/" 는 /start 다. 빈 목록에서 등록을 찾게 하지 않는다.
         c3 = store.connect()

@@ -184,7 +184,7 @@ def collect(project: str, *,
             throttle=throttle, device=device))
         provider = provider or serp_adapter.detect_provider()
         if not provider:
-            return st.skip("SERP 키 없음 — DATAFORSEO_LOGIN/PASSWORD 또는 SERPER_API_KEY 설정. "
+            return st.skip("SERP 키 없음: DATAFORSEO_LOGIN/PASSWORD 또는 SERPER_API_KEY 설정. "
                            "발급: https://dataforseo.com (권장) 또는 "
                            "https://serper.dev")
         depth = s["serp_depth"]
@@ -194,7 +194,7 @@ def collect(project: str, *,
         queued = serp_adapter.queued(provider)
 
         if device not in ("desktop", "mobile"):
-            return st.skip(f"유효하지 않은 device '{device}' — desktop 또는 mobile만 허용됩니다")
+            return st.skip(f"유효하지 않은 device '{device}': desktop 또는 mobile만 허용됩니다")
 
         if device != "desktop":
             print("[경고] 모바일 측정 시 직전 스냅샷(desktop)과의 순위 비교(Δ)가 한 번 왜곡될 수 있습니다.",
@@ -221,7 +221,7 @@ def collect(project: str, *,
         else:
             target_kws = targets(conn, p["id"], limit)
         if not target_kws:
-            return st.skip("활성 키워드 없음 — /capture keywords 로 유니버스부터 구축")
+            return st.skip("활성 키워드 없음: /capture keywords 로 유니버스부터 구축")
 
         # 오늘 이미 확인한 키워드는 재실행 비용 절감을 위해 건너뛴다 (--force로 무시 가능).
         # '오늘'을 만드는 자리와 --force 의 뜻은 러너가 갖는다 (collector.Stage.seen_today).
@@ -244,7 +244,7 @@ def collect(project: str, *,
         reuse = _reusable(conn, p["name"], kws, default_locale, depth_of, device) if queued else {}
         est = serp_adapter.cost_per_query(provider) * sum(
             _pages(depth_of[k["id"]]) for k in kws if k["id"] not in reuse)
-        took = (f"대기열 — 보통 1~2분, 최대 {WAIT_LIMIT_S // 60}분" if queued else
+        took = (f"대기열: 보통 1~2분, 최대 {WAIT_LIMIT_S // 60}분" if queued else
                 f"~{len(kws) * (throttle + 2) / 60:.0f} min")
         print(f"[serp] provider={provider} keywords={len(kws)}{st.skip_note(skipped)} "
               f"depth={depth} device={device} "
@@ -359,7 +359,7 @@ def collect(project: str, *,
                 if q["left"]:
                     # 다 안 왔다 — 온 것도 안 쓴다. id 는 serp_tasks 에 남아 있다.
                     timed_out = (f"순위 대기열이 {WAIT_LIMIT_S // 60}분 안에 다 안 왔습니다 "
-                                 f"({q['left']}/{q['asked']}개 남음) — 이번 결과는 적재하지 않았고 "
+                                 f"({q['left']}/{q['asked']}개 남음). 이번 결과는 적재하지 않았고 "
                                  f"이전 측정이 그대로입니다. 맡긴 조회는 다음 런이 새로 맡기지 "
                                  f"않고 받아 옵니다")
                     done = 0

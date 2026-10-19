@@ -73,7 +73,7 @@ const pageTable = rows => !rows || !rows.length ? "" :
    <tbody>${rows.map(r => `<tr><td><a href="${esc(r.page)}" target="_blank"
        rel="noopener" title="${esc(r.page)}">${esc(urlPath(r.page))}</a></td>
      <td class="n">${num(r.impressions)}</td><td class="n">${num(r.clicks)}</td>
-     <td class="n">${r.ctr}%</td><td class="n">${r.position ?? "—"}</td></tr>`).join("")}
+     <td class="n">${r.ctr}%</td><td class="n">${r.position ?? "-"}</td></tr>`).join("")}
    </tbody></table></div>`;
 
 // 페이지 한 장의 진단 — "지금 이렇다 / 이렇게 바꿔라". audit 이 없으면 왜 없는지 말한다.
@@ -96,7 +96,7 @@ const pageFix = (audit, url, extra) => {
   // 행동(요청문 만들기)은 저 위로 밀려났다. 전문은 요청문 안에 그대로 있다.
   // 요약은 여기서 판정을 다시 쓰지 않는다 — tag 만 세어 잇는다(정본 scoring.page_advice).
   const tags = [...new Set(a.map(x => x.tag))];
-  const lead = `손댈 곳 ${a.length}군데 — ${tags.slice(0, 4).map(esc).join(", ")}`
+  const lead = `손댈 곳 ${a.length}군데: ${tags.slice(0, 4).map(esc).join(", ")}`
     + (tags.length > 4 ? ` 외 ${tags.length - 4}종` : "");
   return head + `<details class="fixmore"><summary>${lead}</summary>
     <div class="tw"><table class="dett fix"><thead><tr><th>손댈 자리</th>
@@ -156,9 +156,9 @@ function fallbackBrief(c) {
       const arr = k => { try { return JSON.parse(a[k] || "[]"); } catch (e) { return []; } };
       const h1 = arr("h1_json"), h2 = arr("h2_json"), sc = arr("schema_json");
       L.push(`## 지금 이 페이지 상태 (${a.checked_date || "점검일 미상"} 직접 확인)`);
-      L.push(`- title: ${a.title || "(없음)"}${a.title ? ` — ${a.title.length}자` : ""}`);
+      L.push(`- title: ${a.title || "(없음)"}${a.title ? ` (${a.title.length}자)` : ""}`);
       L.push(`- meta description: ${a.meta_description || "(없음)"}`
-             + (a.meta_description ? ` — ${a.meta_description.length}자` : ""));
+             + (a.meta_description ? ` (${a.meta_description.length}자)` : ""));
       L.push(`- H1: ${h1.length ? h1.join(" / ") : "(없음)"}`);
       L.push(h2.length ? `- H2 (${h2.length}개): ${h2.slice(0, 12).join(" / ")}`
              + (h2.length > 12 ? ` … 외 ${h2.length - 12}개` : "") : "- H2: (없음)");
@@ -168,7 +168,7 @@ function fallbackBrief(c) {
       if (a.robots) L.push(`- meta robots: ${a.robots}`);
       L.push("");
       if ((a.advice || []).length && shape !== "consolidate") {
-        L.push("## 진단 — 고쳐야 할 것");
+        L.push(B.advice_head);   // 정본은 brief.ADVICE_HEAD (페이로드)
         a.advice.forEach((x, i) => L.push(`${i + 1}. [${x.tag}] 지금: ${x.now} → ${x.fix}`));
         L.push("");
       }
@@ -231,7 +231,7 @@ const askBlock = c => {
   return `<details class="ask"><summary>요청문 만들기
       <span class="micro">${esc(window.BRIEF.labels[b.shape] || "")}</span></summary>
     <div class="pbox">
-      <div class="pb-h"><span>그대로 복사해 Claude Code 에 붙여 넣습니다 — ChatGPT 같은 AI 나 담당자에게 넘겨도 됩니다. 답이 HTML 리포트로 열리는 건 Claude Code 에서입니다</span></div>
+      <div class="pb-h"><span>그대로 복사해 Claude Code 에 붙여 넣습니다. ChatGPT 같은 AI 나 담당자에게 넘겨도 됩니다. 답이 HTML 리포트로 열리는 건 Claude Code 에서입니다</span></div>
       <textarea readonly rows="14" spellcheck="false" aria-label="요청문 전문">${esc(t)}</textarea>
     </div></details><button type="button" class="go sm sec askcopy"${ack}
       ${ack ? `title="복사하면 이 기회를 진행 중으로 옮깁니다" ` : ""}onclick="copyPrompt(this)">요청문 복사</button>`;

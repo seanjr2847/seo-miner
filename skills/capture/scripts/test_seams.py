@@ -2068,7 +2068,7 @@ def test_seam_42_project_types_are_one_list():
     "saas — 서비스·앱") 같은 값에 두 이름이었다. 이제 둘 다 PROJECT_TYPES 에서 받는다 —
     settings.html 은 조립이 채우는 <!--TYPE_OPTIONS--> 로, app.html 은 server/app.py 가
     싣는 window.__TYPES__ 로(언어-지역이 LOCALES 를 받는 것과 같은 길이다).
-    **표기 규칙만 화면마다 다르다**: 설정 폼은 `id — 라벨`(사용자가 그 id 를
+    **표기 규칙만 화면마다 다르다**: 설정 폼은 `id · 라벨`(사용자가 그 id 를
     설정 폼이 값으로 보낸다), 등록 화면은 라벨만(id 를 쓸 일이 없다).
     그래서 아래는 두 화면에서 **라벨 문구**가 같은지를 본다 — id 접두는 벗겨 내고 본다.
     """
@@ -2087,7 +2087,7 @@ def test_seam_42_project_types_are_one_list():
     keys = set(re.findall(r"^([a-z_]+):", presets.read_text("utf-8"), re.M))
     assert keys == canon, f"온보딩 프리셋과 종류 목록이 어긋난다: {keys ^ canon}"
 
-    # 로컬 설정 폼 — 템플릿은 사본을 안 갖고, 조립본에서 `id — 라벨` 로 채워져 나온다
+    # 로컬 설정 폼 — 템플릿은 사본을 안 갖고, 조립본에서 `id · 라벨` 로 채워져 나온다
     sett = ROOT / "skills" / "capture" / "templates" / "views" / "settings.html"
     assert '<select id="p-type"><!--TYPE_OPTIONS--></select>' in sett.read_text("utf-8"), \
         "설정 폼의 종류가 조립이 채우는 <select> 가 아니다 — 사본이거나 자유 입력이다"
@@ -2096,7 +2096,7 @@ def test_seam_42_project_types_are_one_list():
     opts = dict(re.findall(r'<option value="([a-z_]+)">([^<]+)</option>', form))
     assert set(opts) == canon, f"설정 화면 고르개와 종류 목록이 어긋난다: {set(opts) ^ canon}"
     for i, t in opts.items():
-        assert t == f"{i} — {labels[i]}", f"설정 화면 라벨이 정본과 다르다: {t!r}"
+        assert t == f"{i} · {labels[i]}", f"설정 화면 라벨이 정본과 다르다: {t!r}"
 
     # 호스팅 화면(온보딩) — 리포 밖(플러그인 설치본)에는 server/ 가 없다
     app_html = ROOT / "server" / "start.html"
@@ -4320,13 +4320,40 @@ def test_seam_132_shell_post_recovers_a_stale_token_from_the_local_token_route()
             "호스팅에 /api/token 이 생겼다 — 로컬 토큰 모델이 호스팅으로 샌다"
 
 
+KM_NODE_HEAD = r"""
+class MO { constructor(f){ this.f=f; MO.all.push(this); } observe(t,o){ this.t=t; this.o=o; } }
+MO.all = []; globalThis.MutationObserver = MO;
+function mk(ds){
+  const bar = {hidden:true, attrs:{}, cls:new Set(), firstElementChild:{style:{}},
+    classList:{toggle:(c,on)=>on?bar.cls.add(c):bar.cls.delete(c)}, setAttribute:(k,v)=>{bar.attrs[k]=v;}};
+  const cnt = {dataset:ds};
+  const dead = new Set();
+  const box = {dataset:{}, classList:{contains:c=>dead.has(c)}, dead,
+    querySelector:s=>s===".cnt"?cnt:s===".kwprog"?bar:null};
+  return {box, cnt, bar};
+}
+"""
+KM_NODE_TAIL = r"""
+const out = {};
+for (const [k, ds] of Object.entries({zero:{n:"0",limit:"100"}, full:{n:"100",limit:"100"}, none:{}, lim0:{n:"3",limit:"0"}})) {
+  const t = mk(ds); KM_wireTrack(t.box);
+  out[k] = {hidden:t.bar.hidden, w:t.bar.firstElementChild.style.width, full:t.bar.cls.has("full"), label:t.bar.attrs["aria-label"]};
+}
+const d = mk({n:"5",limit:"100"}); KM_wireTrack(d.box);
+const before = d.bar.hidden; d.box.dead.add("dead"); d.cnt.dataset.n = "6"; MO.all.forEach(m => m.f());
+out.dead = {before, after:d.bar.hidden};
+out.filters = MO.all.slice(-2).map(m => m.o.attributeFilter);
+console.log(JSON.stringify(out));
+"""
+
+
 def test_seam_131_tracked_keyword_editor_and_its_wiring_share_one_screen():
     """131) 추적 편집기(sections/sm-kw.html)·그 진행 막대 배선·그 스타일이 한 화면에 있고,
     그 편집기가 부르는 /api/keywords 가 두 배포에 다 있다.
 
     어느 화면에 붙을지는 section-def 의 view 가 말한다(2026-10-16 [순위 상승 기회] 맨 아래 →
     [키워드 관리]). 그 섹션에 딸린 것이 한 파일에 더 있다: 진행 막대는 화면 쪽 스크립트
-    (KM_wireTrack)가 편집기(kwLoad)가 .cnt 에 쓴 「N / M」을 읽어 그리고, 스타일은
+    (KM_wireTrack)가 편집기(kwLoad)가 .cnt 에 싣는 data-n/data-limit 를 읽어 그리고, 스타일은
     #view-<화면> 아래에 걸린다. section-def 만 옮기면 편집기는 새 화면에 서는데 막대는 빈 채로,
     스타일은 안 먹은 채로 선다 — JS 오류도 없다.
 
@@ -4361,11 +4388,29 @@ def test_seam_131_tracked_keyword_editor_and_its_wiring_share_one_screen():
     assert owners == [vid], (f"편집기(sm-kw)를 만지는 화면 스크립트가 {owners} 다 — 붙는 화면은 "
                              f"[{vid}] 하나다(section-def). 옛 화면에 배선이 남았거나 안 옮겼다")
     view = (ctx["views"] / f"{vid}.html").read_text("utf-8")
-    assert ".kwprog" in view and "MutationObserver" in view and '".cnt"' in view, \
-        f"[{vid}] 화면이 진행 막대(.kwprog)를 .cnt 에서 읽어 그리지 않는다"
-    assert r"/(\d+)\s*\/\s*(\d+)/" in view, f"[{vid}] 의 막대가 「N / M」 꼴을 안 읽는다"
-    assert re.search(r'querySelector\("\.cnt"\)\.textContent\s*=[^;]*" / "', kw_src), \
-        "sm-kw.html 의 kwLoad 가 .cnt 에 「N / M」 꼴로 안 쓴다 — 화면의 막대가 그 글자를 읽는다"
+    # 서버 숫자(KW.total·KW.limit)는 data 속성으로 막대에 간다 — 렌더된 글자를 정규식으로 되읽지 않는다.
+    assert ".kwprog" in view and "MutationObserver" in view and '".cnt"' in view \
+        and "dataset.n" in view and "dataset.limit" in view and "attributeFilter" in view, \
+        f"[{vid}] 화면이 진행 막대(.kwprog)를 .cnt 의 data-n/data-limit 에서 읽어 그리지 않는다"
+    assert r"/(\d+)\s*\/\s*(\d+)/" not in view and "cnt.textContent" not in view, \
+        f"[{vid}] 의 막대가 렌더된 「N / M」 글자를 되읽는다 — 문구가 바뀌면 막대가 말없이 숨는다"
+    assert re.search(r"\.dataset\.n\s*=\s*KW\.total\b", kw_src) \
+        and re.search(r"\.dataset\.limit\s*=\s*KW\.limit\b", kw_src), \
+        "sm-kw.html 의 kwLoad 가 .cnt 의 data-n/data-limit 에 KW.total·KW.limit 을 안 싣는다 — 막대가 비거나 다른 수를 읽는다"
+    # 실제로 돌린다: 정상·가득 참·data 없음·한도 0·편집기 죽음(.dead)
+    blk = _view_block(f"{vid}.html", "function KM_wireTrack(box)")
+    got = _node_views(KM_NODE_HEAD + blk + KM_NODE_TAIL)
+    if got is not None:
+        assert got["zero"] == {"hidden": False, "w": "0%", "full": False, "label": "추적 0개, 한도 100개"}, got["zero"]
+        assert got["full"]["full"] and got["full"]["w"] == "100%" and not got["full"]["hidden"], got["full"]
+        assert got["none"]["hidden"] and got["none"]["label"] == "", f"data 가 없는데 막대가 선다: {got['none']}"
+        assert not got["lim0"]["hidden"] and got["lim0"]["w"] == "0%", got["lim0"]
+        assert got["dead"] == {"before": False, "after": True}, f"편집기가 죽었는데 막대가 남는다: {got['dead']}"
+        assert got["filters"] == [["data-n", "data-limit"], ["class"]], got["filters"]
+    # 편집기 상자가 없을 때의 오류 상자는 셸의 걷기 규칙([data-render-err])을 탄다 — 안 그러면 다시 그릴 때마다 쌓인다.
+    assert 'class="empty err" data-render-err' in view, \
+        f"[{vid}] 의 오류 상자에 data-render-err 가 없다 — 매 render() 마다 한 장씩 쌓인다"
+    assert ":scope > [data-render-err]" in _shell_src(), "셸이 data-render-err 를 걷지 않는다"
 
     css = (ROOT / "skills" / "capture" / "templates" / "sections" / "sm-kw.html").read_text("utf-8")
     scopes = set(re.findall(r"#view-([a-z0-9]+)", css))
@@ -5372,6 +5417,149 @@ def test_seam_196_ai_answer_markdown_is_escaped_first_and_renders_only_a_small_s
     users = {m.group(1) for m in re.finditer(r"^(?:async )?function (\w+)\([^)]*\) \{(?:(?!^\}).)*?\.answer\b", src, re.M | re.S)}
     assert users <= {"AI_aHtml", "AI_aCopy"}, f"답변 글을 AI_md 밖에서 읽는 함수가 있다: {sorted(users)}"
     assert re.search(r"AI_md\(text,", src), "AI_aHtml 이 AI_md 를 거치지 않는다"
+
+
+def test_seam_197_vitals_miss_reason_is_shown_whole_not_split():
+    """197) [속도]의 '못 잰 N건' 사유는 collect_vitals 가 쓴 문장을 화면이 **통째로** 보여 준다.
+
+    예전에는 서버가 "측정 불가(NO_FCP) — 사유" 로 적고 화면(site.html vitMissWhy)이 " — " 를 찾아
+    뒤쪽만 잘라 냈다. 구분자가 서버 문구에 있고 화면이 그걸 되짚는 이음매였다: 서버 문구에서 em dash 를
+    걷어내자 화면이 말없이 깨졌다(자르지 못하고 코드 접두사를 그대로 보인다).
+    · 서버: 측정 불가 오류는 em dash 가 없는 완성 문장이고(UNMEASURABLE_WHY 로 시작), 코드는 저장된
+      문장에서 여전히 읽힌다(recent_unmeasurable 이 다음 회차에 그 주소를 건너뛴다).
+    · 화면: vitMissWhy 가 구분자를 찾지 않는다. node 가 있으면 실제로 돌려, 서버 문장이 한 글자도
+      안 잘리고 나온다는 것까지 본다.
+    · 옛 행: DB 에는 em dash 를 쓰던 때의 "측정 불가(NO_FCP) — 사유 — 사유" 가 아직 있다(다음 측정이
+      덮어쓸 때까지). 화면의 호환 처리(vitMissOld)가 그것을 새 행과 같은 한 문장으로 펴서 em dash 없이 보인다.
+    """
+    import collect_vitals
+    import requests
+
+    class Resp:
+        status_code = 400
+
+        def json(self):
+            return {"error": {"code": 400, "message": "Lighthouse returned error: NO_FCP. The page "
+                              "did not paint any content."}}
+
+    orig = requests.get
+    requests.get = lambda *a, **k: Resp()
+    try:
+        row = collect_vitals.fetch("https://x.kr/", "mobile")
+    finally:
+        requests.get = orig
+    err = row["error"]
+    assert err.startswith(collect_vitals.UNMEASURABLE_WHY), f"측정 불가 사유가 완성 문장으로 시작하지 않는다: {err!r}"
+    assert "—" not in err, f"사유에 em dash 가 남았다: {err!r}"
+    assert collect_vitals.unmeasurable(err) == "NO_FCP", \
+        f"저장된 문장에서 측정 불가 코드를 못 읽는다(다음 회차가 같은 주소를 또 잰다): {err!r}"
+
+    block = _view_block("site.html", "function vitMissWhy(")
+    assert not re.search(r"indexOf|includes\(|split\(|slice\(|—", block), \
+        f"vitMissWhy 가 서버 문장을 되짚어 자른다:\n{block}"
+    old_block = _view_block("site.html", "function vitMissOld(")
+    assert "—" not in old_block, "옛 행 호환 코드에 em dash 글자가 그대로 있다(\\u2014 로 적는다)"
+    # 옛 행 = 서버가 em dash 로 이어 붙이던 때 저장된 꼴
+    legacy = "측정 불가(NO_FCP) \u2014 " + collect_vitals.UNMEASURABLE_WHY.replace(". ", " \u2014 ", 1)
+    assert "\u2014" in legacy and legacy.count("\u2014") == 2, legacy
+    got = _node_views(block + "\n" + old_block + "\n" + (
+        "console.log(JSON.stringify([vitMissWhy([[0, 0, {error: %s}]]), vitMissWhy([[0, 0, {error: 'HTTP 500'}]]),"
+        " vitMissWhy([[0, 0, {error: %s}]])]));"
+        % (json.dumps(err, ensure_ascii=False), json.dumps(legacy, ensure_ascii=False))))
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert got[0] == err, f"화면이 서버 사유를 고쳐 보였다:\n{got[0]!r}\n{err!r}"
+    assert got[1] == "HTTP 500.", got[1]
+    assert "\u2014" not in got[2], f"옛 행이 em dash 를 달고 보인다: {got[2]!r}"
+    assert got[2] == err, f"옛 행이 새 행과 같은 문장으로 안 펴진다:\n{got[2]!r}\n{err!r}"
+
+
+def test_seam_198_run_notes_keys_collectors_write_are_what_screens_read():
+    """198) 수집기가 runs.notes 에 적는 `키=값` 과 화면이 그걸 되읽는 정규식이 같은 꼴이다.
+
+    · site.html stIxChecked 는 색인·페이지 수집기의 `urls=N/M checked=날짜` 를 읽어 검사한 URL 총수(분모)를 만든다.
+    · rank.html 은 순위 수집기의 `device=값` 을 읽어 「데스크톱/모바일」을 말한다. 수집기가 받는 값(desktop|mobile)과
+      화면의 DEV 표가 같은 한 벌이어야 하고, 표에 없는 값이 오면 영어 원문을 그대로 찍지 않고 말을 생략한다.
+    양쪽 끝 중 하나만 바뀌면 분모가 말없이 사라지거나(null) 기기 이름이 영어로 나온다.
+    """
+    scripts = ROOT / "skills" / "capture" / "scripts"
+    # 1) 수집기 쪽 — 같은 꼴을 적는 줄이 실제로 있다
+    shape = re.compile(r"urls=\{[^}]+\}/\{[^}]+\} checked=\{[^}]+\}")
+    for fn in ("collect_index.py", "collect_page.py"):
+        src = (scripts / fn).read_text("utf-8")
+        assert shape.search(src), f"{fn} 가 runs.notes 에 `urls=N/M checked=날짜` 꼴을 안 적는다(site.html stIxChecked 가 읽는다)"
+    serp = (scripts / "collect_serp.py").read_text("utf-8")
+    assert re.search(r"device=\{device\}", serp), "collect_serp.py 가 runs.notes 에 `device=값` 을 안 적는다(rank.html 이 읽는다)"
+    m = re.search(r"if device not in \(([^)]*)\)", serp)
+    assert m, "collect_serp.py 에서 device 허용값 검사를 못 찾았다"
+    devices = set(re.findall(r"[\"'](\w+)[\"']", m.group(1)))
+    rank_src = (ROOT / "skills" / "capture" / "templates" / "views" / "rank.html").read_text("utf-8")
+    dm = re.search(r"const DEV = \{([^}]*)\}", rank_src)
+    assert dm, "rank.html 에서 DEV 표를 못 찾았다"
+    assert set(re.findall(r"(\w+):", dm.group(1))) == devices, \
+        f"수집기가 받는 device {sorted(devices)} 와 rank.html DEV 표가 다르다: {dm.group(1)}"
+    assert "|| grab(" not in rank_src, "rank.html 이 표에 없는 device 값을 영어 원문 그대로 화면에 낸다"
+
+    # 2) 화면 쪽 — 수집기가 적는 꼴로 만든 노트를 실제 정규식에 먹인다 (node 가 있을 때)
+    note = "urls=17/20 checked=2026-08-20 errors=0"
+    ix_block = _view_block("site.html", "function stIxChecked(")
+    lines = re.findall(r"^\s*const (?:grab|DEV|devLabel) = .*;$", rank_src, re.M)
+    assert len(lines) == 3, f"rank.html 의 grab/DEV/devLabel 세 줄을 못 찾았다: {lines}"
+    js = ("const ST_IX_ROWS = new Array(7);\n" + ix_block + "\n"
+          "const out = [stIxChecked({index_date: '2026-08-20', runs: [{kind: 'index', notes: %s}]}),\n"
+          "  stIxChecked({index_date: '2026-08-21', runs: [{kind: 'index', notes: %s}]})];\n"
+          "for (const nt of ['provider=dfs device=mobile errors=0', 'device=desktop', 'device=tablet', 'errors=0']) {\n"
+          "  %s\n  out.push(devLabel);\n}\n"
+          "console.log(JSON.stringify(out));") % (
+        json.dumps(note), json.dumps(note), "\n  ".join(lines))
+    got = _node_views(js)
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert got == [17, None, "모바일", "데스크톱", "", ""], f"화면이 수집기가 적는 노트를 못 읽는다: {got}"
+
+
+def test_seam_199_ix_stop_why_is_made_one_way_in_both_places():
+    """199) 색인 중단 사유(stop.why = run_verdict 가 만든 「중단:」 뒤 원문)는 한 함수로만 가공한다.
+
+    색인 띠(`… 때문에`)와 표 위 상자(`… .`)가 각자 가공해 한쪽은 마침표가 끼고 한쪽은 잘렸다.
+    """
+    src = (ROOT / "skills" / "capture" / "templates" / "views" / "site.html").read_text("utf-8")
+    uses = [ln for ln in src.splitlines() if "stop.why" in ln and "stStopWhy = " not in ln]
+    assert not uses, f"stop.why 를 stStopWhy 밖에서 가공하는 곳이 있다: {uses}"
+    assert src.count("stStopWhy(stop)") >= 4, "두 자리가 stStopWhy 를 안 쓴다"
+    m = re.search(r"^const stStopWhy = .*;$", src, re.M)
+    assert m, "stStopWhy 를 못 찾았다"
+    got = _node_views("const esc = s => String(s);\n" + m.group(0) + "\n"
+                      "console.log(JSON.stringify([stStopWhy({why: 'HTTP 402.'}), stStopWhy({why: 'HTTP 402 . '}),"
+                      " stStopWhy({}), stStopWhy(null)]));")
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    assert got == ["HTTP 402", "HTTP 402", "", ""], got
+
+
+def test_seam_200_hosted_safe_strips_what_fatal_makes():
+    """200) 호스팅 화면의 hostedSafe() 는 serp_adapter.fatal() 이 실제로 만든 문장의 운영자용 꼬리를 걷는다.
+
+    fatal() 이 구분자를 바꾸자(— → :) 정규식이 옛 꼴만 알아봐 발급 주소와 영어 원문이
+    호스팅 사용자에게 나갔다. 화면은 손으로 쓴 예시가 아니라 fatal() 의 출력으로 시험한다.
+    """
+    import serp_adapter
+    src = (ROOT / "server" / "assets" / "dash.html").read_text("utf-8")
+    m = re.search(r"^  function hostedSafe\(why\) \{.*?^  \}", src, re.M | re.S)
+    assert m, "hostedSafe 를 못 찾았다"
+    cases = [str(serp_adapter.fatal(who, 402, "Insufficient funds"))
+             for who in serp_adapter.FATAL_FIX]
+    got = _node_views(m.group(0) + "\nconsole.log(JSON.stringify(%s.map(hostedSafe)));" % json.dumps(cases))
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    for raw, out in zip(cases, got):
+        assert "http" not in out and "Insufficient" not in out and "잔액·키 확인" not in out, \
+            f"운영자용 조각이 호스팅 사용자에게 나간다: {raw!r} -> {out!r}"
+        assert "서비스 쪽 문제" in out, f"사람 말로 바뀌지 않았다: {out!r}"
 
 
 def inspect_src(fn) -> str:

@@ -116,7 +116,7 @@ def _stage_t(kind: str) -> str:
 
 def _eg(items, n: int = 3) -> str:
     items = [str(x) for x in items if str(x).strip()]
-    return (" — 예: " + ", ".join(items[:n])) if items else ""
+    return (". 예: " + ", ".join(items[:n])) if items else ""
 
 
 def site_lang(locale: str | None) -> str:
@@ -187,7 +187,7 @@ def r_runs(d, ctx, out):
                 bad.append(f"{_stage_t(k)}(안 끝남 · {str(r.get('started_at'))[:10]} 시작)")
     if bad:
         _find(out, "high", "런", "run_failed",
-              f"마지막 런이 실패한 단계 {len(bad)}개 — " + "; ".join(bad), len(bad))
+              f"마지막 런이 실패한 단계 {len(bad)}개: " + "; ".join(bad), len(bad))
 
 
 def r_ai_health(d, ctx, out):
@@ -199,7 +199,7 @@ def r_ai_health(d, ctx, out):
                     if "ai" in (g.get("stages") or [])), None)
         _find(out, "high", "AI 인용", "ai_never_measured",
               f"AI 에 물을 질문 {active}개를 한 번도 재지 않았습니다"
-              + (f" — '{grp}' 묶음이 이 사이트에서 돈 적이 없습니다" if grp else ""), active)
+              + (f". '{grp}' 묶음이 이 사이트에서 돈 적이 없습니다" if grp else ""), active)
     outd = int(ah.get("outdated") or 0)
     if outd and active and outd >= active:
         _find(out, "mid", "AI 인용", "ai_outdated",
@@ -217,7 +217,7 @@ def r_opp_skew(d, ctx, out):
             if n / len(op) > SKEW_SHARE:
                 _find(out, "mid", "기회", "kind_skew",
                       f"열린 기회 {len(op)}건 중 {n}건({round(n / len(op) * 100)}%)이 "
-                      f"'{labels.get(k, k)}' 한 종류입니다 — 규칙 하나가 목록을 덮습니다", n)
+                      f"'{labels.get(k, k)}' 한 종류입니다. 규칙 하나가 목록을 덮습니다", n)
     doms = collections.Counter()
     for o in op:
         m = _CITED_DOMAIN.search(o.get("reasoning") or "")
@@ -242,7 +242,7 @@ def r_aio(d, ctx, out):
         heavy = len(unranked) >= 5 and len(unranked) / len(op) >= 0.3
         _find(out, "high" if heavy else "mid", "기회", "aio_unranked",
               f"'구글 AI 요약 빠짐' {len(op)}건 중 {len(unranked)}건이 우리가 순위에 없는 "
-              "검색어입니다 — 순위 문제를 AI 요약 문제로 말합니다" + _eg(unranked), len(unranked))
+              "검색어입니다. 순위 문제를 AI 요약 문제로 말합니다" + _eg(unranked), len(unranked))
     tracked = _tracked(d, ctx)
     if tracked:
         off = [o["target"] for o in op if str(o.get("target")) not in tracked]
@@ -292,7 +292,7 @@ def r_opp_text(d, ctx, out):
             old.append(f"{_ol(d, o)} · {max(ds)}")
     if old:
         _find(out, "low", "기회", "stale_reason",
-              f"근거 문장의 날짜가 {STALE_REASON_DAYS}일 넘게 지난 기회 {len(old)}건 — "
+              f"근거 문장의 날짜가 {STALE_REASON_DAYS}일 넘게 지난 기회 {len(old)}건: "
               "최신 수집이 있는데 옛 수로 말합니다" + _eg(old, 2), len(old))
     bad = [_ol(d, o) for o in op
            if _BAD_TXT.search((o.get("reasoning") or "") + " "
@@ -341,7 +341,7 @@ def r_rank(d, ctx, out):
         share = len(nul) / len(tracked)
         if share >= RANK_MISSING_MID:
             _find(out, "high" if share >= RANK_MISSING_HIGH else "mid", "순위", "rank_missing",
-                  f"추적 {len(tracked)}개 중 {len(nul)}개({round(share * 100)}%)가 순위 없음입니다 — "
+                  f"추적 {len(tracked)}개 중 {len(nul)}개({round(share * 100)}%)가 순위 없음입니다. "
                   "조회 깊이나 고른 키워드를 봅니다", len(nul))
     if act is not None:
         extra = [k for k in rb if k not in act]
@@ -375,7 +375,7 @@ def r_rank(d, ctx, out):
     if len(sect) > 1:
         _find(out, "mid", "순위", "rank_sections",
               "순위 URL 이 여러 나라 섹션에 흩어져 있습니다("
-              + ", ".join(f"{k} {v}" for k, v in sect.most_common(4)) + ") — 다른 나라 페이지로 잡힙니다",
+              + ", ".join(f"{k} {v}" for k, v in sect.most_common(4)) + "). 다른 나라 페이지로 잡힙니다",
               len(sect))
     aio_on = [r for r in tracked if r.get("aio")]
     unk = [r for r in aio_on if r.get("aio_cited") is None]
@@ -392,11 +392,11 @@ def r_rivals(d, ctx, out):
     manual = ctx.get("manual_rivals")
     if d.get("comp_date") and not rivals and not manual:
         _find(out, "mid", "경쟁사", "no_rivals",
-              "진짜 경쟁사가 한 곳도 없습니다(직접 적은 것도, 판정된 것도) — "
+              "진짜 경쟁사가 한 곳도 없습니다(직접 적은 것도, 판정된 것도). "
               "[설정]에서 경쟁사를 적거나 [경쟁 검색어]에서 찾기를 돌립니다", 0)
     if not roles and (d.get("kw_gap") or d.get("gap_rivals")):
         _find(out, "low", "경쟁사", "roles_missing",
-              "경쟁 후보의 역할 판정 기록이 없습니다 — 판정 전 코드로 모은 후보가 그대로 쓰입니다", 0)
+              "경쟁 후보의 역할 판정 기록이 없습니다. 판정 전 코드로 모은 후보가 그대로 쓰입니다", 0)
 
 
 def r_backlinks(d, ctx, out):
@@ -408,7 +408,7 @@ def r_backlinks(d, ctx, out):
     blocked = [x for x in br if x.get("to_status") in collect_page.BLOCK_STATUS]
     if blocked:
         _find(out, "mid", "백링크", "bl_broken_blocked",
-              f"깨진 링크 {len(br)}개 중 {len(blocked)}개가 크롤러 차단(403·429)입니다 — "
+              f"깨진 링크 {len(br)}개 중 {len(blocked)}개가 크롤러 차단(403·429)입니다. "
               "깨진 게 아닙니다", len(blocked))
     nocode = [x for x in br if x.get("to_status") is None]
     if nocode:
@@ -424,7 +424,7 @@ def r_pages(d, ctx, out):
     dead = [u for u, a in pa.items() if a.get("status") == 404]
     if dead:
         _find(out, "mid", "페이지 점검", "page_404",
-              f"점검 {len(pa)}장 중 {len(dead)}장이 열리지 않는 페이지(404)입니다 — "
+              f"점검 {len(pa)}장 중 {len(dead)}장이 열리지 않는 페이지(404)입니다. "
               "점검 자리를 먹고 매주 다시 실패합니다" + _eg(dead, 2), len(dead))
     fail = [u for u, a in pa.items()
             if a.get("status") != 404 and (a.get("error") or (a.get("status") or 200) >= 400)]
@@ -432,7 +432,7 @@ def r_pages(d, ctx, out):
         share = len(fail) / len(pa)
         _find(out, "high" if share >= BROKEN_SHARE else "mid", "페이지 점검", "page_audit_failed",
               f"점검 {len(pa)}장 중 {len(fail)}장을 못 읽었습니다"
-              + (" — 봇 차단을 의심합니다" if share >= BROKEN_SHARE else "") + _eg(fail, 2), len(fail))
+              + (". 봇 차단을 의심합니다" if share >= BROKEN_SHARE else "") + _eg(fail, 2), len(fail))
 
 
 def r_vitals(d, ctx, out):
@@ -445,7 +445,7 @@ def r_vitals(d, ctx, out):
         share = len(err) / len(rows)
         why = collections.Counter(re.sub(r"\s+", " ", str(s["error"]))[:60] for s in err)
         _find(out, "high" if share >= BROKEN_SHARE else "mid", "속도", "vitals_errors",
-              f"속도 측정 {len(rows)}번 중 {len(err)}번 실패 — {why.most_common(1)[0][0]}", len(err))
+              f"속도 측정 {len(rows)}번 중 {len(err)}번 실패: {why.most_common(1)[0][0]}", len(err))
 
 
 def r_groups(d, ctx, out):
@@ -463,7 +463,7 @@ def r_groups(d, ctx, out):
     late = list(dict.fromkeys(late))
     if late:
         _find(out, "mid", "신선도", "stale_group",
-              f"묶음 주기의 {STALE_GROUP_FACTOR}배를 넘겨 안 잰 단계 {len(late)}개 — " + ", ".join(late[:5]),
+              f"묶음 주기의 {STALE_GROUP_FACTOR}배를 넘겨 안 잰 단계 {len(late)}개: " + ", ".join(late[:5]),
               len(late))
 
 
@@ -472,7 +472,7 @@ def r_plays(d, ctx, out):
            if isinstance(p.get("result"), dict) and p["result"].get("error")]
     if bad:
         _find(out, "mid", "할 일", "plays_failed",
-              f"이번 달 할 일 {len(d.get('plays') or [])}건 중 {len(bad)}건이 수정안을 못 만들었습니다 — "
+              f"이번 달 할 일 {len(d.get('plays') or [])}건 중 {len(bad)}건이 수정안을 못 만들었습니다: "
               + str(bad[0]["result"]["error"])[:80], len(bad))
 
 
@@ -480,7 +480,7 @@ def r_setup(d, ctx, out):
     """서치콘솔은 있는데 씨앗 키워드가 없음(P17) — 억지로 채우라는 게 아니라 한 줄 안내."""
     if ctx.get("seeds") == 0 and (d.get("project") or {}).get("gsc_property"):
         _find(out, "low", "설정", "no_seeds",
-              "씨앗 키워드가 없습니다 — 서치콘솔 검색어로 돌지만, 노리는 주제가 따로 있으면 "
+              "씨앗 키워드가 없습니다. 서치콘솔 검색어로 돌지만, 노리는 주제가 따로 있으면 "
               "[설정]에 적습니다", 0)
 
 

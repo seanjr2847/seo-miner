@@ -2,6 +2,7 @@
      dashboard.py 가 이 선언들을 모아 window.__VIEWS__ 로 방출한다. -->
 <script type="application/json" class="view-def">
 {"id": "history", "group": "admin", "title": "기록",
+ "sub": "무엇이 언제 돌았고 무엇을 고쳤는지 봅니다.",
  "sections": ["acts", "runs", "made-sec"], "stages": []}
 </script>
 
@@ -57,7 +58,7 @@
 
 /* ── 이니셜 아바타 — 종류를 한눈에 구분하는 자리 ── */
 
-/* ── 신선도 보드(히어로): 막대 길이 = 마지막 실행 뒤 경과일, 세로 눈금 = 14일 ── */
+/* ── 신선도 보드(히어로): 막대 길이 = 마지막 실행 뒤 경과일, 세로 눈금 = 그 종류의 자동 주기 ── */
 #lastby .lb { display:grid; gap:var(--sp-4); --rr:0px; }
 #lastby .lb.has-rr { --rr:150px; }
 #lastby .row { display:grid; grid-template-columns:32px minmax(0,168px) minmax(48px,1fr) 136px var(--rr);
@@ -131,6 +132,7 @@
 .hs-nt .p.bad b { color:var(--warn); }
 /* 값 자리에 숫자가 아니라 문장이 오는 둘(첫 오류·중단 사유)은 한글이라 등폭을 뺀다. */
 .hs-nt .p.msg b { font-family:var(--sans); font-variant-numeric:normal; }
+/* 값이 "받음·건너뜀" 같은 한글 낱말이어도 같다(HS_notes 가 .msg 를 단다). */
 .hs-nt .p.free { white-space:normal; color:var(--sub); }
 
 /* ── 실행 기록 표 카드 ── */
@@ -178,7 +180,8 @@
   color:var(--accent); background:var(--accent-wash); border-radius:var(--r-pill); }
 #made .dt, #made .br { font:400 var(--fs-1)/1.4 var(--mono); color:var(--sub); white-space:nowrap; }
 #made .br { white-space:normal; overflow-wrap:anywhere; }
-#made .br::before { content:"⑂ "; }
+/* 브랜치 이름은 식별자라 등폭이고, 앞의 한글 이름표는 본문 서체다. 글리프(⑂)는 폰트에 기대서 글자로 바꿨다. */
+#made .br::before { content:"브랜치 "; font-family:var(--sans); }
 #made .path { font-family:var(--mono); font-size:var(--fs-1); line-height:1.5; margin:8px 0 0;
   word-break:break-all; }
 #made .mn { font-size:var(--fs-1); color:var(--sub); }
@@ -317,8 +320,24 @@ const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:
   unmeasurable:"측정 불가"};
 // 부가 조회 결과의 값 — 받았다/건너뛰었다.
 const HS_NOTE_VAL = {ok:"받음", skip:"건너뜀"};
-// 마지막 수집이 이만큼 지났으면 다시 돌릴 때다. 화면 표시용 기준이지 판정이 아니다.
-const HS_STALE_DAYS = 14;
+// "묵었다"의 판정은 이 화면이 하지 않는다 - 셸의 주기 점(grpDue)이 쓰는 묶음의 due 를 그대로 읽는다.
+// 호스팅 서버는 사이트의 자동 주기·자동 끔(0)을 due 에만 반영하므로(store.overlay_group_due) 정적 표의
+// every_hours 로 날수를 다시 세면 한 사이트가 한쪽에선 묵었고 한쪽에선 최근으로 갈린다. 다시 재는 단계로
+// 든 묶음이 없는 종류(꼬리 단계·전체)는 주기가 없어 묵었다고 말하지 않는다.
+// every_hours(표의 기본 주기)는 막대의 눈금 위치에만 쓴다 - 사이트 주기는 페이로드에 없다.
+// 주기가 여럿이면 가장 짧은 것(0·없음은 자동 끔이라 뺀다).
+let HS_GROUPS = [];
+function HS_period(k) {
+  const ds = HS_GROUPS.filter(g => g.every_hours && (g.stages || []).includes(k))
+    .map(g => g.every_hours / 24);
+  return ds.length ? Math.min(...ds) : null;
+}
+// 이 종류가 든 묶음 중 하나라도 due 면 true, due 를 아는 묶음이 모두 아니면 false, 모르면 null(옛 페이로드).
+function HS_due(k) {
+  const gs = grpDue(HS_GROUPS).filter(g => g.every_hours && (g.stages || []).includes(k)
+    && typeof g.due === "boolean");
+  return gs.length ? gs.some(g => g.due) : null;
+}
 
 // 이 화면의 명령 칩은 셸의 act() 로 못 만든다 — run 은 단계가 아니라 일괄 실행이고
 // /create plan 은 다른 스킬이다. 그래도 사이트 이름은 실어야 한다: 사이트가 여럿인
@@ -396,12 +415,12 @@ function HS_errHost(v) {
 // title·접힘에 남는다). 지금 수집기는 이미 사람 말로 남긴다(serp_adapter._task_error_text).
 const HS_KNOWN = [
   [/Invalid Field:\s*'(language_code|location_name|location_code)'/i,
-    "외부 서비스가 언어·지역 설정을 거절했습니다 — 사이트의 언어·지역을 확인하세요"],
-  [/Invalid Field/i, "외부 서비스가 요청 형식을 거절했습니다 — 다시 돌려도 같으면 알려 주세요"],
-  [/Payment Required|Insufficient funds/i, "외부 서비스 잔액이 부족합니다 — 충전한 뒤 다시 수집하면 됩니다"],
-  [/rates? limit/i, "분당 호출 한도를 넘었습니다 — 잠시 뒤 다시 수집하면 됩니다"],
-  [/Quota exceeded|RESOURCE_EXHAUSTED|\b429\b/i, "외부 서비스의 하루 한도를 다 썼습니다 — 내일 다시 수집하면 됩니다"],
-  [/Internal (Server )?Error/i, "외부 서비스 서버 오류 — 잠시 뒤 다시 수집하면 됩니다"],
+    "외부 서비스가 언어·지역 설정을 거절했습니다. 사이트의 언어·지역을 확인하세요"],
+  [/Invalid Field/i, "외부 서비스가 요청 형식을 거절했습니다. 다시 돌려도 같으면 알려 주세요"],
+  [/Payment Required|Insufficient funds/i, "외부 서비스 잔액이 부족합니다. 충전한 뒤 다시 수집하면 됩니다"],
+  [/rates? limit/i, "분당 호출 한도를 넘었습니다. 잠시 뒤 다시 수집하면 됩니다"],
+  [/Quota exceeded|RESOURCE_EXHAUSTED|\b429\b/i, "외부 서비스의 하루 한도를 다 썼습니다. 내일 다시 수집하면 됩니다"],
+  [/Internal (Server )?Error/i, "외부 서비스 서버 오류입니다. 잠시 뒤 다시 수집하면 됩니다"],
 ];
 // 옛 수정 기록의 메모 — createdb 가 예전에 「손으로 이미 실행: <해시>」로 남겼다(지금은 사람
 // 말로 남긴다). 이미 저장된 행은 여기서 같은 말로 읽는다.
@@ -411,8 +430,8 @@ function HS_errMsg(v) {
   const m = /^(\d)\d\d\b/.exec(v.trim());
   const svc = HS_errHost(v);
   const who = `외부 서비스${svc ? `(${svc})` : ""}`;
-  if (m && m[1] === "5") return `${who} 서버 오류 — 잠시 뒤 다시 수집하면 됩니다`;
-  if (m && m[1] === "4") return `${who} 요청이 거절됐습니다 — 키·권한·잔액을 확인하세요`;
+  if (m && m[1] === "5") return `${who} 서버 오류입니다. 잠시 뒤 다시 수집하면 됩니다`;
+  if (m && m[1] === "4") return `${who} 요청이 거절됐습니다. 키·권한·잔액을 확인하세요`;
   const k = HS_KNOWN.find(([re]) => re.test(v));
   if (k) return k[1];
   // 옛 기록은 표시 없이 100자에서 끊겼다(collector._clip 이전) — 딱 그 길이면 잘린 것이다.
@@ -441,7 +460,7 @@ function HS_cause(r) {
 // 페이지로 헛걸음시키지 않게 화면에서만 같은 판정으로 읽는다.
 const HS_legacy = n => String(n || "").replace(
   /잔액 없음\(402\)([^[]*)\[([^\]]*rates? limit[^\]]*)\]/i,
-  "분당 호출 한도 초과(402) — 잠시 뒤 다시 조회하면 됩니다 [$2]");
+  "분당 호출 한도 초과(402). 잠시 뒤 다시 조회하면 됩니다 [$2]");
 
 function HS_notes(n) {
   if (!n) return "";
@@ -463,7 +482,7 @@ function HS_notes(n) {
     // 공급사 이름은 사람이 할 일을 바꾸지 않는다 — 화면에서는 빼고 CSV 에만 남긴다.
     if (!HS_NOTE_LABEL[k] || k === "provider") return "";
     const bad = (k === "errors" || k === "skipped") && +v > 0;
-    parts.push(`<span class="p${bad ? " bad" : ""}">${esc(HS_NOTE_LABEL[k])} ` +
+    parts.push(`<span class="p${bad ? " bad" : ""}${HS_NOTE_VAL[val] ? " msg" : ""}">${esc(HS_NOTE_LABEL[k])} ` +
                `<b>${esc(HS_NOTE_VAL[val] || val)}</b></span>`);
     return "";
   }).trim();
@@ -492,9 +511,18 @@ function HS_runFind(v) { HS_RQ = v; HS_RN = 12; HS_runList(); }
 function HS_runRes(v) { HS_RRES = v; HS_RN = 12; HS_runList(); HS_donutLegend(); }
 function HS_runMore(n) { HS_RN = n; HS_runList(); }
 function HS_runReset() { HS_RQ = ""; HS_RRES = ""; HS_RKIND = null; HS_runTools(); }
+// 칩·선택 상자를 누르면 목록 영역을 통째로 다시 그려 초점이 body 로 떨어졌다 - 그린 뒤 같은 자리의 같은 요소에 돌려준다.
+function HS_keep(roots, draw) {
+  const a = document.activeElement, id = a && roots.find(x => $(x) && $(x).contains(a));
+  const tag = id && /^(BUTTON|SELECT)$/.test(a.tagName) ? a.tagName : "";
+  const i = tag ? [...$(id).querySelectorAll(tag)].indexOf(a) : -1;
+  draw();
+  const el = i >= 0 && $(id).querySelectorAll(tag)[i];
+  if (el) el.focus({preventScroll: true});
+}
 function HS_runKind(el) {
   HS_RKIND = HS_RKIND === el.dataset.k ? null : el.dataset.k;
-  HS_runTools();
+  HS_keep(["runs"], HS_runTools);
 }
 
 // 종류별 마지막 수집. runs 는 최신순으로 온다 — 처음 만난 kind 가 그 종류의 마지막이다.
@@ -504,7 +532,8 @@ function HS_lastBy() {
   const last = {};
   HS_RUNS.forEach(r => { if (!last[r.kind]) last[r.kind] = r; });
   return Object.keys(last)
-    .map(k => ({k, r: last[k], stale: HS_days(last[k].started_at) >= HS_STALE_DAYS}))
+    .map(k => { const p = HS_period(k), due = HS_due(k);
+      return {k, r: last[k], p, stale: p != null && (due != null ? due : HS_days(last[k].started_at) >= p)}; })
     .sort((a, b) => (b.stale - a.stale) ||
                     (Date.parse(a.r.started_at) - Date.parse(b.r.started_at)));
 }
@@ -540,7 +569,7 @@ function HS_sparkBars(days, key, label, badKey) {
       height="${h.toFixed(1)}" rx="1.5"/>`;
   }).join("");
   return `<div class="sp1"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
-    aria-label="${esc(`${label} — 최근 ${days.length}일, 하루 최대 ${num(mx)}`)}">${bars}</svg></div>`;
+    aria-label="${esc(`${label}, 최근 ${days.length}일, 하루 최대 ${num(mx)}`)}">${bars}</svg></div>`;
 }
 function HS_sparkLine(days, key, label, fmt) {
   if (days.length < 2) return "";
@@ -554,7 +583,7 @@ function HS_sparkLine(days, key, label, fmt) {
     p += ` C${cx.toFixed(1)} ${y0.toFixed(1)} ${cx.toFixed(1)} ${y1.toFixed(1)} ${x1.toFixed(1)} ${y1.toFixed(1)}`;
   }
   return `<div class="sp1"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
-    aria-label="${esc(`${label} — 최근 ${days.length}일, 하루 최대 ${fmt(mx)}`)}">
+    aria-label="${esc(`${label}, 최근 ${days.length}일, 하루 최대 ${fmt(mx)}`)}">
     <defs><linearGradient id="hsg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" style="stop-color:var(--accent)" stop-opacity=".28"/>
       <stop offset="1" style="stop-color:var(--accent)" stop-opacity="0"/></linearGradient></defs>
@@ -580,14 +609,14 @@ function HS_donutLegend() {
 function HS_runResBtn(v) {
   HS_RRES = HS_RRES === v ? "" : v;
   HS_RN = 12;
-  HS_runTools();
+  HS_keep(["runs"], HS_runTools);
   document.getElementById("hs-runcard").scrollIntoView({behavior: "smooth", block: "start"});
 }
 function HS_donut() {
   const c = HS_resCount(), total = HS_RUNS.length;
   const order = ["ok", "bad", "skip"].filter(v => c[v]);
   const label = {ok: "완료", bad: "문제", skip: "건너뜀"};
-  const aria = `결과 분포 — ${order.map(v => `${label[v]} ${c[v]}회`).join(", ")}`;
+  const aria = `결과 분포: ${order.map(v => `${label[v]} ${c[v]}회`).join(", ")}`;
   const cv = chMount(T => {
     const st = getComputedStyle(document.documentElement), col = v => st.getPropertyValue(v).trim();
     return {type: "doughnut",
@@ -623,7 +652,7 @@ function HS_runSummary() {
       : `<span class="d up" title="중단·미완·오류로 끝난 실행이 없습니다">문제 없음</span>`) +
     (skip ? `<span class="d muted" title="보통 한도·키 없음">건너뜀 ${skip}</span>` : "");
   const met = [
-    [HS_RUNS.length, "실행", "최근 40회까지 담습니다 · 막대 하나가 하루", pills,
+    [HS_RUNS.length, "실행", "최근 기록만 담습니다 · 막대 하나가 하루", pills,
       HS_sparkBars(days, "n", "일별 실행 수", "bad")],
     [num(calls), "외부 호출", "이 목록의 합계 · 막대 하나가 하루", "",
       HS_sparkBars(days, "calls", "일별 외부 호출 수")],
@@ -637,25 +666,24 @@ function HS_runSummary() {
   // 낡은 종류는 여기서 문장으로 또 말하지 않는다 — 그 말은 [다음 행동] 한 자리가
   // 갖고, 여기서는 어느 종류가 묵었는지를 막대 색과 배지로만 짚는다.
   const rows = HS_lastBy(), stale = rows.filter(x => x.stale).length;
-  const maxd = Math.max(HS_STALE_DAYS, ...rows.map(x => Math.max(0, HS_days(x.r.started_at) || 0)));
-  const tick = HS_STALE_DAYS / maxd * 100;
+  const maxd = Math.max(1, ...rows.map(x => Math.max(x.p || 0, HS_days(x.r.started_at) || 0)));
   const rr = rows.map(({k, r, stale: st}) => st && !READONLY ? HS_rerun(k, false) : "");
   $("lastby").innerHTML = `<div class="hs-ch"><div><h2>종류별 마지막 실행</h2>
-      <p class="hs-cs">막대가 길수록 오래 묵었습니다. 세로 눈금이 ${HS_STALE_DAYS}일 기준선입니다.</p></div>
-      ${stale ? `<span class="badge warn">${stale}종류 묵음</span>` : `<span class="badge ok">모두 최근</span>`}
+      <p class="hs-cs">막대가 길수록 오래 묵었습니다. 세로 눈금은 그 종류의 자동 주기입니다.</p></div>
+      ${stale ? `<span class="badge warn">${stale}종류 묵음</span>`
+        : rows.some(x => x.p != null) ? `<span class="badge ok">모두 최근</span>` : ""}
     </div>
-    <div class="lb${rr.some(Boolean) ? " has-rr" : ""}">${rows.map(({k, r, stale: st}, i) => {
+    <div class="lb${rr.some(Boolean) ? " has-rr" : ""}">${rows.map(({k, r, p, stale: st}, i) => {
       const d = Math.max(0, HS_days(r.started_at) || 0);
       return `<div class="row${st ? " stale" : ""}">${HS_av(k, st)}
         <div class="top"><span class="k">${esc(HS_kind(k))}</span>${st
-          ? `<span class="badge warn" title="${HS_STALE_DAYS}일 넘게 안 돌았습니다 — 다시 돌릴 때입니다.">${
-              HS_STALE_DAYS}일 지남</span>` : ""}
+          ? `<span class="badge warn" title="자동 주기를 넘겨 안 돌았습니다. 다시 돌릴 때입니다.">주기 지남</span>` : ""}
           </div>
         <div class="v">${esc((r.started_at || "").slice(0, 10))}
           <span class="ago" title="마지막으로 이 종류를 돌린 때입니다.">${HS_ago(r.started_at)}</span></div>
         <div class="tr" role="img" aria-label="마지막 실행 뒤 ${Math.floor(d)}일 지남"><i style="width:${
-          Math.max(2, d / maxd * 100).toFixed(1)}%"></i><span class="tk" style="left:${
-          tick.toFixed(1)}%"></span></div>
+          Math.max(2, d / maxd * 100).toFixed(1)}%"></i>${p == null ? "" : `<span class="tk" style="left:${
+          (p / maxd * 100).toFixed(1)}%"></span>`}</div>
         <div class="rr">${rr[i] ? `<div class="acts">${rr[i]}</div>` : ""}</div></div>`;
     }).join("")}</div>`;
   HS_donut();
@@ -666,7 +694,7 @@ function HS_runSummary() {
 function HS_staleMsg() {
   const s = HS_lastBy().filter(x => x.stale);
   if (!s.length) return null;
-  return {say: `${s.length}종류가 ${HS_STALE_DAYS}일 넘게 안 돌았습니다.` +
+  return {say: `${s.length}종류가 자동 주기를 넘겨 안 돌았습니다.` +
       `<span class="live"> 다시 재야 그동안 고친 게 숫자에 섞입니다.</span>`,
     act: p => HS_runAll(p)};
 }
@@ -735,9 +763,9 @@ function HS_runList() {
       <td class="kwcell"><span class="kn">${HS_av(r.kind, false)}${esc(HS_kind(r.kind))}</span></td>
       <td>${HS_badge(v)}</td>
       <td class="num"${s !== null && s >= 60 ? ` title="${HS_mmss(s)}"` : ""}>${
-        s === null ? "—" : s}</td>
+        s === null ? "-" : s}</td>
       <td class="num">${num(r.api_calls || 0)}</td>
-      <td class="num">${r.cost_estimate_usd ? HS_usd(r.cost_estimate_usd) : "—"}</td>
+      <td class="num">${r.cost_estimate_usd ? HS_usd(r.cost_estimate_usd) : "-"}</td>
       <td>${HS_notes(r.notes)}${
         v.cls === "bad" ? `<div class="why">${esc(v.why)}</div>` : ""}${
         fix ? `<div class="acts">${fix}</div>` : ""}</td>
@@ -748,7 +776,7 @@ function HS_runList() {
     ["시각", "종류", "결과?완료·건너뜀·문제는 수집기가 남긴 기록으로만 가릅니다",
      ">소요(초)?시작과 끝의 차이입니다. 1분이 넘으면 칸에 손을 얹어 분·초로 봅니다",
      ">호출?그 실행이 부른 외부 API 횟수",
-     ">비용?수집기가 적어 둔 추정치입니다 — 청구서가 아닙니다",
+     ">비용?수집기가 적어 둔 추정치입니다. 청구서가 아닙니다",
      "기록?수집기가 남긴 key=value 를 옮긴 것입니다"], rows, "", "cards")}` + (rest > 0
     ? `<div class="acts">
          <button class="go sec sm" onclick="HS_runMore(${HS_RN + 20})">${Math.min(20, rest)}건 더 보기 (남은 ${rest}건)</button></div>`
@@ -801,13 +829,13 @@ function HS_effLine(c) {
   if (!e) return "";
   if (e.old)
     return `<div class="eff" title="일별 클릭은 최근 ${HS_DAILY.length}일치만 남습니다."
-      >일별 기록이 닿지 않는 날입니다 — 전후를 못 잽니다</div>`;
+      >일별 기록이 닿지 않는 날입니다. 전후를 못 잽니다</div>`;
   if (e.short)
     return `<div class="eff" title="고친 날 앞뒤로 각각 ${HS_EFF_MIN}일 이상 있어야 잽니다."
       >아직 판단할 날이 모자랍니다</div>`;
   const one = n => n.toFixed(1);
   return `<div class="eff${e.d > 0 ? " up" : e.d < 0 ? " down" : ""}"
-    title="고친 날 앞 ${e.nb}일과 뒤 ${e.nf}일의 하루 평균 클릭입니다 — 같은 기간에 다른 것도
+    title="고친 날 앞 ${e.nb}일과 뒤 ${e.nf}일의 하루 평균 클릭입니다. 같은 기간에 다른 것도
 바뀌므로 이 수정만의 몫이라는 뜻은 아닙니다."
     >고친 뒤 하루 평균 클릭 <b>${one(e.b)}</b> → <b>${one(e.f)}</b>
     (${SM.ui.sign(e.d, "+")}${one(Math.abs(e.d))})</div>`;
@@ -864,8 +892,8 @@ function HS_madeRow(c) {
       ${c.opp_target
         ? `<button class="from" data-o="${esc(c.opportunity_id)}"
              data-t="${esc(c.opp_target)}" onclick="HS_toOpp(this)"
-             title="이 수정을 낳은 기회입니다 (기회 #${esc(c.opportunity_id)}) — 누르면 [개요]의 그 카드로 갑니다"
-             >← ${esc(c.opp_target)}</button>` : ""}
+             title="이 수정을 낳은 기회입니다 (기회 #${esc(c.opportunity_id)}). 누르면 [개요]의 그 카드로 갑니다"
+             >기회: ${esc(c.opp_target)}</button>` : ""}
       ${c.note ? (c.note.startsWith("http")
         ? `<div class="why"><a href="${esc(c.note)}" target="_blank" rel="noopener">${esc(c.note)}</a></div>`
         : `<div class="why">${esc(HS_noteText(c.note))}</div>`) : ""}
@@ -934,14 +962,14 @@ function HS_loop() {
   const bits = [`오른 것 ${up}건`, `내린 것 ${down}건`];
   if (same) bits.push(`그대로 ${same}건`);
   const verdict = !HS_DAILY.length
-    ? "일별 클릭 기록이 아직 없어 전후를 못 잽니다 — 실적을 한 번 더 수집하면 " +
+    ? "일별 클릭 기록이 아직 없어 전후를 못 잽니다. 실적을 한 번 더 수집하면 " +
       "줄마다 붙습니다."
     : (up + down + same)
       ? `고친 날 앞뒤 ${HS_EFF_WIN}일 하루 평균 클릭으로 보면 잴 수 있는 ${
           up + down + same}건 중 ${bits.join(", ")}입니다${cant
           ? `. 나머지 ${cant}건은 아직 잴 날이 없습니다` : ""}. ` +
         "같은 기간에 다른 것도 바뀌므로 이 수정들만의 몫은 아닙니다."
-      : `아직 전후를 잰 건이 없습니다 — 고친 날 앞뒤로 각각 ${HS_EFF_MIN}일 이상 ` +
+      : `아직 전후를 잰 건이 없습니다. 고친 날 앞뒤로 각각 ${HS_EFF_MIN}일 이상 ` +
         "일별 기록이 있어야 잽니다.";
   // 잰 건만 막대로 — 최근 것부터 여섯 건. 못 잰 건은 결론 문장이 숫자로 말한다.
   const meas = HS_MADE.map(c => ({c, e: HS_effect(c.created_at)}))
@@ -951,7 +979,7 @@ function HS_loop() {
   if (meas.length) {
     const name = c => `${String(c.created_at || "").slice(5, 10)} ${(window.KIND_LABELS || {})[c.kind] || c.kind || "수동 작업"}`;
     const one = n => n.toFixed(1);
-    const aria = "고친 날 앞뒤 하루 평균 클릭 — " + meas.map(({c, e}) =>
+    const aria = "고친 날 앞뒤 하루 평균 클릭: " + meas.map(({c, e}) =>
       `${name(c)} ${one(e.b)}에서 ${one(e.f)}`).join(", ");
     chart = chMount(T => {
       const mute = getComputedStyle(document.documentElement).getPropertyValue("--mute").trim();
@@ -971,11 +999,11 @@ function HS_loop() {
             tooltip: chTipSays(T, {callbacks: {title: x => x[0].label,
               label: x => `${x.dataset.label} 하루 평균 ${one(x.parsed.x)}클릭`}})}}};
     }, aria, `height:${meas.length * 44 + 28}px`) +
-      `<div class="chleg"><span><i class="pre"></i>고치기 전 7일 평균</span>
-        <span><i class="post"></i>고친 뒤 7일 평균</span><span>단위: 하루 클릭</span></div>`;
+      `<div class="chleg"><span><i class="pre"></i>고치기 전 ${HS_EFF_WIN}일 평균</span>
+        <span><i class="post"></i>고친 뒤 ${HS_EFF_WIN}일 평균</span><span>단위: 하루 클릭</span></div>`;
   }
   $("hs-loop").innerHTML = chart +
-    `<div class="loop"><b>한 바퀴</b> — 실적을 수집하고, 기회로 뽑고, 이 ${
+    `<div class="loop"><b>한 바퀴</b> 실적을 수집하고, 기회로 뽑고, 이 ${
       HS_MADE.length}건을 고쳤습니다${linked
       ? ` (그중 ${linked}건은 뽑아 둔 기회에서 곧장 왔습니다)`
       : ""}. ${verdict}</div>`;
@@ -1097,8 +1125,8 @@ function HS_acts(d) {
 }
 
 VIEW("history", function (d) {
-  viewSub("history", "무엇이 언제 돌았고 무엇을 고쳤는지 봅니다.");
   HS_RUNS = d.runs || [];
+  HS_GROUPS = d.groups || [];
   HS_RQ = ""; HS_RRES = ""; HS_RKIND = null; HS_RN = 12;
   HS_eyebrow("runs-eb", HS_RUNS, "started_at");
   HS_runSummary();

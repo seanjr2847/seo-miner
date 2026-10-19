@@ -51,7 +51,7 @@ SM.queue = (() => {
     return !!t && kindsOf(o).every(([k]) => !t.includes(k));
   };
   const directBadge = (o, D) => direct(o, D)
-    ? `<span class="badge" title="심사를 거치지 않는 종류입니다. 검색어·주제를 가리는 판정 없이 바로 기회가 됩니다 — 고칠 곳이 정해져 있습니다.">바로 고칠 것</span>` : "";
+    ? `<span class="badge" title="심사를 거치지 않는 종류입니다. 검색어·주제를 가리는 판정 없이 바로 기회가 됩니다. 고칠 곳이 정해져 있습니다.">바로 고칠 것</span>` : "";
 
   // 서버가 접어 보낸 줄(d.opp_groups)을 카드 객체로 편다. 줄 하나 = 대표 기회 + 묶음.
   // 대표 객체는 복사해서 점수·상태만 묶음 것으로 갈아 끼운다 — 원본(d.opps)은 다른
@@ -403,7 +403,7 @@ SM.queue = (() => {
         .map(t => `<span title="${esc(window.OPP_TAG_TIP[t])}">${esc(window.OPP_TAG_LABEL[t])} <b>${num(c[t])}</b></span>`);
       if (!parts.length) return "";
       // .opp-held 는 flex 라 글자·span 이 따로 줄을 탄다 — 한 문단으로 흐르게 span 하나로 감싼다.
-      return `<p class="opp-held"><span>도구가 새 데이터를 보고 닫은 ${num(list.length)}줄 — ${parts.join(" · ")}.
+      return `<p class="opp-held"><span>도구가 새 데이터를 보고 닫은 ${num(list.length)}줄: ${parts.join(" · ")}.
         좋아진 것은 「${esc(window.OPP_TAG_LABEL.better)}」뿐입니다. 나머지는 다른 줄과 겹쳤거나, 판정 기준이 바뀌었거나,
         더 판단할 수 없게 된 것입니다.</span></p>`;
     }
@@ -480,7 +480,7 @@ SM.queue = (() => {
               plugins: {legend: {display: false},
                 tooltip: chTipSays(T, {callbacks: {title: c => c[0].label,
                   label: c => `${num(c.raw)}건 (${(c.raw / total * 100).toFixed(0)}%)`}})}}};
-        }, `종류별 기회 — ${names.map((n, i) => `${n} ${data[i]}건`).join(", ")}`, "width:136px;height:136px")
+        }, `종류별 기회: ${names.map((n, i) => `${n} ${data[i]}건`).join(", ")}`, "width:136px;height:136px")
           + `<div class="ovk-c"><b></b><span>줄</span></div>`;
       }
       dn.querySelector(".ovk-c b").textContent = num(this.filtered().length);
@@ -668,7 +668,7 @@ SM.queue = (() => {
           <svg viewBox="0 0 64 64" aria-hidden="true"><circle class="trk" cx="32" cy="32" r="26" fill="none" stroke-width="6"/>
             <circle class="arc" cx="32" cy="32" r="26" fill="none" stroke-width="6" stroke-linecap="round"
               stroke-dasharray="${(sc == null ? 0 : Math.min(100, sc) / 100 * C).toFixed(1)} ${C.toFixed(1)}"/></svg>
-          <b>${sc == null ? "—" : sc}<i>점</i></b></div>
+          <b>${sc == null ? "-" : sc}<i>점</i></b></div>
         <div class="ovs-b">
           <div class="ovs-k">지금 가장 먼저 손댈 기회</div>
           <div class="ovs-t">${esc(targetLabel(top.target))}</div>
@@ -692,8 +692,8 @@ SM.queue = (() => {
       if (!dr && box) {
         box.insertAdjacentHTML("beforeend", `<div class="odr-bg" id="qdr-bg-${this.view}" hidden
           onclick="QU(this).drawerClose()" data-queue-of="${this.view}"></div><aside class="odr" id="qdr-${this.view}"
-          data-queue-of="${this.view}" role="dialog" aria-labelledby="odr-t" hidden
-          onkeydown="if(event.key==='Escape')QU(this).drawerClose()"></aside>`);
+          data-queue-of="${this.view}" role="dialog" aria-modal="true" aria-labelledby="odr-t" tabindex="-1" hidden
+          onkeydown="if(event.key==='Escape')QU(this).drawerClose();else SM.ui.trapTab(event,this)"></aside>`);
         dr = $("qdr-" + this.view);
       }
       return dr;
@@ -807,6 +807,9 @@ SM.queue = (() => {
     }
     drawerPaint(o) {
       const dr = this.drawerEls();
+      // 다시 칠하면 포커스를 쥔 버튼이 사라져 body 로 떨어진다 - 키보드 가둠과 Esc 가 서랍에 안 닿게 된다.
+      const act = document.activeElement, held = !dr.hidden && act && dr.contains(act) && act !== dr;
+      const segAt = held && act.closest(".odr-seg") ? [...act.parentNode.children].indexOf(act) : -1;
       const P = window.oppParts(o);
       const p = o.play || {};
       const n = targetsOf(o).length;
@@ -830,7 +833,7 @@ SM.queue = (() => {
       dr.innerHTML = `<div class="odr-h">
           <div class="odr-top">
             <div class="odr-ring${isDefensive(o) ? " def" : ""}" title="${Number.isFinite(o.score)
-              ? `${o.score}점 / 100점. 높을수록 먼저 손댑니다.` : ""}">${Number.isFinite(o.score) ? Math.round(o.score) : "—"}</div>
+              ? `${o.score}점 / 100점. 높을수록 먼저 손댑니다.` : ""}">${Number.isFinite(o.score) ? Math.round(o.score) : "-"}</div>
             <div class="odr-tt"><h2 id="odr-t">${esc(targetLabel(o.target))}</h2>
               <div class="odr-chips">${kindsOf(o).map(kl => kindPill(o, kl)).join("")}${n > 1
                 ? `<span class="badge" title="${esc(targetsOf(o).join(" · "))}">검색어 ${n}개</span>` : ""}${
@@ -857,6 +860,8 @@ SM.queue = (() => {
         <div class="odr-f">${seg}<span class="sp"></span>${main}</div>`;
       deadSweep(dr);
       applyWording(dr);
+      if (held && !dr.contains(document.activeElement))
+        ((segAt >= 0 && dr.querySelectorAll(".odr-seg button")[segAt]) || dr).focus({preventScroll: true});
     }
   }
 

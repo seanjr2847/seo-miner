@@ -180,7 +180,7 @@ STAGES = (
     _stage("competitors", "경쟁사 검색어·트래픽 몫",          collect_gap.collect,     True, collect_gap),
     _stage("backlinks",   "프로필·앵커·링크 교집합",     collect_backlinks.collect, True, collect_backlinks),
     _stage("gaps",        "외부 호출 없음",           load_opportunities,      False),
-    _stage("plays",       "이번 달 할 일 — 페이지 읽기·수정안", plays.collect, True, plays),
+    _stage("plays",       "이번 달 할 일: 페이지 읽기·수정안", plays.collect, True, plays),
     _stage("pages",       "제목·설명·본문·구조화 데이터", collect_page.collect, False, collect_page),
     # 속도는 페이지 점검 뒤다 — 같은 URL 목록(collect_page.target_urls)을 보기 때문에,
     # 어느 페이지를 손댈지가 먼저 정해져 있어야 같은 페이지를 잰다.

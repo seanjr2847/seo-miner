@@ -71,12 +71,12 @@ def judge(row) -> dict:
         state, cls, label, why = "aborted", "bad", "중단", "도중에 예외로 멈췄습니다."
     elif unfinished:
         state, cls, label = "unfinished", "bad", "미완"
-        why = "끝난 기록이 없습니다 — 프로세스가 도중에 죽었을 수 있습니다."
+        why = "끝난 기록이 없습니다. 프로세스가 도중에 죽었을 수 있습니다."
     elif errors:
         state, cls, label, why = "errors", "bad", f"오류 {errors}", f"{errors}건이 실패했습니다."
     elif skipped:
         state, cls, label = "skipped", "skip", f"건너뜀 {skipped}"
-        why = f"{skipped}건을 건너뛰었습니다 — 보통 한도·키 없음입니다."
+        why = f"{skipped}건을 건너뛰었습니다. 보통 한도·키 없음입니다."
     else:
         state, cls, label, why = "ok", "ok", "완료", "끝까지 돌았고 오류가 없습니다."
     return {"state": state, "cls": cls, "label": label, "why": why,

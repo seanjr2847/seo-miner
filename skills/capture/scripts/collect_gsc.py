@@ -98,7 +98,7 @@ def _oauth_credentials_locked():
         try:
             from google_auth_oauthlib.flow import InstalledAppFlow
         except ImportError:
-            sys.exit("구글 로그인 부품이 없습니다 — 먼저 실행: "
+            sys.exit("구글 로그인 부품이 없습니다. 먼저 실행: "
                      "pip install google-auth-oauthlib")
         # 여기서부터는 **사람이 브라우저를 눌러 주는** 흐름이다. 서버에는 브라우저가
         # 없으므로 run_local_server 가 webbrowser.Error 로 죽는다 — 실제로 호스팅에서
@@ -145,8 +145,8 @@ def get_credentials():
         if creds is not None:
             return creds
 
-    sys.exit("구글 서치콘솔 인증이 없습니다 — 로그인 한 번이면 끝납니다.\n"
-             f"  · 기본(OAuth): {db.gsc_oauth_client()} 에 클라이언트 파일이 없습니다 —\n"
+    sys.exit("구글 서치콘솔 인증이 없습니다. 로그인 한 번이면 끝납니다.\n"
+             f"  · 기본(OAuth): {db.gsc_oauth_client()} 에 클라이언트 파일이 없습니다.\n"
              "    python ../../setup/scripts/connect_gsc.py  (setup.md 4-B)\n"
              "  · 무인 수집(서비스 계정)을 쓰신다면 같은 스크립트가 그쪽 키도 받습니다.")
 
@@ -160,7 +160,7 @@ def get_service():
     try:
         from googleapiclient.discovery import build
     except ImportError:
-        sys.exit("구글 연동 부품이 없습니다 — 먼저 실행: "
+        sys.exit("구글 연동 부품이 없습니다. 먼저 실행: "
                  "pip install google-api-python-client")
     return build("searchconsole", "v1", credentials=get_credentials(),
                  cache_discovery=False)
@@ -303,7 +303,7 @@ def collect(project: str, *,
                 # 부수 호출의 실패도 본체를 죽이면 안 된다 — 이미 받아 둔 query×page 를
                 # 통째로 잃지 않게 여기서 잡아 건너뛴다. 다만 **세기는 한다**: 여태
                 # stderr 한 줄이 전부라 축이 몇 주째 비어도 아무 기록이 없었다.
-                st.fail(f"수집을 건너뜁니다 ({e}) — 본체 스냅샷은 그대로 저장됩니다.",
+                st.fail(f"수집을 건너뜁니다 ({e}). 본체 스냅샷은 그대로 저장됩니다.",
                         item=label, kind=type(e).__name__, status=_status(e))
                 return None
             calls += 1

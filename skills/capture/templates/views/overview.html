@@ -33,6 +33,8 @@
 .nw { white-space:nowrap; }              /* 날짜 범위·기준 캡션은 중간에서 꺾이지 않는다 */
 
 /* ── KPI 띠: 스파크라인을 카드 폭으로 키운다(스냅샷 3개 이상·변동이 있을 때만 선다) ── */
+/* 로딩 자리표시자 — #band 가 flex-wrap 이라 폭이 없는 상자는 0 이 된다. 한 줄을 다 차지하게 한다. */
+#band > .skel.box { flex:1 1 100%; }
 #band .spark { margin-top:auto; padding-top:var(--sp-3); }
 #band .spark svg { display:block; width:100%; max-width:220px; height:auto; aspect-ratio:160 / 36; }
 
@@ -40,7 +42,6 @@
 .ovw { display:flex; flex-direction:column; gap:2px; margin:0 calc(-1 * var(--sp-2)); }
 .ovw-r { display:grid; grid-template-columns:32px minmax(0,1fr) auto; gap:0 var(--sp-3);
   align-items:center; padding:var(--sp-3) var(--sp-2); border-radius:var(--r-in); }
-.ovw-r:hover { background:var(--sunk); }
 .ov-av.ui-av { font-weight:700; }
 .ovw-n { font:600 var(--fs-2)/1.4 var(--sans); overflow-wrap:anywhere; }
 .ovw-m { margin-top:2px; font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub);
@@ -124,7 +125,7 @@ button.ovp:hover .ovp-k { background:var(--card); }
 .odr-doc .acts { margin-top:12px; }
 </style>
 
-<div class="band" id="band"></div>
+<div class="band" id="band"><span class="skel box" role="status" aria-label="실적을 불러오는 중"></span></div>
 
 <!-- 격자 하나가 섹션 하나다 — 셸(SM.sync)은 #opps·#watch·#daily 의 가장 가까운 <section> 을
      화면 상자로 옮긴다. 카드마다 <section> 을 두면 격자에서 뜯겨 나가므로 카드는 <div> 다.
@@ -232,7 +233,7 @@ function dailyChart(rows, stats) {
   // (날짜별 vs 검색어별). 둘 다 "28일 합계"라고만 적어 두면 한 화면에서 736 과 980
   // 이 나란히 서서 무엇이 고장 났나 싶어진다. 이 자리는 자기 날짜를 말한다.
   const span = `${String(rows[0].date).slice(5)}~${String(rows[n - 1].date).slice(5)}`;
-  const aria = `최근 ${n}일 ${label} 추이 — 클릭 합계 ${num(sumC)}, 노출 합계 ${num(sumI)}`;
+  const aria = `최근 ${n}일 ${label} 추이, 클릭 합계 ${num(sumC)}, 노출 합계 ${num(sumI)}`;
   const chart = chMount(T => {
     const S = getComputedStyle(document.documentElement);
     const col = key === "clicks" ? T.patina : S.getPropertyValue("--info").trim();
@@ -264,7 +265,7 @@ function dailyChart(rows, stats) {
             label: c => {
               const r = rows[c.dataIndex];
               return [`클릭 ${num(r.clicks)} · 노출 ${num(r.impressions)}`,
-                `클릭률 ${r.ctr}% · 평균 ${r.position ?? "—"}위`];
+                `클릭률 ${r.ctr}% · 평균 ${r.position ?? "-"}위`];
             }}}),
           chText: {T, cross: true}}}};
   }, aria, "height:clamp(200px, 24vw, 280px)");
@@ -273,7 +274,7 @@ function dailyChart(rows, stats) {
     ["날짜", ">클릭", ">노출", ">클릭률", ">평균 순위"],
     rows.slice().reverse().map(r => `<tr><td class="num">${esc(r.date)}</td><td class="num">${num(r.clicks)}</td>
       <td class="num">${num(r.impressions)}</td><td class="num">${r.ctr}%</td>
-      <td class="num">${r.position ?? "—"}</td></tr>`), "")}</details>`;
+      <td class="num">${r.position ?? "-"}</td></tr>`), "")}</details>`;
   return `${chart}
   <div class="ovd-leg"><b>클릭</b> <span class="nw">${esc(span)}</span> 사이트 전체 합계 ${num(sumC)}
     (하루 최고 ${num(topC)}) · <b>노출</b> 합계 ${num(sumI)}
@@ -317,11 +318,13 @@ let OV_PL = null, OV_PL_TAB = "fix";
    할 일이 겹쳐 열리지 않고, 닫기(Esc·바깥·✕)와 초점 되돌리기도 한 벌(큐의 drawerClose)이다.
    박제본은 줄을 문장으로만 남긴다 — 서랍·만들기 버튼이 없다(누를 서버가 없다). */
 const OV_PLAYS_N = 5, OV_PLAY_KW = 3;
-const OV_PLAY_ST = {new: ["", "할 일"], applied: ["made", "PR 만듦"], dismissed: ["muted", "뺌"]};
+// new 는 모든 줄이 같은 상태라 배지를 달지 않는다(정보가 없다). 다른 상태만 말한다.
+const OV_PLAY_ST = {applied: ["made", "PR 만듦"], dismissed: ["muted", "뺌"]};
 let OV_PLAYS = [];
 const OV_playOf = id => OV_PLAYS.find(p => p.id === id);
 const OV_playSt = p => {
-  const [c, l] = OV_PLAY_ST[p.status] || ["", p.status || "할 일"];
+  if (!p.status || p.status === "new") return "";
+  const [c, l] = OV_PLAY_ST[p.status] || ["", p.status];
   return `<span class="badge${c ? " " + c : ""}">${esc(l)}</span>`;
 };
 // 검색어 칩 — 앞의 몇 개만, 나머지는 「외 N」(전부는 서랍의 증거가 말한다).
@@ -435,12 +438,12 @@ function OV_playEv(ev) {
     <ol class="odr-serp">${rows.map(sr => {
       const hd = (sr.headings || []).slice(0, 6).map(esc).join(" · ");
       const w = Number.isFinite(sr.words) ? `본문 단어 ${num(sr.words)}` : "";
-      return `<li${sr.is_own ? ` class="own"` : ""}><span class="p">${sr.position ?? "—"}</span>
+      return `<li${sr.is_own ? ` class="own"` : ""}><span class="p">${sr.position ?? "-"}</span>
         <span class="t" title="${esc(sr.title || sr.url || "")}">${esc(sr.title || sr.url || "")}</span>
         <span class="d">${sr.is_own ? "우리" : esc(sr.domain || "")}</span>${hd || w
           ? `<div class="h">${[hd && `소제목: ${hd}`, w].filter(Boolean).join(" · ")}</div>` : ""}</li>`;
     }).join("")}</ol>`).join("");
-  const aio = (ev.aio || []).map(ai => `<li>${esc(ai.keyword || "")} — ${ai.present
+  const aio = (ev.aio || []).map(ai => `<li>${esc(ai.keyword || "")}: ${ai.present
       ? (ai.cited == null ? "AI 요약이 뜨는데 출처를 못 받아 인용 여부는 모름"
          : ai.cited ? "AI 요약에 우리가 인용됨" : "AI 요약이 뜨는데 우리 인용 없음") : "AI 요약 없음"}${(ai.domains || []).length
       ? ` · 인용된 곳 <span class="odr-u">${esc(ai.domains.slice(0, 4).join(", "))}</span>` : ""}</li>`).join("");
@@ -470,7 +473,7 @@ function OV_playPaint(p) {
     : `<div class="empty"><b>문서가 없습니다</b><p>수정안을 못 만들면 문서도 만들지 않습니다.</p></div>`;
   dr.innerHTML = `<div class="odr-h">
       <div class="odr-top">
-        <div class="odr-ring" title="이번 달 할 일 ${n}번째 — 기대 이득이 큰 순서입니다">${n || "—"}</div>
+        <div class="odr-ring" title="이번 달 할 일 ${n}번째, 기대 이득이 큰 순서입니다">${n || "-"}</div>
         <div class="odr-tt"><h2 id="odr-t">${esc(p.title || urlPath(p.page))}</h2>
           <div class="odr-u">${esc(urlPath(p.page))}</div>
           <div class="odr-chips">${OV_playSt(p)}${kws.slice(0, 6).map(k => `<span class="ovp-k">${esc(k)}</span>`).join("")}${
@@ -541,17 +544,17 @@ function OV_watchDraw() {
     const b = pos(w.before), a = pos(w.after);
     if (w.source === "rank" && w.after) {
       if (w.after.aio_cited == 1 && (!w.before || w.before.aio_cited != 1))
-        return `<span class="chip up" title="고친 뒤 구글 AI 요약에 우리 링크가 실렸습니다">AI 요약 인용</span>`;
+        return `<span class="badge ok" title="고친 뒤 구글 AI 요약에 우리 링크가 실렸습니다">AI 요약 인용</span>`;
       if (w.before && b == null && a != null)
-        return `<span class="chip up" title="잰 깊이 밖이던 검색어에 ${a}위로 들어왔습니다">순위 진입</span>`;
+        return `<span class="badge ok" title="잰 깊이 밖이던 검색어에 ${a}위로 들어왔습니다">순위 진입</span>`;
       if (w.before && b != null && a == null)
-        return `<span class="chip dn" title="${b}위이던 검색어가 잰 깊이 밖으로 나갔습니다">순위 밖으로</span>`;
-      if (w.before && b == null && a == null) return `<span class="chip ne">변동 없음</span>`;
+        return `<span class="badge warn" title="${b}위이던 검색어가 잰 깊이 밖으로 나갔습니다">순위 밖으로</span>`;
+      if (w.before && b == null && a == null) return `<span class="badge muted">변동 없음</span>`;
     }
-    if (b == null || a == null) return `<span class="chip ne">비교 전</span>`;
-    if (a < b) return `<span class="chip up" title="순위가 ${f(b - a)}계단 올랐습니다">↑ ${f(b - a)}위</span>`;
-    if (a > b) return `<span class="chip dn" title="순위가 ${f(a - b)}계단 내려갔습니다">↓ ${f(a - b)}위</span>`;
-    return `<span class="chip ne">변동 없음</span>`;
+    if (b == null || a == null) return `<span class="badge muted">비교 전</span>`;
+    if (a < b) return `<span class="badge ok" title="순위가 ${f(b - a)}계단 올랐습니다">↑ ${f(b - a)}위</span>`;
+    if (a > b) return `<span class="badge warn" title="순위가 ${f(a - b)}계단 내려갔습니다">↓ ${f(a - b)}위</span>`;
+    return `<span class="badge muted">변동 없음</span>`;
   };
   $("watch").innerHTML = `<div class="ovw">${rows.slice(0, OV_WATCH_N).map(w => `<div class="ovw-r">
       ${SM.ui.avatar([...String(w.target || "?")][0], {size: 32, tone: "a", cls: "ov-av"})}

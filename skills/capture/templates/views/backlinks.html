@@ -7,6 +7,7 @@
      여기 한 벌이면 로컬·호스팅·박제본이 전부 같은 것을 본다. -->
 <script type="application/json" class="view-def">
 {"id": "backlinks", "group": "compete", "title": "백링크",
+ "sub": "누가 우리를 링크하는지, 어디를 놓쳤는지 봅니다.",
  "sections": ["bl-profile", "bl-broken", "bl-mentions", "bl-intersect", "bl-links"], "stages": ["backlinks", "competitors"],
  "head": ["backlinks"],
  "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.backlinks"}, {"id": "manage", "label": "관리"}],
@@ -195,7 +196,7 @@
 /* 깨진 링크는 잃은 게 아니라 **되찾을 수 있는 것**이다 — 눈에 띄어야 손을 댄다. */
 .blk-broken { color:var(--warn); }
 .blk-nofollow { color:var(--sub); }
-/* 앵커 분포 막대: 한 앵커가 전부를 먹고 있으면 그 자체가 신호다(과최적화). */
+/* 앵커 분포 막대: 한 앵커가 전부를 먹고 있으면 그 자체가 신호다(쏠림). */
 .blk-bar { display:block; height:4px; border-radius:var(--r-pill); background:var(--sunk);
   margin-top:6px; max-width:220px; }
 .blk-bar i { display:block; height:100%; border-radius:var(--r-pill); background:var(--accent); }
@@ -299,22 +300,31 @@ const BLK_mnBar = d => {
   return all.length ? BLK_stBar(all, r => r.domain, BLK_MN_ST, "BLK_mnSt") : "";
 };
 // 거르개는 자기 목록만 다시 그린다 — VIEW 를 다시 돌리면 화면 전체가 깜빡인다.
+// 칩·선택 상자를 누르면 목록 영역을 통째로 다시 그려 초점이 body 로 떨어졌다 - 그린 뒤 같은 자리의 같은 요소에 돌려준다.
+function BLK_keep(roots, draw) {
+  const a = document.activeElement, id = a && roots.find(x => $(x) && $(x).contains(a));
+  const tag = id && /^(BUTTON|SELECT)$/.test(a.tagName) ? a.tagName : "";
+  const i = tag ? [...$(id).querySelectorAll(tag)].indexOf(a) : -1;
+  draw();
+  const el = i >= 0 && $(id).querySelectorAll(tag)[i];
+  if (el) el.focus({preventScroll: true});
+}
 function BLK_brSt(v) {
   BLK_BR_ST = v;
   if (!BLK_D) return;
-  $("blk-recover-bar").innerHTML = BLK_brBar(BLK_D);
+  BLK_keep(["blk-recover-bar"], () => { $("blk-recover-bar").innerHTML = BLK_brBar(BLK_D); });
   $("blk-recover").innerHTML = BLK_broken(BLK_D);
 }
 function BLK_mnSt(v) {
   BLK_MN_ST = v;
   if (!BLK_D) return;
-  $("blk-mn-bar").innerHTML = BLK_mnBar(BLK_D);
+  BLK_keep(["blk-mn-bar"], () => { $("blk-mn-bar").innerHTML = BLK_mnBar(BLK_D); });
   $("blk-mentions").innerHTML = BLK_mentions(BLK_D);
 }
 function BLK_ixSt(v) {
   BLK_IX_ST = v;
   if (!BLK_D) return;
-  $("blk-ix-bar").innerHTML = BLK_ixBar(BLK_D);
+  BLK_keep(["blk-ix-bar"], () => { $("blk-ix-bar").innerHTML = BLK_ixBar(BLK_D); });
   $("blk-intersect").innerHTML = BLK_intersect(BLK_D, BLK_rivals(BLK_D));
 }
 
@@ -322,7 +332,7 @@ function BLK_ixSt(v) {
    그대로 부른다. 몫(comp_metrics)만 세던 때, 경쟁 분석은 「경쟁사 3곳과 맞댄 결과」인데
    여기는 「등록된 경쟁사가 둘 미만」이라고 했다(10회차). 화면은 조립하면 한 문서다. */
 const BLK_rivals = d => CP_rivals(d || {}).all;
-const BLK_pct = v => (v == null ? "—" : Math.round(v * 100) + "%");
+const BLK_pct = v => (v == null ? "-" : Math.round(v * 100) + "%");
 const BLK_day = v => (v ? String(v).slice(0, 10) : "");
 // URL 은 읽으라고 있는 게 아니라 열어 보라고 있다 — 여태 esc() 한 글자라 못 눌렀다.
 const BLK_a = (u, shown) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(shown == null ? u : shown)}</a>`;
@@ -408,7 +418,7 @@ function BLK_domToggle(tr) {
   row.className = "exp";
   row.innerHTML = `<td class="expcell" colspan="${tr.cells.length}">${BLK_row(r.domain,
     `<span class="blk-id">${BLK_av(r.domain)}<span class="blk-dom">${esc(r.domain)}</span></span>`,
-    `지수 ${r.rank == null ? "—" : r.rank} · 이 도메인에서 온 링크 ${num(r.backlinks)}개 · ` +
+    `지수 ${r.rank == null ? "-" : r.rank} · 이 도메인에서 온 링크 ${num(r.backlinks)}개 · ` +
     `최초 발견 ${esc(BLK_day(r.first_seen))} · 잃은 날 ${esc(BLK_day(r.lost_date))}`,
     "이 도메인이 링크를 뗐습니다. 개별 링크가 끊긴 것이면 위 되찾을 링크에서 따로 잡힙니다. " +
     "그 도메인에 지금도 관련 페이지가 있으면 다시 링크해 달라고 요청합니다.")}</td>`;
@@ -480,7 +490,7 @@ function BLK_trendChart(t) {
   const ys = pts.map(p => p.y), lo = Math.min(...ys), hi = Math.max(...ys);
   const pad = Math.max(1, Math.round((hi - lo) * .4));
   const last = pts[pts.length - 1];
-  const aria = `참조 도메인 추이 ${pts.length}회 — ${pts[0].x} ${num(pts[0].y)}곳에서 ` +
+  const aria = `참조 도메인 추이 ${pts.length}회, ${pts[0].x} ${num(pts[0].y)}곳에서 ` +
     `${last.x} ${num(last.y)}곳`;
   // 셸의 차트 부품(chMount)이 없는 배포(박제본 등)는 셸의 기본 선 차트로 물러선다.
   if (typeof chMount !== "function")
@@ -531,8 +541,8 @@ function BLK_hero(d) {
   const chart = BLK_trendChart(t);
   // 차트가 못 서는 이유(회차 부족)를 말한다 — 빈 칸이 고장으로 읽히지 않게.
   const side = chart ||
-    `<p class="blk-note">추이는 측정이 두 번 쌓이면 여기에 그려집니다. 백링크는 주 단위로 움직이니
-     다음 주에 다시 재면 기울기가 보입니다.</p>`;
+    `<p class="blk-note">추이는 측정이 두 번 쌓이면 여기에 그려집니다. 백링크는 천천히 움직여서
+     다음 측정이 쌓이면 기울기가 보입니다.</p>`;
   // 차트는 캔버스라 값이 글자로 안 남는다 — 같은 값을 표로 접어 둔다(대체 텍스트).
   const alt = t.length > 1
     ? `<details class="bx-alt"><summary>회차별 값 보기</summary>
@@ -543,7 +553,7 @@ function BLK_hero(d) {
     : "";
   return BLK_bh("링크 기울기",
       `${dd(day)} 측정${pday ? ` · 직전 ${dd(pday)} 대비` : ""}` +
-      SM.ui.hint("백링크는 하루 단위로 움직이지 않습니다. 매일 재도 같은 값이라 주 단위로 봅니다.")) +
+      SM.ui.hint("백링크는 하루 단위로 움직이지 않습니다. 매일 재도 같은 값이라 측정 사이 간격을 두고 봅니다.")) +
     `<div class="hero-b">
       <div class="hero-n">
         <div><p class="hl">참조 도메인${SM.ui.hint("한 도메인에서 100개를 받는 것보다 100개 도메인에서 " +
@@ -580,11 +590,11 @@ function BLK_health(d) {
             "업계 용어로 dofollow · nofollow 입니다.")}</span>
           <span class="v">${BLK_pct(ratio)}</span></div>
         <div class="hl-row"><span>깨진 백링크${SM.ui.hint("주소를 되살리거나 살아 있는 페이지로 301 로 넘기면 " +
-            "그대로 돌아옵니다.")}</span>
+            "그 링크가 다시 이어질 수 있습니다.")}</span>
           <span>${broken ? `<button type="button" class="chip dn"
               onclick="BLK_jump('bl-broken')">되찾을 링크 보기</button> ` : ""}<span class="v">${num(broken)}<small>개</small></span></span></div>
         <div class="hl-row"><span>도메인 지수${SM.ui.hint("0~1000 으로 매기는 도메인 지수입니다. 높을수록 힘 있는 도메인입니다.")}</span>
-          <span class="v">${rank == null ? "—" : rank}<small> / 1,000</small></span>
+          <span class="v">${rank == null ? "-" : rank}<small> / 1,000</small></span>
           ${rank == null ? "" : `<span class="blk-meter" role="img"
             aria-label="도메인 지수 ${rank} / 1000"><i style="width:${Math.max(1, Math.min(100, rank / 10))}%"></i></span>`}</div>
       </div>
@@ -607,14 +617,15 @@ function BLK_domains(d) {
   const rows = doms.map((r, i) => {
     // 지수 0(또는 없음)은 흐리게 찍는다 — 정렬은 이미 지수 DESC 라 위쪽에 몰리는
     // 실제 값과, 대다수인 0 이 같은 굵기로 서면 어느 줄이 중요한지 안 갈린다.
-    const rk = !r.rank ? `<span class="muted">${r.rank == null ? "—" : 0}</span>` : r.rank;
+    const rk = !r.rank ? `<span class="muted">${r.rank == null ? "-" : 0}</span>` : r.rank;
     const cells = `<td class="blk-dom"><span class="blk-id">${BLK_av(r.domain)}<span>${esc(r.domain)}</span></span></td>` +
       `<td class="num"><span class="blk-rk"><span class="blk-mini" aria-hidden="true"><i style="width:${Math.round((r.rank || 0) / mx * 100)}%"></i></span>${rk}</span></td>` +
       `<td class="num">${num(r.backlinks)}</td>` +
       `<td class="num">${num(r.dofollow)}</td>` +
       (hasSeen ? `<td class="blk-day">${esc(BLK_day(r.first_seen))}</td>` : "") +
       (hasLost ? `<td class="blk-day">${esc(BLK_day(r.lost_date))}</td>` : "") +
-      `<td>${r.lost_date ? `<span class="badge warn">링크 뗌</span>` : `<span class="badge muted">유지</span>`}</td>`;
+      // 상태 열은 링크를 뗀 도메인이 있을 때만 선다 - 줄마다 "유지" 알약을 찍으면 알약이 정보가 아니다.
+      (lost ? `<td>${r.lost_date ? `<span class="badge warn">링크 뗌</span>` : ""}</td>` : "");
     const hid = BLK_DOMF === "lost" && !r.lost_date ? " hidden" : "";
     return r.lost_date
       ? `<tr class="blk-broken" tabindex="0" role="button" aria-expanded="false" data-i="${i}" data-lost="1"${hid}
@@ -628,13 +639,13 @@ function BLK_domains(d) {
     .concat(hasSeen ? ["최초 발견"] : [])
     .concat(hasLost ? ["잃은 날?링크를 뗀 날. 비어 있으면 아직 걸려 있습니다. " +
                        "‘링크 뗌’ 줄을 누르면 펼쳐집니다"] : [])
-    .concat(["상태"]);
+    .concat(lost ? ["상태"] : []);
   const title = "참조 도메인";
   const sub = "우리에게 링크를 건 도메인입니다. 총 백링크 수보다 <b>참조 도메인 수</b>가 중요합니다." +
     (hasLost ? " ‘링크 뗌’ 줄은 누르면 펼쳐집니다." : "");
   if (!rows.length)
     return BLK_bh(title, sub) + SM.ui.empty("참조 도메인이 아직 없습니다",
-      "받아 온 목록이 비었습니다. 백링크는 주 단위로 움직이니 그때 다시 수집하면 채워집니다.",
+      "받아 온 목록이 비었습니다. 백링크는 천천히 움직입니다. 다음 수집에서 채워질 수 있습니다.",
       BLK_do("backlinks", "", false));
   const shown = BLK_DOMF === "lost" ? lost : doms.length;
   const chips = lost
@@ -660,7 +671,7 @@ function BLK_broken(d) {
     .sort((a, b) => BLK_sc(b.url_to) - BLK_sc(a.url_to) || (b.rank || 0) - (a.rank || 0))
     .map(r => BLK_row(r.url_to, BLK_a(r.url_to),
       `<span class="blk-id">${BLK_av(BLK_host(r.url_from))}<span class="blk-url">${BLK_a(r.url_from)}</span></span> · 지수 ` +
-      `${r.rank == null ? "—" : r.rank}` +
+      `${r.rank == null ? "-" : r.rank}` +
       (r.anchor ? ` · 앵커 <span class="blk-anchor">${esc(r.anchor)}</span>` : ""),
       "기회 목록에는 지수가 높은 것부터 일부만 올립니다. 이 링크는 그 아래라 " +
       "점수와 행동 기록이 없습니다. 되살리는 방법은 위 설명과 같습니다."));
@@ -670,7 +681,7 @@ function BLK_broken(d) {
       : SM.ui.empty("거른 상태에 맞는 링크가 없습니다",
         `거르개를 「전체」로 바꾸면 ${all.length}개가 있습니다.`))
     : BLK_ok("끊긴 링크가 없습니다",
-        "받아 온 링크는 전부 살아 있습니다. 백링크는 주 단위로 움직입니다."));
+        "받아 온 링크는 전부 살아 있습니다. 백링크는 천천히 움직입니다."));
 }
 
 // 링크 없는 언급 — 줄마다 우리 이름이 나온 문장을 보여 준다. 연락문은 그 문장을 짚는 데서 시작한다.
@@ -680,12 +691,12 @@ function BLK_mentions(d) {
     .sort((a, b) => BLK_sc(b.domain) - BLK_sc(a.domain) || (b.rank || 0) - (a.rank || 0))
     .map(r => BLK_row(r.domain,
       `<span class="blk-id">${BLK_av(r.domain)}<span class="blk-dom">${esc(r.domain)}</span></span>`,
-      `‘${esc(r.alias || "")}’ 언급 · 지수 ${r.rank == null ? "—" : r.rank}` +
+      `‘${esc(r.alias || "")}’ 언급 · 지수 ${r.rank == null ? "-" : r.rank}` +
       (r.pages > 1 ? ` · 페이지 ${num(r.pages)}곳` : "") +
       (r.published ? ` · <span class="blk-day">${esc(r.published)}</span>` : "") +
       (r.snippet ? `<span class="blk-quote blk-clamp" title="${esc(r.snippet)}">${esc(r.snippet)}</span>` : ""),
       "기회 목록에는 지수가 높은 곳부터 일부만 올립니다. 이 도메인은 그 아래라 " +
-      "점수와 행동 기록이 없습니다. 할 일은 같습니다 — 우리 이름이 나온 그 자리에 링크 하나를 부탁합니다.",
+      "점수와 행동 기록이 없습니다. 할 일은 같습니다. 우리 이름이 나온 그 자리에 링크 하나를 부탁합니다.",
       r.domain,
       `<div class="acts"><a class="go sm sec" target="_blank" rel="noopener"
          href="${esc(r.url)}">언급한 페이지 열기</a></div>`));
@@ -700,7 +711,7 @@ function BLK_mentions(d) {
         "우리 이름을 말한 곳은 모두 우리에게 링크하고 있습니다. 지킬 자리입니다.")
     : SM.ui.empty("우리 이름을 말한 곳을 아직 못 찾았습니다",
         "설정의 브랜드 별칭으로 웹을 찾습니다. 별칭이 없거나 너무 흔한 이름(동명이인·일반 낱말)이면 " +
-        "건너뜁니다 — 상호처럼 우리만 쓰는 표기를 별칭에 넣으면 그걸로 찾습니다."));
+        "건너뜁니다. 상호처럼 우리만 쓰는 표기를 별칭에 넣으면 그걸로 찾습니다."));
 }
 
 // 교집합은 "남은 것이 곧 할 일 목록"이라고 말해 놓고 도메인 이름만 줬다 —
@@ -711,7 +722,7 @@ function BLK_intersect(d, rivals) {
     .sort((a, b) => BLK_sc(b.domain) - BLK_sc(a.domain) || (b.hits || 0) - (a.hits || 0))
     .map(r => BLK_row(r.domain,
       `<span class="blk-id">${BLK_av(r.domain)}<span class="blk-dom">${esc(r.domain)}</span></span>`,
-      `<span class="hits">경쟁사 ${num(r.hits)}곳</span> 지수 ${r.rank == null ? "—" : r.rank}` +
+      `<span class="hits">경쟁사 ${num(r.hits)}곳</span> 지수 ${r.rank == null ? "-" : r.rank}` +
       (r.targets ? ` · <span class="blk-anchor">${esc(r.targets)}</span>` : ""),
       "기회 목록에는 경쟁사가 많은 곳부터 일부만 올립니다. 이 도메인은 그 아래라 " +
       "점수와 행동 기록이 없습니다.", r.domain,
@@ -732,7 +743,7 @@ function BLK_intersect(d, rivals) {
         BLK_do("competitors", BLK_name("competitors"))));
 }
 
-// 과최적화 기준 — 부제가 "절반을 넘으면"이라고 말하고 이 상수가 그 절반이다.
+// 쏠림 기준 — 부제가 "절반을 넘으면"이라고 말하고 이 상수가 그 절반이다.
 // 두 벌이 되지 않게 문구 쪽이 이 숫자를 읽는다(BLK_ANCHOR_MAX 를 글자로 쓴다).
 const BLK_ANCHOR_MAX = 0.5;
 
@@ -744,9 +755,10 @@ function BLK_anchors(d) {
   const total = a.reduce((s, r) => s + (r.backlinks || 0), 0) || 1;
   const max = a.reduce((m, r) => Math.max(m, r.backlinks || 0), 0) || 1;
   const top = a.reduce((t, r) => (r.backlinks || 0) > (t.backlinks || 0) ? r : t, a[0] || {});
-  const over = (top.backlinks || 0) / total > BLK_ANCHOR_MAX;
+  // 빈 앵커(이미지 링크)가 1위인 것은 쏠림이 아니다 - 문구가 있는 앵커만 센다.
+  const over = !!top.anchor && (top.backlinks || 0) / total > BLK_ANCHOR_MAX;
   const head = BLK_bh("앵커 텍스트",
-    `링크에 실제로 적힌 글자입니다. 한 문구가 전체의 ${Math.round(BLK_ANCHOR_MAX * 100)}%를 넘으면 과최적화 신호입니다.` +
+    `링크에 실제로 적힌 글자입니다. 한 문구가 전체의 ${Math.round(BLK_ANCHOR_MAX * 100)}%를 넘으면 쏠림으로 표시합니다. 브랜드명·주소 앵커는 쏠려도 정상입니다.` +
     SM.ui.hint("여기는 수집한 링크 전부입니다. 끊긴 것은 위 되찾을 링크에 따로 모았습니다."));
   if (!a.length)
     return head + SM.ui.empty("앵커를 아직 수집하지 않았습니다",
@@ -755,7 +767,7 @@ function BLK_anchors(d) {
   // 어느 줄이 문제인지를 **색으로만** 말하지 않는다 — 그 줄에 배지를 단다.
   const rows = a.map(r =>
     `<tr${over && r === top ? ' class="blk-broken"' : ""}><td class="blk-anchor"><span class="blk-clamp" title="${esc(r.anchor || "")}">${esc(r.anchor || "(빈 앵커)")}</span>` +
-    (over && r === top ? ' <span class="badge warn">과최적화</span>' : "") +
+    (over && r === top ? ' <span class="badge warn">쏠림</span>' : "") +
     `<span class="blk-bar"><i style="width:${Math.round((r.backlinks || 0) / max * 100)}%"></i></span></td>` +
     `<td class="num">${num(r.backlinks)}</td>` +
     `<td class="num">${num(r.referring_domains)}</td></tr>`);
@@ -763,9 +775,9 @@ function BLK_anchors(d) {
   // 위치를 색 이름으로 가리키지 않는다: 그 줄에 배지가 붙어 있고,
   // 색 이름은 색각 이상 사용자에게 아무것도 안 알려 준다.
   const warn = over
-    ? `<p class="blk-note"><span class="badge warn">과최적화</span> 앵커 <b>${esc(top.anchor || "(빈 앵커)")}</b>가 전체 링크의
+    ? `<p class="blk-note"><span class="badge warn">쏠림</span> 앵커 <b>${esc(top.anchor || "(빈 앵커)")}</b>가 전체 링크의
        ${Math.round(top.backlinks / total * 100)}%입니다.` +
-      SM.ui.hint(`한 문구가 ${Math.round(BLK_ANCHOR_MAX * 100)}%를 넘으면 과최적화 신호입니다. ` +
+      SM.ui.hint(`한 문구가 ${Math.round(BLK_ANCHOR_MAX * 100)}%를 넘으면 쏠림입니다. 브랜드명·주소 앵커라면 정상입니다. ` +
         "우리가 받은 링크라면 새로 받는 링크는 다른 문구로 요청합니다. 모르는 곳이 " +
         "판매·광고 문구로 건 링크라면 스팸일 수 있으니 서치콘솔의 링크 거부(disavow)를 검토합니다.") + `</p>`
     : "";
@@ -791,9 +803,9 @@ function BLK_links(d) {
     return `<tr class="${r.is_broken ? "blk-broken" : ""}"${r.is_broken ? ' data-broken="1"' : ""}${r.dofollow ? "" : ' data-nofollow="1"'}${hid}>` +
     `<td><span class="blk-id">${BLK_av(BLK_host(r.url_from))}<span class="blk-url">${BLK_a(r.url_from || "", BLK_bare(r.url_from))}</span></span></td>` +
     `<td class="blk-anchor"><span class="blk-clamp" title="${esc(r.anchor || "")}">${esc(r.anchor || "")}</span></td>` +
-    `<td class="blk-url">${BLK_a(r.url_to || "", BLK_bare(r.url_to))}${r.is_broken ? ` <span class="badge warn">⚠ 안 열림</span>` : ""}</td>` +
+    `<td class="blk-url">${BLK_a(r.url_to || "", BLK_bare(r.url_to))}${r.is_broken ? ` <span class="badge warn">안 열림</span>` : ""}</td>` +
     `<td class="${r.dofollow ? "" : "blk-nofollow"}">${r.dofollow
-      ? `<span class="badge ok">예</span>` : `<span class="badge muted">아니오</span>`}</td>` +
+      ? "예" : `<span class="badge muted">아니오</span>`}</td>` +
     `</tr>`;
   });
   const sub = "수집한 링크 전부입니다. 끊긴 것은 위 되찾을 링크에도 따로 모았습니다.";
@@ -810,7 +822,7 @@ function BLK_links(d) {
   // "cards" — ≤560px 에서 줄을 카드로 쌓는다(칸 라벨은 셸이 머리글에서 단다).
   return BLK_bh("개별 링크", sub, chips + BLK_tools(shown, "BLK_csvLinks", "blk-lk-n")) +
     `<div id="blk-links-tbl">` +
-    table(["링크 건 페이지", "앵커", "우리 페이지?⚠ 는 그 URL 이 지금 안 열린다는 뜻",
+    table(["링크 건 페이지", "앵커", "우리 페이지?안 열림 배지는 그 URL 이 지금 안 열린다는 뜻",
            "순위 반영?순위로 넘어가는 링크인지. 업계 용어로 dofollow · nofollow 입니다"],
           rows, undefined, "cards") + `</div>`;
 }
@@ -911,8 +923,8 @@ function BLK_nextStep(d) {
   const mns = BLK_mnRows(d);
   if (mns.length)
     return put(`우리 이름을 말했지만 링크하지 않은 곳이 ${num(mns.length)}곳입니다. 지수가 가장
-      높은 곳은 <b>${esc(mns[0].domain)}</b>입니다. 그 이름에 링크 하나를 부탁하는 일이라 새 링크 중
-      가장 잘 됩니다.`,
+      높은 곳은 <b>${esc(mns[0].domain)}</b>입니다. 이미 우리 이름을 쓰는 곳이라 그 이름에 링크
+      하나를 부탁하면 됩니다.`,
       BLK_seeBtn("bl-mentions", "언급한 곳 보기") +
       (broken ? BLK_seeBtn("bl-broken", `되찾을 링크 ${num(broken)}개`, false) : ""));
   if (ixs.length) {
@@ -923,8 +935,8 @@ function BLK_nextStep(d) {
       (broken ? BLK_seeBtn("bl-broken", `되찾을 링크 ${num(broken)}개`, false) : ""));
   }
   if (broken)
-    return put(`끊긴 링크 ${num(broken)}개는 되살리면 그대로 돌아옵니다. 새로 얻는 것보다
-      늘 쌉니다.`, BLK_seeBtn("bl-broken", "되찾을 링크 보기"));
+    return put(`끊긴 링크 ${num(broken)}개는 주소를 되살리면 다시 이어질 수 있습니다. 새 링크를 받으려
+      연락하는 것보다 손이 덜 갑니다.`, BLK_seeBtn("bl-broken", "되찾을 링크 보기"));
   if (lost)
     return put(`링크를 뗀 도메인이 ${num(lost)}곳입니다. 그쪽에 지금도 관련 페이지가 있으면
       다시 링크해 달라고 요청할 자리입니다.`,
@@ -933,8 +945,8 @@ function BLK_nextStep(d) {
     return put(`경쟁사가 둘 이상이어야 우리만 빠진 링크처를 가려낼 수 있습니다.
       <span class="live">찾으면 이 화면의 교집합이 채워집니다.</span>`,
       window.act("competitors", BLK_name("competitors")));
-  return put(`지금 되찾을 링크도 새로 얻을 자리도 없습니다. 백링크는 주 단위로 움직이니
-    그때 다시 재면 됩니다.`, window.act("backlinks", "", true));
+  return put(`지금 되찾을 링크도 새로 얻을 자리도 없습니다. 백링크는 천천히 움직이니
+    다음 수집 때 다시 보면 됩니다.`, window.act("backlinks", "", true));
 }
 
 VIEW("backlinks", function (d) {
@@ -942,8 +954,6 @@ VIEW("backlinks", function (d) {
   const has = !!d.bl_date;
   const failed = window.runFailed("backlinks", d);
   BLK_nextStep(d);
-  window.viewSub && viewSub("backlinks",
-    "누가 우리를 링크하는지, 어디를 놓쳤는지 봅니다.");
 
   // 수집 전·실패는 카드 한 장이 말한다 — 나머지 카드는 그때 채울 것이 없어 숨긴다.
   // 실패는 비어 있는 것과 다른 일이다 — 비었으면 채우면 되고, 실패했으면 무엇이
@@ -984,7 +994,7 @@ VIEW("backlinks", function (d) {
   $("blk-recover-sub").innerHTML = broken || lost
     ? `끊긴 링크 <b>${num(broken)}개</b>, 링크를 뗀 도메인 <b>${num(lost)}곳</b>입니다.` +
       SM.ui.hint("이미 번 링크라 그 주소를 되살리거나 살아 있는 페이지로 301 리다이렉트하면 " +
-              "그대로 돌아옵니다. 새로 얻는 것보다 늘 쌉니다.")
+              "다시 이어질 수 있습니다. 새 링크를 받으려 연락하는 것보다 손이 덜 갑니다.")
     : `끊긴 링크도 링크를 뗀 도메인도 없습니다.${capped}`;
   $("blk-recover-bar").innerHTML = BLK_brBar(d);
   $("blk-recover").innerHTML = BLK_broken(d);
@@ -995,7 +1005,7 @@ VIEW("backlinks", function (d) {
   const mnUnknown = new Set((d.bl_mentions || []).filter(r => r.linked == null).map(r => r.domain)).size;
   $("blk-mn-sub").innerHTML = (mnAll
     ? `우리 이름을 말한 곳 <b>${num(mnAll)}곳</b> 중 <b>${num(mnOpen)}곳</b>이 링크하지 않았습니다.` +
-      SM.ui.hint("이미 우리를 아는 곳이라 새 링크 중 가장 잘 됩니다. 그 이름이 나온 자리에 우리 " +
+      SM.ui.hint("이미 우리를 아는 곳이라 모르는 곳에 처음 연락하는 것보다 부탁하기 쉽습니다. 그 이름이 나온 자리에 우리 " +
               "페이지 링크 하나를 부탁합니다.")
     : "브랜드 별칭으로 웹에서 우리 이름을 찾습니다.") +
     (mnUnknown ? ` 링크 여부를 확인 못 한 ${num(mnUnknown)}곳은 다음 수집에서 다시 봅니다.` : "");

@@ -30,7 +30,9 @@ const table = (heads, rows, empty, cls) => {
   const th = heads.map((h, i) => {
     const num = h.startsWith(">");
     const [name, why] = h.replace(/^>/, "").split("?");
-    return `<th class="${num ? "num" : ""}"${long ? ` data-s="${i}"` : ""}>` +
+    // 이름이 없는 머리글(체크 열 같은)은 정렬 손잡이가 아니다 — 탭 정지만 늘고 낭독기가 이름 없는 칸을 읽는다.
+    const sortable = long && name.trim() !== "";
+    return `<th class="${num ? "num" : ""}"${sortable ? ` data-s="${i}" tabindex="0" aria-sort="none"` : ""}>` +
       // 툴팁은 fixed 라 표 상자 안에서도 안 잘린다 — title 은 안 싣는다(실으면
       // 말풍선과 브라우저 툴팁이 같은 말을 두 번 띄운다). 키보드로도 닿아야 하므로
       // tabindex 를 주고 aria-label 로 같은 말을 갖는다.
@@ -78,14 +80,17 @@ function saveFile(filename, body, type) {
 }
 
 // 정렬은 위임 한 곳에서. 표를 그리는 쪽은 아무것도 안 해도 된다.
-document.addEventListener("click", e => {
-  const th = e.target.closest("th[data-s]");
-  // 머리글 안의 (i) 는 근거를 보려고 누르는 것이다 — 표 순서를 바꾸면 안 된다.
-  if (!th || e.target.closest(".hint")) return;
+// 마우스(클릭)와 키보드(Enter·Space)가 같은 함수를 쓴다. 정렬 상태는 클래스(모양)와
+// aria-sort(낭독기)가 함께 말한다.
+const sortTh = th => {
   const i = +th.dataset.s, tbl = th.closest("table");
   const desc = !th.classList.contains("desc");
-  tbl.querySelectorAll("th[data-s]").forEach(o => o.classList.remove("asc", "desc"));
+  tbl.querySelectorAll("th[data-s]").forEach(o => {
+    o.classList.remove("asc", "desc");
+    o.setAttribute("aria-sort", "none");
+  });
   th.classList.add(desc ? "desc" : "asc");
+  th.setAttribute("aria-sort", desc ? "descending" : "ascending");
   const body = tbl.tBodies[0];
   // 숫자 열이면 숫자로, 아니면 글자로. "12위"·"1,204"·"+8" 같은 표기에서 수를 꺼낸다.
   const key = tr => {
@@ -100,5 +105,21 @@ document.addEventListener("click", e => {
       const r = typeof x === "string" ? x.localeCompare(y, "ko") : x - y;
       return desc ? -r : r; })
     .forEach(tr => body.appendChild(tr));
+};
+document.addEventListener("click", e => {
+  const th = e.target.closest("th[data-s]");
+  // 머리글 안의 (i) 는 근거를 보려고 누르는 것이다 — 표 순서를 바꾸면 안 된다.
+  if (!th || e.target.closest(".hint")) return;
+  sortTh(th);
+});
+document.addEventListener("keydown", e => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const th = e.target.closest && e.target.closest("th[data-s]");
+  if (!th || e.target.closest(".hint")) return;
+  e.preventDefault();          // Space 가 화면을 내리지 않게
+  // 정렬을 직접 부르지 않고 클릭을 쏜다 — 클릭 경로에만 걸린 일(예: 사이트 점검 표가 펼친 줄
+  // tr.exp 를 접는 stExpBind)이 키보드에서도 똑같이 돈다. 두 길이 갈라지면 한쪽만 낡는다.
+  th.click();
+  th.focus();                   // 표 순서가 바뀌어도 머리글에 포커스가 남는다
 });
 

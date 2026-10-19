@@ -377,12 +377,12 @@ def openrouter_json(prompt: str, *, model: str = ROLE_MODEL, max_tokens: int = 4
     # 잘린 답을 빈 답으로 읽으면 안 된다 — 800토큰 상한에서 판정 목록이 잘리자 아래 파싱이
     # 조용히 {} 를 돌려, 걸러야 할 검색어(매장 위치)를 거르지 않은 채 키워드를 골랐다(gucci).
     if choice.get("finish_reason") == "length":
-        raise RuntimeError("AI 답이 길이 상한에서 잘렸습니다 — 판정을 쓰지 않습니다")
+        raise RuntimeError("AI 답이 길이 상한에서 잘렸습니다. 판정을 쓰지 않습니다")
     content = (choice.get("message") or {}).get("content") or ""
     # 모델에 따라 ```json 울타리를 두르거나 앞뒤에 한 줄을 붙인다 — 객체만 떼어 읽는다.
     start, end = content.find("{"), content.rfind("}")
     if start < 0 or end < start:
-        raise RuntimeError("AI 답에 JSON 객체가 없습니다 — 판정을 쓰지 않습니다")
+        raise RuntimeError("AI 답에 JSON 객체가 없습니다. 판정을 쓰지 않습니다")
     got = json.loads(content[start:end + 1])
     return got if isinstance(got, dict) else {}
 
@@ -586,7 +586,7 @@ def collect(project: str, *,
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
         if not serp_adapter.has_dataforseo():
-            return st.skip("Labs 유료 키 필요 — DATAFORSEO_LOGIN/PASSWORD 설정. "
+            return st.skip("Labs 유료 키 필요: DATAFORSEO_LOGIN/PASSWORD 설정. "
                            "발급: https://dataforseo.com")
 
         s = st.settings(ap, argparse.Namespace(limit=limit, throttle=throttle,
@@ -604,7 +604,7 @@ def collect(project: str, *,
             # 또는 rank harvest 가 3회 이상 잡힌 도메인을 못 찾은 사이트).
             # ok=False 로 돌리면 run_all 체인이 exit 1 로 끝나고 worker.py 의
             # 주간 리포트 메일이 조용히 안 나간다.
-            reason = (f"'{p['name']}' 에 등록된 경쟁사가 아직 없습니다 — "
+            reason = (f"'{p['name']}' 에 등록된 경쟁사가 아직 없습니다. "
                       f"`/capture rank {p['name']}` 으로 순위를 한 바퀴 돌리면 "
                       "상위 도메인이 자동 적재됩니다. 급하면 프로젝트 yaml 의 "
                       "대시보드 [설정]의 경쟁사 칸 또는 `--domain` 으로 직접 지정하세요.")

@@ -48,6 +48,7 @@
 
 <footer class="wrap">
   <span>등록한 사이트는 검색 실적을 매일, 순위·AI 인용·사이트 점검을 주 1회(설정에서 바꿈) 자동으로 다시 잽니다.</span>
+  <a href="/privacy">개인정보처리방침</a>
 </footer>
 
 <script>
@@ -197,13 +198,17 @@ function paintFresh(li, s, scale) {
       const nm = gname(id);
       const state = st[k] === "run" ? "재는 중" : st[k] === "due" ? "다시 잴 때" : "최신";
       const when = a == null ? "아직 재지 않음" : dayText(a) === "오늘" ? "오늘 측정" : dayText(a) + " 전 측정";
-      col.title = (nm ? nm + " · " : "") + when + " · " + state;
+      const full = (nm ? nm + " · " : "") + when + " · " + state;
+      col.title = full;
+      col.setAttribute("aria-label", full);
       const trk = mk("div", "trk");
       const fill = mk("i");
       fill.style.height = (a == null ? 100 : Math.min(100, Math.max(8, a / scale * 100))) + "%";
       trk.append(fill);
       col.append(trk);
-      if (nm) col.append(mk("span", "nmg", nm));
+      // 보이는 글자: 묶음 이름이 있으면 이름, 없으면 지나지 않은 상태만("최신"은 대부분이라 생략).
+      const vis = nm || (st[k] === "up" ? "" : state);
+      if (vis) col.append(mk("span", "nmg", vis));
       col.append(mk("span", "d", dayText(a)));
       bars.append(col);
     });
@@ -358,9 +363,35 @@ paintStrip(null);
 // 상태는 처음에 한 번 읽고(띠·신선도 막대용), 진행 중인 줄이 남아 있는 동안만 5초마다 다시 읽는다.
 (function () {
   const STAGES = window.__STAGES__ || {};
+  // 상태 조회가 실패하면 조용히 멈추지 않는다: 몇 번 다시 시도하고, 그래도 안 되면 안내와 [다시 확인]을 보인다.
+  const MAX_FAILS = 3;
+  let fails = 0;
+  function failNote(on) {
+    let n = $("stfail");
+    if (!on) { if (n) n.remove(); return; }
+    if (n) return;
+    n = mk("p", "wait-note", "진행 상태를 가져오지 못했습니다. 카드의 상태가 실제와 다를 수 있습니다. ");
+    n.id = "stfail";
+    n.setAttribute("role", "status");
+    const b = mk("button", "go sec", "다시 확인");
+    b.type = "button";
+    b.onclick = () => { fails = 0; failNote(false); tick(); };
+    n.append(b);
+    document.querySelector(".sumrow").after(n);
+  }
   async function tick() {
     let st;
-    try { st = await (await fetch("/api/run/status")).json(); } catch (e) { return; }
+    try {
+      const r = await fetch("/api/run/status");
+      if (!r.ok) throw new Error(r.status);
+      st = await r.json();
+    } catch (e) {
+      if (++fails < MAX_FAILS) return setTimeout(tick, 5000);
+      failNote(true);
+      return;
+    }
+    fails = 0;
+    failNote(false);
     let left = 0;
     const scale = barScale(st);
     cards().forEach(li => {
@@ -378,7 +409,7 @@ paintStrip(null);
           if (w) w.textContent = String(s.last_run_at).slice(0, 16);
           paintAgo(li);
           const a = li.querySelector(".go");
-          if (a) a.className = "go sm";
+          if (a) a.className = "go";
           const p = li.querySelector(".prog");
           if (p) p.remove();
         } else {
@@ -388,13 +419,22 @@ paintStrip(null);
           if (stg && t) stg.textContent = t;
           const bar = li.querySelector(".progress i");
           if (bar && s.pct) bar.style.width = Math.max(6, s.pct) + "%";
+          const pg = li.querySelector(".progress");
+          if (pg) {
+            pg.setAttribute("role", "progressbar");
+            pg.setAttribute("aria-label", "첫 분석 진행률");
+            pg.setAttribute("aria-valuemin", "0");
+            pg.setAttribute("aria-valuemax", "100");
+            if (s.pct) pg.setAttribute("aria-valuenow", Math.round(s.pct));
+            else pg.removeAttribute("aria-valuenow");
+          }
         }
       }
       paintFresh(li, s, scale);
     });
     paintStrip(st);
     if (left) return setTimeout(tick, 5000);
-    // 다 끝났는데 "몇 분에 걸쳐 수집됩니다"가 남아 있으면 그 문구가 거짓이 된다.
+    // 다 끝났는데 "몇 분 걸립니다"가 남아 있으면 그 문구가 거짓이 된다.
     const note = document.querySelector(".wait-note");
     if (note) note.remove();
   }

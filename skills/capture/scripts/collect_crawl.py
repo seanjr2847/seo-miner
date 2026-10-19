@@ -1059,7 +1059,7 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
 
         home = _home_url(p["domain"])
         if not home:
-            return st.skip("사이트 주소(domain)가 없습니다 — 프로젝트 yaml 의 domain 을 채우세요.")
+            return st.skip("사이트 주소(domain)가 없습니다. 프로젝트 yaml 의 domain 을 채우세요.")
 
         print(f"[crawl] {home} · 사이트맵 전부 + 링크로 {limit}개까지 · "
               f"깊이 {depth} · 비용 없음 (간격 {st.throttle}초)")

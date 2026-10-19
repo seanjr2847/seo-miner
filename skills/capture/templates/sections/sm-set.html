@@ -17,7 +17,7 @@
        주기와 종류는 성격이 달라 카드를 둘로 쪼갰다. 둘 다 [측정 설정] 탭이다(data-mode). -->
   <div class="card" id="set-cycle" data-mode="measure">
     <div class="sh">
-      <h2>자동 수집 주기<span class="hint" tabindex="0"
+      <h2>자동 수집 주기<span class="hint" tabindex="0" role="note"
         data-tip="고르면 그 자리에서 저장되고 다음 실행부터 적용됩니다. 끄면 매일 재던 검색 실적까지 자동 재측정이 전부 멈춥니다. [전체 다시 재기]와 첫 측정은 그대로 됩니다."
         aria-label="고르면 그 자리에서 저장되고 다음 실행부터 적용됩니다. 끄면 매일 재던 검색 실적까지 자동 재측정이 전부 멈춥니다. [전체 다시 재기]와 첫 측정은 그대로 됩니다."
         >i</span></h2>
@@ -30,7 +30,7 @@
        언어-지역(시장) 칸은 두 배포 공통이라 sections/sm-lang.html 로 옮겼다. -->
   <div class="card" id="set-type" data-mode="measure">
     <div class="sh">
-      <h2>사이트 종류<span class="hint" tabindex="0"
+      <h2>사이트 종류<span class="hint" tabindex="0" role="note"
         data-tip="종류마다 기회 점수를 매기는 비중이 다릅니다. 쇼핑몰은 검색 수요, 웹 서비스는 AI 추천 목록을 더 무겁게 봅니다. 다음 기회 분석부터 새 비중으로 매깁니다."
         aria-label="종류마다 기회 점수를 매기는 비중이 다릅니다. 쇼핑몰은 검색 수요, 웹 서비스는 AI 추천 목록을 더 무겁게 봅니다. 다음 기회 분석부터 새 비중으로 매깁니다."
         >i</span></h2>
@@ -38,7 +38,7 @@
     </div>
     <div class="repo ptype grp"><div class="body"></div></div>
   </div>
-  <div class="repo ga4 grp card" data-mode="link"><div class="gh"><h2>GA4 연결<span class="hint" tabindex="0"
+  <div class="repo ga4 grp card" data-mode="link"><div class="gh"><h2>GA4 연결<span class="hint" tabindex="0" role="note"
       data-tip="연결하지 않아도 검색 실적 측정은 그대로 됩니다."
       aria-label="연결하지 않아도 검색 실적 측정은 그대로 됩니다."
       >i</span></h2><span id="st-ga4-pill" class="badge muted">확인 중</span></div>
@@ -48,9 +48,9 @@
   <!-- 토큰 원문은 발급 응답에만 있다(서버는 해시만 보관한다) — 그래서 이 칸은
        "한 번만 보인다"고 먼저 말하고 나서 보여 준다. 그 경고는 만들기 전에도
        보여야 하므로 툴팁이 아니라 버튼 옆 문장으로 둔다(dash.html 의 cliRender). -->
-  <div class="repo cli grp card" data-mode="link"><div class="gh"><h2>명령어로 연결<span class="hint" tabindex="0"
-      data-tip="클로드 코드는 터미널에서 쓰는 AI 코딩 도구입니다. 안 쓰셔도 됩니다 — 이 화면만으로 측정도 조회도 다 됩니다. 연결하면 측정도 조회도 서버가 하고 결과만 채팅으로 받습니다."
-      aria-label="클로드 코드는 터미널에서 쓰는 AI 코딩 도구입니다. 안 쓰셔도 됩니다 — 이 화면만으로 측정도 조회도 다 됩니다. 연결하면 측정도 조회도 서버가 하고 결과만 채팅으로 받습니다."
+  <div class="repo cli grp card" data-mode="link"><div class="gh"><h2>명령어로 연결<span class="hint" tabindex="0" role="note"
+      data-tip="클로드 코드는 터미널에서 쓰는 AI 코딩 도구입니다. 안 쓰셔도 됩니다. 이 화면만으로 측정도 조회도 다 됩니다. 연결하면 측정도 조회도 서버가 하고 결과만 채팅으로 받습니다."
+      aria-label="클로드 코드는 터미널에서 쓰는 AI 코딩 도구입니다. 안 쓰셔도 됩니다. 이 화면만으로 측정도 조회도 다 됩니다. 연결하면 측정도 조회도 서버가 하고 결과만 채팅으로 받습니다."
       >i</span></h2><span id="st-cli-pill" class="badge muted">선택</span></div>
     <p class="sub">클로드 코드를 쓰신다면 명령으로도 이 사이트를 다룹니다.</p>
     <div class="body"></div>

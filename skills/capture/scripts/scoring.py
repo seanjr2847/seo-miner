@@ -1258,7 +1258,7 @@ def pseo_reasoning(g: dict) -> str:
     vals = [v["value"] for v in g["values"]]
     shown = " · ".join(vals[:8]) + (f" 외 {len(vals) - 8}개" if len(vals) > 8 else "")
     pos = f" · 평균 {g['pos']}위" if g.get("pos") is not None else ""
-    return (f"{PSEO_REASON_HEAD}{pseo_frame_label(g)} — 바뀌는 값 {len(vals)}개: {shown}. 무리 합계 "
+    return (f"{PSEO_REASON_HEAD}{pseo_frame_label(g)}. 바뀌는 값 {len(vals)}개: {shown}. 무리 합계 "
             f"노출 {g['imp']:,} · 클릭 {g['clk']:,} · CTR {g['ctr_pct']}%{pos}. 한 장씩 쓰지 않고 "
             f"같은 틀로 찍을 자리입니다 (구글 실적 {g['date']} 기준)")
 
@@ -1314,7 +1314,7 @@ CLS_GOOD = 0.1
 
 
 def _sec(ms) -> str:
-    return f"{ms / 1000:.1f}초" if isinstance(ms, (int, float)) else "—"
+    return f"{ms / 1000:.1f}초" if isinstance(ms, (int, float)) else "-"
 
 
 def vitals_advice(rows) -> list[dict]:
@@ -1356,7 +1356,7 @@ def vitals_advice(rows) -> list[dict]:
                       " 지정하고 나중에 끼어드는 요소의 자리를 미리 잡으세요."}
         first = bad[0].split()[0]
         out.append({"tag": "속도", "level": "bad" if len(bad) > 1 else "warn",
-                    "now": f"{dev} " + " · ".join(bad) + f" — {src}",
+                    "now": f"{dev} " + " · ".join(bad) + f", {src}",
                     "fix": fix.get(first, "")})
     return out
 
@@ -1398,7 +1398,7 @@ def image_weight_advice(rows) -> list[dict]:
         n = unquote(urlsplit(u).path.rstrip("/").rsplit("/", 1)[-1]) or urlsplit(u).netloc
         return n if len(n) <= 60 else "…" + n[-59:]
     urls = list(dict.fromkeys(n for x in big for u in x.get("items") or [] if (n := _name(str(u)))))[:3]
-    now = (f"이미지 용량·포맷 — 줄일 수 있는 양 "
+    now = (f"이미지 용량·포맷: 줄일 수 있는 양 "
            + " · ".join(f"{L[x['id']][0]} {round(x['kb']):,}KB" for x in big)
            + f" ({dev}, {LAB_ONCE}" + (f" · {IMAGE_OVERLAP_NOTE})" if len(big) > 1 else ")")
            + (f" · 큰 것: {', '.join(urls)}" if urls else ""))
@@ -1542,12 +1542,12 @@ def _reason_ai_bot(r: dict, ctx: dict) -> str:
              f"{len(bots)}개({'·'.join(bots)})를 한꺼번에 막습니다. 원인은 이 줄 하나입니다")
         if r.get("google_blocked"):
             # 이 줄은 AI 전용이 아니다 — 구글 검색 전체에서 빠진다는 게 먼저다
-            s += (". 같은 줄이 구글 검색(Googlebot)도 막습니다 — AI 이전에 검색 전체에서 "
+            s += (". 같은 줄이 구글 검색(Googlebot)도 막습니다. AI 이전에 검색 전체에서 "
                   "빠지는 문제입니다")
         return s
     eng = r.get("engine") or r["bot"]
     s = (f"robots.txt 가 {r['bot']}({eng}, {AI_BOT_PURPOSE[r['purpose']]})를 막습니다 "
-         f"({r['rule']}). {eng} 답변에서 우리 페이지가 출처로 실리기 어렵습니다 — 글을 "
+         f"({r['rule']}). {eng} 답변에서 우리 페이지가 출처로 실리기 어렵습니다. 글을 "
          "고치기 전에 이 설정이 먼저입니다")
     if r["bot"].lower() == "bingbot":
         # 빙 색인은 Copilot 만의 것이 아니다 — AI 문제로만 부르면 규모를 줄여 말하게 된다
@@ -1767,7 +1767,7 @@ def _structured_data_advice(audit: dict, gaps: list[dict]) -> list[dict]:
     if broken:
         out.append({"tag": "구조화 데이터", "level": "bad",
                     "now": f"ld+json 블록 {broken}개가 JSON 문법 오류로 읽히지 않습니다",
-                    "fix": "쉼표·따옴표·중괄호를 고치세요. 문법이 틀린 블록은 구글도 통째로 버립니다 — "
+                    "fix": "쉼표·따옴표·중괄호를 고치세요. 문법이 틀린 블록은 구글도 통째로 버립니다. "
                            "리치 결과 테스트(search.google.com/test/rich-results)로 확인합니다."})
     for g in gaps:
         need = [p for p in g.get("need") or [] if p]
@@ -1777,7 +1777,7 @@ def _structured_data_advice(audit: dict, gaps: list[dict]) -> list[dict]:
                     "now": f"{g.get('as') or g['type']} 에 필수 속성이 없습니다: "
                            + ", ".join(map(_prop_name, need)),
                     "fix": "필수 속성이 빠진 마크업은 그 유형의 리치 결과에 나갈 자격이 없습니다. "
-                           "빠진 속성을 채우되 값은 화면에 실제로 보이는 것과 같게 씁니다 — 화면에 "
+                           "빠진 속성을 채우되 값은 화면에 실제로 보이는 것과 같게 씁니다. 화면에 "
                            "없는 값을 마크업에만 넣지 않습니다."})
     return out
 
@@ -1805,7 +1805,7 @@ def entity_advice(audit: dict, gaps: list[dict], domain: str = "") -> list[dict]
             out.append({"tag": "엔티티", "level": "warn",
                         "now": "홈에 사이트 주인을 밝히는 Organization·LocalBusiness 마크업이 없습니다",
                         "fix": "홈에 Organization(손님이 찾아오는 지점이 있으면 LocalBusiness 의 "
-                               f"맞는 하위 유형) 하나를 넣으세요 — {', '.join(map(_prop_name, org))} "
+                               f"맞는 하위 유형) 하나를 넣으세요. {', '.join(map(_prop_name, org))} "
                                "를 채우고(sameAs 는 공식 계정·프로필 주소), 지점이 있으면 "
                                f"{', '.join(map(_prop_name, lb))} 까지. 검색엔진이 이 사이트를 다른 "
                                "곳(지도·공식 계정)의 같은 주인과 잇는 재료입니다."})
@@ -1818,7 +1818,7 @@ def entity_advice(audit: dict, gaps: list[dict], domain: str = "") -> list[dict]
                 hint = {"logo": "logo 는 로고 이미지 주소입니다.",
                         "sameAs": "sameAs 는 공식 계정·프로필 주소 목록입니다.",
                         "telephone": "주소·전화는 꼬리말·연락처 페이지에 보이는 것과 글자까지 같게 "
-                                     "씁니다 — 지도의 업체 정보와 이어 보는 재료입니다."}
+                                     "씁니다. 지도의 업체 정보와 이어 보는 재료입니다."}
                 out.append({"tag": "엔티티", "level": "warn",
                             "now": f"{g.get('as') or written} 에 {', '.join(map(_prop_name, want))} "
                                    "이 없습니다",
@@ -1917,7 +1917,7 @@ def _hreflang_advice(audit: dict) -> list[dict]:
     if bad:
         out.append({"tag": "hreflang", "level": "bad",
                     "now": "코드가 아닌 값: " + ", ".join(sorted(set(bad))[:5]),
-                    "fix": "언어는 ISO 639-1, 지역은 ISO 3166-1 Alpha 2 입니다 — 영국은 "
+                    "fix": "언어는 ISO 639-1, 지역은 ISO 3166-1 Alpha 2 입니다. 영국은 "
                            "en-UK 가 아니라 en-GB. 틀린 항목은 통째로 무시됩니다."})
     if not any(c.lower() == "x-default" for c in codes):
         out.append({"tag": "hreflang", "level": "warn",
@@ -1999,7 +1999,7 @@ def _desc_scraped(desc: str, title: str, h1: str) -> bool:
 
 # 어느 페이지든 같은 문장이다 — 검색어를 박으라는 지시가 아니라 판단을 시킨다.
 TITLE_JUDGE = ("이 페이지에 걸린 검색어 묶음의 주 의도를 title 이 대표하는지 보고, 본문이 "
-               "실제로 다루는 말로만 고치세요. 검색어를 글자 그대로 박지 않습니다 — 지금 "
+               "실제로 다루는 말로만 고치세요. 검색어를 글자 그대로 박지 않습니다. 지금 "
                "title 이 이미 그 의도를 말하면 그대로 두는 것도 답입니다.")
 
 
@@ -2035,10 +2035,10 @@ def _name_split_advice(audit: dict, title: str, h1: list) -> list[dict]:
     return [{"tag": NAME_SPLIT_TAG, "level": "warn",
              "now": (f"주소는 '{seg}' 인데 title·H1 에 {', '.join(missing)} 가 없습니다"
                      f" (title: {title or '(없음)'} · H1: {' / '.join(map(str, h1)) or '(없음)'})"),
-             "fix": ("이 페이지가 무엇인지에 대한 신호가 서로 부딪힙니다 — URL 은 한 가지를, "
+             "fix": ("이 페이지가 무엇인지에 대한 신호가 서로 부딪힙니다. URL 은 한 가지를, "
                      "title·H1 은 다른 것을 말합니다. 둘 중 무엇이 이 페이지의 이름인지 먼저 "
                      "정하세요. 걸린 검색어와 들어오는 앵커가 어느 쪽 말을 쓰는지가 근거입니다. "
-                     "title·H1 을 주소 쪽으로 맞추는 것이 대개 싸고 안전합니다 — URL 을 바꾸면 "
+                     "title·H1 을 주소 쪽으로 맞추는 것이 대개 싸고 안전합니다. URL 을 바꾸면 "
                      "리다이렉트와 링크를 전부 손봐야 합니다. 둘 다 맞는 이름이면 하나를 주된 "
                      "이름으로 두고 다른 하나는 본문에서 설명합니다.")}]
 
@@ -2072,12 +2072,12 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
         live = [q for q in queries if q]
         if live:
             add("없는 페이지", "bad",
-                f"HTTP {audit['status']} — 그런데 검색어 {len(live)}개('{live[0]}' 등)로 아직 노출됩니다",
+                f"HTTP {audit['status']}. 그런데 검색어 {len(live)}개('{live[0]}' 등)로 아직 노출됩니다",
                 "이 주소를 내용이 가장 가까운 살아 있는 페이지로 301 리다이렉트하세요. 새로 쓰는 "
                 "것보다 싸고, 지금 들어오는 노출을 버리지 않습니다. 옮길 곳이 없으면 이 주소에 "
                 "페이지를 되살립니다.")
         else:
-            add("없는 페이지", "warn", f"HTTP {audit['status']} — 걸린 검색어는 없습니다",
+            add("없는 페이지", "warn", f"HTTP {audit['status']}. 걸린 검색어는 없습니다",
                 "이 주소로 링크한 곳(사이트 안 링크·사이트맵·백링크)을 살아 있는 주소로 바꾸거나, "
                 "옮겨 간 페이지가 있으면 301 을 거세요.")
         return out
@@ -2094,16 +2094,16 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
     if not title:
         add("title", "bad", "title 태그가 없습니다",
             "걸린 검색어 묶음의 주 의도를 말하는 <title> 하나를 넣으세요"
-            + (f" — 예: <title>{kw} — 페이지 요지</title>." if kw else "."))
+            + (f" 예: <title>{kw} | 페이지 요지</title>." if kw else "."))
     else:
         missing = _missing_tokens(kw, title)
         if kw_tokens and len(missing) == len(kw_tokens):
             add("title", "bad",
-                f"{title} — 검색어 '{kw}' 의 말({', '.join(kw_tokens)})이 하나도 없습니다",
+                f"{title}: 검색어 '{kw}' 의 말({', '.join(kw_tokens)})이 하나도 없습니다",
                 TITLE_JUDGE)
         elif len(kw_tokens) >= 2 and len(missing) > len(kw_tokens) / 2:
             add("title", "warn",
-                f"{title} — 검색어 '{kw}' 의 말 중 {', '.join(missing)} 이 없습니다",
+                f"{title}: 검색어 '{kw}' 의 말 중 {', '.join(missing)} 이 없습니다",
                 TITLE_JUDGE)
         t_max = TITLE_MAX_KO if _wide(title) else TITLE_MAX
         t_min = TITLE_MIN_KO if _wide(title) else TITLE_MIN
@@ -2128,7 +2128,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
         add("meta description", "warn", f"본문 첫 줄을 긁어 온 것으로 보입니다: {desc[:60]}…",
             "이 페이지가 무엇에 답하고 누구를 위한 것인지 2~3문장으로 직접 쓰세요. 지금은 "
             "본문 첫 줄을 붙여 넣은 것이 검색결과에 그대로 뜹니다. "
-            "(이 '…' 는 표를 줄이며 여기서 자른 표시입니다 — 실제 태그가 저기서 끝난다는 "
+            "(이 '…' 는 표를 줄이며 여기서 자른 표시입니다. 실제 태그가 저기서 끝난다는 "
             "뜻이 아닙니다. 판정도 추정이니 페이지를 열어 태그 원문을 보고 확인하세요.)")
     elif len(desc) > (DESC_MAX_KO if _wide(desc) else DESC_MAX):
         add("meta description", "warn", f"{len(desc)}자라 뒤가 잘립니다",
@@ -2152,8 +2152,8 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
             "H1 은 하나만 두고 나머지는 H2 로 내리세요.")
     elif kw_tokens and len(_missing_tokens(kw, h1[0])) == len(kw_tokens):
         add("H1", "warn",
-            f"{h1[0]} — 검색어 '{kw}' 의 말({', '.join(kw_tokens)})이 하나도 없습니다",
-            "H1 은 이 페이지의 주제 — 걸린 검색어 묶음이 공통으로 묻는 것 — 를 말하고 "
+            f"{h1[0]}: 검색어 '{kw}' 의 말({', '.join(kw_tokens)})이 하나도 없습니다",
+            "H1 은 이 페이지의 주제(걸린 검색어 묶음이 공통으로 묻는 것)를 말하고 "
             "title 과 같은 말을 해야 합니다. 검색어를 그대로 박지 말고 본문이 다루는 "
             "말로 쓰세요.")
 
@@ -2161,7 +2161,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
     long_body = isinstance(words, int) and words >= H2_MIN_WORDS
     if long_body and not _as_list(audit.get("h2_json")):
         add("H2", "warn", f"{words}단어인데 H2 가 하나도 없습니다",
-            "걸린 검색어 묶음이 묻는 질문들로 본문을 나누세요 — 그 질문이 H2 후보이고, "
+            "걸린 검색어 묶음이 묻는 질문들로 본문을 나누세요. 그 질문이 H2 후보이고, "
             "한 구간에는 한 가지 생각만 둡니다.")
 
     if isinstance(words, int) and words < THIN_WORDS:
@@ -2173,7 +2173,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
     if long_body and audit.get("external_links") == 0:
         add("외부 링크", "warn", f"{words}단어에 외부 링크 0개",
             "본문의 주장을 받쳐 주는 출처 1~3개(학회·논문·공식 문서)로 링크하세요. 신뢰가 "
-            "순위를 가르는 주제(건강·돈·법 — YMYL)에서는 이 자리가 제일 약한 곳입니다.")
+            "순위를 가르는 주제(건강·돈·법, 곧 YMYL)에서는 이 자리가 제일 약한 곳입니다.")
 
     # 비교 의도인데 비교 구간이 없다 — 'A vs B' 로 온 방문자는 둘을 나란히 놓은 표를
     # 찾는다. 표 수는 정적 HTML 에서 센 것이라 JS 껍데기면 안 믿는다(extract_advice 와 같다).
@@ -2182,16 +2182,16 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
             and audit.get("tables") == 0:
         add("비교", "warn", f"'{cmp_q}' 로 오는 비교 의도인데 본문에 표가 없습니다",
             "둘을 항목별(생김새·원인·위치·치료·재발)로 나란히 놓는 표 하나와, 그 아래 "
-            "한 문단의 결론을 두세요 — 'X vs Y' 로 검색한 방문자 대부분이 그것을 보러 옵니다.")
+            "한 문단의 결론을 두세요. 'X vs Y' 로 검색한 방문자 대부분이 그것을 보러 옵니다.")
 
     # 신선도 — "언제 쓴 글인가" 는 우리가 점검한 날과 다른 사실이다. 이게 없으면
     # 순위 하락의 원인 후보에서 노후화를 못 가른다(늘 "경쟁이 세졌다"로 끝났다).
     stale = _stale_days(audit)
     if stale is not None and stale >= STALE_DAYS:
         seen = audit.get("modified") or audit.get("published")
-        add("갱신", "warn", f"마지막 수정 {seen} — {stale // 30}개월 전",
+        add("갱신", "warn", f"마지막 수정 {seen}, {stale // 30}개월 전",
             "숫자·연도·화면·가격이 아직 맞는지 보고 고친 뒤 수정일을 올리세요. 안 고칠 "
-            "글이면 그렇다고 답해 주세요 — 날짜만 바꾸는 것은 안 됩니다.")
+            "글이면 그렇다고 답해 주세요. 날짜만 바꾸는 것은 안 됩니다.")
 
     # 정적 HTML 로 가져온 값이다 — Yoast·RankMath·AIOSEO 는 ld+json 을 자바스크립트로
     # 넣는다. 그때 "없다"고 단정하면 있는 것을 또 만들게 시킨다. 껍데기로 의심되면
@@ -2232,7 +2232,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
                 "width=device-width 를 넣으세요. 고정 폭 뷰포트는 기기마다 다르게 잘립니다.")
         elif "user-scalable=no" in vp.replace(" ", "") or "maximum-scale=1" in vp.replace(" ", ""):
             add("모바일", "warn", f"viewport: {audit['viewport']}",
-                "확대를 막고 있습니다. user-scalable=no·maximum-scale 을 빼세요 — 접근성 "
+                "확대를 막고 있습니다. user-scalable=no·maximum-scale 을 빼세요. 접근성 "
                 "문제이고 모바일 사용성 평가에 걸립니다.")
 
     # 언어 선언 — 없으면 검색엔진이 본문 글자로 추측한다. 빙은 hreflang 보다
@@ -2267,7 +2267,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
     # 페이지에서 요청문이 alt 만 말하고 이 구조는 말하지 않았다.
     if isinstance(images, int) and images >= IMAGE_HEAVY_MIN and words_n \
             and words_n / images < IMAGE_HEAVY_WORDS:
-        add("이미지", "warn", f"이미지 {images}개에 본문 {words_n}단어 — 그림 위주입니다",
+        add("이미지", "warn", f"이미지 {images}개에 본문 {words_n}단어라 그림 위주입니다",
             "그림 속 글자는 검색이 못 읽습니다. 핵심 설명·가격·과정이 그림이 아니라 본문 "
             "텍스트에 있는지 확인하고, 그림에만 있으면 본문으로 옮기세요.")
     # 용량·포맷 — 감사가 아니라 속도 단계(같은 PageSpeed 응답)에서 온다. 태그는 가른다
@@ -2282,9 +2282,9 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
             and words_n / internal < LINKS_HEAVY_WORDS:
         # 감사가 세는 수에는 메뉴·푸터 링크가 섞인다 — 단정하지 않고 본문 안 수를 세라고 한다
         add("내부 링크", "warn",
-            f"내보내는 내부 링크 {internal}개 — 본문 {round(words_n / internal)}단어당 1개",
+            f"내보내는 내부 링크 {internal}개, 본문 {round(words_n / internal)}단어당 1개",
             "메뉴·푸터를 뺀 본문 안 링크만 세어 보세요. 본문 안에서도 이 정도면 한 문단에 "
-            "링크가 몰려 어느 것이 중요한지 흐려집니다 — 이 글의 주제와 가까운 것만 남기세요.")
+            "링크가 몰려 어느 것이 중요한지 흐려집니다. 이 글의 주제와 가까운 것만 남기세요.")
     return out
 
 
@@ -2342,10 +2342,10 @@ def extract_advice(audit: dict | None, kind: str) -> list[dict]:
     stale = _stale_days(audit)
     if stale is not None and stale >= AI_CONTENT_STALE_DAYS:
         seen = audit.get("modified") or audit.get("published")
-        add("갱신", "warn", f"마지막 수정 {seen} — {stale // 30}개월 전",
+        add("갱신", "warn", f"마지막 수정 {seen}, {stale // 30}개월 전",
             ("챗봇은 최근 글을 출처로 고릅니다. " if bot else
              "AI 요약은 최근 정보를 앞세웁니다. ")
-            + "숫자·연도·가격이 아직 맞는지 보고 고친 뒤 수정일을 올리세요 — 날짜만 "
+            + "숫자·연도·가격이 아직 맞는지 보고 고친 뒤 수정일을 올리세요. 날짜만 "
               "바꾸는 것은 안 됩니다.")
 
     if not _has_extract_fields(audit):
@@ -2362,9 +2362,9 @@ def extract_advice(audit: dict | None, kind: str) -> list[dict]:
     lead = audit.get("lead_words")
     if lead == 0:
         add(tag, "warn", "본문에서 <p> 문단을 못 찾았습니다 (div 로만 짠 페이지일 수 있습니다)",
-            "H1 바로 아래에 이 질문에 바로 답하는 문단 하나를 두세요 — 정의나 결론부터."
+            "H1 바로 아래에 이 질문에 바로 답하는 문단 하나를 두세요. 정의나 결론부터."
             if bot else
-            "H1 바로 아래 첫 문단에서 독자의 질문에 먼저 답하세요 — 결론부터, 설명은 그 뒤.")
+            "H1 바로 아래 첫 문단에서 독자의 질문에 먼저 답하세요. 결론부터, 설명은 그 뒤.")
     elif isinstance(lead, int) and lead > LEAD_MAX_WORDS:
         add(tag, "warn", f"첫 문단이 {lead}단어입니다",
             "첫 문단을 40~60단어의 직답으로 줄이고 나머지는 다음 문단으로 넘기세요. "
@@ -2377,7 +2377,7 @@ def extract_advice(audit: dict | None, kind: str) -> list[dict]:
         add(tag, "warn", "본문에 표도 목록(ul/ol)도 없습니다",
             "비교하는 내용은 표로, 순서가 있는 내용은 번호 목록으로 바꾸세요. 챗봇은 "
             "문단보다 표·목록을 그대로 인용합니다." if bot else
-            "비교하는 내용은 표로, 순서가 있는 내용은 번호 목록으로 — 사람이 훑어 읽기 "
+            "비교하는 내용은 표로, 순서가 있는 내용은 번호 목록으로 바꾸세요. 사람이 훑어 읽기 "
             "좋은 구조가 요약에도 잡힙니다. AI 용 블록을 따로 만들지 않습니다.")
 
     h2 = _as_list(audit.get("h2_json"))
@@ -2385,8 +2385,8 @@ def extract_advice(audit: dict | None, kind: str) -> list[dict]:
     if len(h2) >= H2_FOR_QUESTIONS and qn == 0:
         add(tag, "warn", f"H2 {len(h2)}개 중 질문형이 없습니다",
             "사람들이 챗봇에 실제로 묻는 문장을 H2 로 두고, 그 바로 아래 첫 문장에서 "
-            "답하세요 — 질문과 답이 한 덩어리로 뽑힙니다." if bot else
-            "독자가 묻는 순서대로 H2 를 질문 꼴로 바꾸세요 — 제목만 훑어도 답이 어디 "
+            "답하세요. 질문과 답이 한 덩어리로 뽑힙니다." if bot else
+            "독자가 묻는 순서대로 H2 를 질문 꼴로 바꾸세요. 제목만 훑어도 답이 어디 "
             "있는지 보이게.")
 
     # 저자는 구조가 아니라 신뢰 신호라 tag 를 따로 둔다 — "[읽기 구조] 저자 없음"은
@@ -2394,7 +2394,7 @@ def extract_advice(audit: dict | None, kind: str) -> list[dict]:
     if audit.get("author") == "":
         add("저자", "warn", "저자 표시가 없습니다 (meta author·ld+json author 둘 다 없음)",
             "누가 썼는지(이름·자격)를 본문과 ld+json author 에 적으세요. 이름은 [저자] "
-            "자리로 비워 둡니다 — 지어내지 않습니다.")
+            "자리로 비워 둡니다. 지어내지 않습니다.")
     return out
 
 
@@ -3676,7 +3676,7 @@ UNCLASSIFIED_REASON = "주제가 정해지지 않은 키워드 묶음이라 기�
 # 이름이 주제가 아니라 사이트의 자리·제 이름인 묶음도 미분류와 같다. theotherskin 의 'korea'
 # 묶음(색소 치료·피부과 찾기·레이저 비용·점 빼기·홍대 피부과)은 공통점이 '한국에서'뿐이라 대표 글
 # 한 장이 무엇에 대한 글인지 안 정해지는데, '안 다룬 주제 korea'로 새 글 설계도가 나갔다(#318).
-NOT_TOPIC_REASON = ("묶음 이름이 주제가 아니라 사이트의 자리·이름이라 기회로 세지 않습니다 — "
+NOT_TOPIC_REASON = ("묶음 이름이 주제가 아니라 사이트의 자리·이름이라 기회로 세지 않습니다. "
                     "키워드를 주제별로 다시 묶으면 그 묶음이 기회가 됩니다")
 
 
@@ -5057,7 +5057,7 @@ def _reason_backlink_prospect(r: dict, ctx: dict) -> str:
 def _reason_backlink_mention(r: dict, ctx: dict) -> str:
     s = f"이 사이트가 우리 이름('{r['alias']}')을 말했는데 우리에게 링크하지 않습니다"
     if r["pages"] > 1:
-        s += f" — 그런 페이지가 {r['pages']}곳"
+        s += f", 그런 페이지가 {r['pages']}곳"
     if r["rank"]:
         s += f" (도메인 지수 {r['rank']})"
     return s
@@ -5073,12 +5073,12 @@ _CTR_ACTS = [
     "meta description 에 숫자·연도·구체적 이득을 적습니다.",
     # "FAQ·HowTo 스키마로 면적을 넓힌다"였다 — 구글은 2023년에 HowTo 리치 결과를
     # 거두고 FAQ 를 정부·보건 권위 사이트로 좁혔다(_AIO_PLAY 주석과 같은 사실).
-    "검색결과에 실제로 보이는 모습을 봅니다 — 구글이 title 을 바꿔 보여 주는지, "
+    "검색결과에 실제로 보이는 모습을 봅니다. 구글이 title 을 바꿔 보여 주는지, "
     "날짜·이동 경로(breadcrumb)가 맞게 나오는지. FAQ·HowTo 리치 결과는 대부분 "
     "사이트에서 더는 안 나옵니다.",
     "검색 의도와 제목이 어긋나 있지 않은지 확인합니다(정보형 검색에 판매 제목)."]
 _CTR_DELIVER = ["까닭 판정 표: 갈래(제목 불일치 · 의도 어긋남 · 스니펫 약함) | 요청문의 기계 판정 | "
-                "검색결과를 직접 열어 본 것 | 맞나. 아래 산출물은 맞는 갈래만 고칩니다 — 의도가 "
+                "검색결과를 직접 열어 본 것 | 맞나. 아래 산출물은 맞는 갈래만 고칩니다. 의도가 "
                 "어긋났으면 title 만 바꿔서는 클릭이 안 나니 그렇게 적고 '따로 볼 것'에 무엇을 할지",
                 "새 title 3안. 길이 기준 안에서, 검색 의도를 앞에",
                 "meta description 2안. 길이 기준 안에서",
@@ -5091,18 +5091,18 @@ _CTR_PLAY = {
         # "1페이지인데"는 서치콘솔 평균 순위의 말이다 — 직접 조회는 1쪽 밖일 수 있다(#725
         # 'olidia vs sculptra': 평균 4.5위, 미국 조회 1쪽 밖). 갈리면 요청문 근거가 갈림 줄을 단다.
         what="구글 실적 평균으로는 1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 순위가 아니라 검색결과에서 안 눌리는 "
-             "것입니다 — 까닭(제목 불일치·의도 어긋남·스니펫 약함)은 근거의 '까닭' 줄이 먼저 가릅니다.",
+             "것입니다. 까닭(제목 불일치·의도 어긋남·스니펫 약함)은 근거의 '까닭' 줄이 먼저 가릅니다.",
         acts=_CTR_ACTS, deliver=_CTR_DELIVER),
     "aio": dict(
         what="구글 실적 평균으로는 1페이지인데 클릭률이 기대치의 절반도 안 됩니다. 다만 이 검색어는 결과 맨 위에 "
-             "구글 AI 요약이 섭니다 — 기대치는 요약이 없는 결과의 클릭 곡선이라, 모자란 클릭의 "
+             "구글 AI 요약이 섭니다. 기대치는 요약이 없는 결과의 클릭 곡선이라, 모자란 클릭의 "
              "일부는 제목·설명이 아니라 요약이 가져간 것입니다. 제목·설명 문제라고 단정하지 "
              "않습니다.",
         acts=["아래 근거에서 AI 요약이 우리 링크를 인용하는지 먼저 봅니다. 인용하는데도 클릭이 "
-              "없으면 요약이 답을 다 줘서 누를 이유가 없는 것입니다 — 그때 title·설명은 요약이 "
+              "없으면 요약이 답을 다 줘서 누를 이유가 없는 것입니다. 그때 title·설명은 요약이 "
               "못 주는 것(페이지에만 있는 비교표·사진·판단 기준)을 약속해야 클릭이 납니다.",
               *_CTR_ACTS,
-              "고친 뒤 클릭률이 기대치까지 안 올라도 실패로 읽지 않습니다 — AI 요약이 선 "
+              "고친 뒤 클릭률이 기대치까지 안 올라도 실패로 읽지 않습니다. AI 요약이 선 "
               "검색어의 클릭률은 곡선보다 낮은 것이 보통입니다. 볼 것은 전보다 늘었는지입니다."],
         deliver=_CTR_DELIVER),
 }
@@ -5119,29 +5119,29 @@ _SD_PLAY = {
               "옆 결과와 다르게 보이게 합니다. 검색어를 글자 그대로 박지 않습니다.",
               "meta description 을 검색 의도에 대한 한 문장 답으로 바꿉니다.",
               "질문 꼴 H2 바로 아래에 두세 문장(영어면 40~60단어)으로 직답합니다. 강조 스니펫이 "
-              "거기서 나옵니다 — 그 질문을 담을 H2 가 아직 없으면 H2 부터 둡니다.",
+              "거기서 나옵니다. 그 질문을 담을 H2 가 아직 없으면 H2 부터 둡니다.",
               "상단 3위권을 노린다면 상위 페이지에만 있는 구간을 본문에 채웁니다."],
         # 1페이지 안에서 클릭이 안 나는 이유는 순위가 아니다 — 가설부터 가르게 한다.
         # 이 표가 없을 때 3.6~5.8위·클릭 0 페이지의 요청문이 순위 올리기만 시켰다.
         deliver=["클릭이 안 나는 이유 가설 표: 가설(검색결과에 보이는 title·설명이 안 눌림 · "
-                 "검색 의도 어긋남 — 상위 결과가 설명 글인지 업체·가격인지 · 검색결과 기능이 클릭을 "
-                 "가져감 — 지도·광고·AI 요약) | 확인한 것(검색결과를 직접 열어) | 맞나",
-                 "새 title 3안. 묶음의 주 의도를 앞에 두고 숫자나 연도를 붙여서 — 지금 title 이 "
+                 "검색 의도 어긋남(상위 결과가 설명 글인지 업체·가격인지) · 검색결과 기능이 클릭을 "
+                 "가져감(지도·광고·AI 요약)) | 확인한 것(검색결과를 직접 열어) | 맞나",
+                 "새 title 3안. 묶음의 주 의도를 앞에 두고 숫자나 연도를 붙여서. 지금 title 이 "
                  "이미 그 말을 하면 '안 바꿈'과 이유",
                  "meta description 2안",
                  # "40~60자"였다 — 스니펫 기준은 단어라 한국어로 옮기며 단위가 바뀌었고,
                  # 같은 요청문의 추출성 산출물(40~60단어)과 딴말을 했다. H2 가 하나도 없는
                  # 페이지에 "질문 바로 아래"를 시키면 그 질문이 어디에도 없다.
-                 "질문 꼴 H2 와 그 바로 아래 넣을 두세 문장 직답(영어면 40~60단어) — 그 질문을 "
+                 "질문 꼴 H2 와 그 바로 아래 넣을 두세 문장 직답(영어면 40~60단어). 그 질문을 "
                  "담을 H2 가 지금 페이지에 없으면 그 H2 문안과 넣을 자리부터"]),
     "page2": dict(
         what="1페이지 진입까지 몇 칸 남았습니다. 그 몇 칸이 클릭의 대부분입니다.",
-        acts=["아래 페이지의 title 과 H1 이 이 검색어 묶음이 묻는 것을 정면으로 말하게 고칩니다 — "
+        acts=["아래 페이지의 title 과 H1 이 이 검색어 묶음이 묻는 것을 정면으로 말하게 고칩니다. "
               "본문이 실제로 다루는 말로, 검색어를 그대로 박는 게 아니라.",
               "상위 페이지가 답하는 하위 질문 중 빠진 것을 본문에 채웁니다.",
               "이미 순위가 있는 다른 글에서 이 페이지로 내부 링크를 겁니다.",
               "표·목록·정의 블록을 만들어 스니펫 후보로 올립니다."],
-        deliver=["새 title 3안과 H1 문안. 묶음의 주 의도를 앞에 두고 — 안 바꾸는 게 답이면 그렇게 쓰고 이유",
+        deliver=["새 title 3안과 H1 문안. 묶음의 주 의도를 앞에 두고, 안 바꾸는 게 답이면 그렇게 쓰고 이유",
                  "본문에 추가할 H2 목록(상위 페이지가 답하는데 내게 없는 질문)",
                  "이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개",
                  # 할 일 4번(스니펫 블록)에 짝이 되는 산출물이 없었다
@@ -5196,7 +5196,7 @@ _AIO_PLAY = {
                  "이 글에 빠진 신뢰 신호(저자·직접 경험·출처·수정일)와 넣을 자리"]),
     "beyond": dict(
         what="구글이 이 검색어에 AI 요약을 붙이는데 우리는 1페이지 밖이거나 순위가 없습니다. "
-             "구글 AI 요약은 상위 페이지에서 출처를 뽑습니다 — 순위가 먼저입니다. 직답 "
+             "구글 AI 요약은 상위 페이지에서 출처를 뽑습니다. 순위가 먼저입니다. 직답 "
              "블록이나 구조화 데이터로 요약에 끼어드는 길은 없습니다.",
         acts=["이 검색어로 1페이지에 드는 것을 목표로 잡습니다. 걸린 페이지가 있으면 그 "
               "페이지를, 없으면 이 검색어를 정면으로 다루는 글을 씁니다.",
@@ -5209,11 +5209,11 @@ _AIO_PLAY = {
         # 가르고 "이 페이지로는 어렵다"고 말할 자리를 맨 앞에 둔다.
         deliver=["왜 밀리는지 원인 진단 표: 항목(검색 의도와 페이지 종류 · 다루는 깊이 · 신뢰 "
                  "신호 · 외부 링크 · 내부 링크) | 우리 페이지 | 상위 2~3개 | 차이. 모르는 칸은 "
-                 "[확인 필요]. 끝에 결론 한 줄 — 이 페이지를 고쳐 1페이지를 노릴 수 있다 / 이 "
+                 "[확인 필요]. 끝에 결론 한 줄: 이 페이지를 고쳐 1페이지를 노릴 수 있다 / 이 "
                  "페이지로는 어렵다(그러면 새 글·외부 링크·다른 검색어 중 무엇을)",
                  "1페이지에 들기 위해 채울 H2 목록. 상위 페이지가 답하는데 우리에게 없는 질문",
-                 "새 title 과 H1 문안. 묶음의 주 의도를 앞에 두고 — 안 바꾸는 게 답이면 그렇게 쓰고 이유",
-                 "이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개 — 지금 들어오는 링크가 없는 "
+                 "새 title 과 H1 문안. 묶음의 주 의도를 앞에 두고, 안 바꾸는 게 답이면 그렇게 쓰고 이유",
+                 "이 페이지로 내부 링크를 걸 글과 앵커 텍스트 3개: 지금 들어오는 링크가 없는 "
                  "글에서, 지금 앵커와 서로 겹치지 않는 말로"],
         # 위 deliver 는 **걸린 페이지가 있을 때**의 것이다. 같은 band(beyond)라도 순위에
         # 걸린 페이지가 없으면(shape=new_content) 저 넷 중 셋이 없는 페이지를 가리킨다 —
@@ -5225,14 +5225,14 @@ _AIO_PLAY = {
             "이 주제를 이미 다루는 우리 지면이 있는지 찾은 결과: 있으면 그 주소와 "
             "'새 글 대신 그 지면을 고치자'는 결론, 없으면 '없음'과 어디를 찾아봤는지"
             "(저장소·사이트맵·site: 검색). 있는데 새 글을 내면 두 지면이 한 검색어를 나눠 "
-            "갖습니다 — 이 칸이 '있음'이면 아래는 설계하지 않고 멈춥니다.",
+            "갖습니다. 이 칸이 '있음'이면 아래는 설계하지 않고 멈춥니다.",
             "상위 2~3개가 이 검색어를 어떻게 받는지 비교 표: 항목(검색 의도와 페이지 종류 · "
             "다루는 깊이 · 신뢰 신호 · 외부 링크) | 상위 2~3개 | 새 글이 맞춰야 할 수준. "
-            "모르는 칸은 [확인 필요]. 끝에 결론 한 줄 — 새 글로 1페이지를 노릴 수 있다 / "
+            "모르는 칸은 [확인 필요]. 끝에 결론 한 줄: 새 글로 1페이지를 노릴 수 있다 / "
             "어렵다(그러면 외부 링크·다른 검색어 중 무엇을)",
             "1페이지에 들기 위해 반드시 답해야 할 질문 목록. 상위 페이지가 답하는데 우리 "
             "사이트 어디에도 없는 것",
-            "발행 뒤 이 글로 내부 링크를 걸 기존 글과 앵커 텍스트 3개 — 서로 겹치지 않는 말로"]),
+            "발행 뒤 이 글로 내부 링크를 걸 기존 글과 앵커 텍스트 3개: 서로 겹치지 않는 말로"]),
 }
 AIO_BANDS = tuple(_AIO_PLAY)
 
@@ -5268,7 +5268,7 @@ _KIND_SPECS = {
              f"평균 {r['pos']}위 · 노출 {r['imp']:,} · 클릭 {r['clk']:,}. ")
             + (f"이미 1페이지이고 상단 3위권까지 {round(max(0.0, r['pos'] - 3), 1)}칸"
                if r["band"] == "page1" else f"1페이지까지 {r['gap']}칸")
-            + (f" 남았습니다 (DataForSEO 추정 {r['date']} 기준 — 서치콘솔 없이 본 순위)"
+            + (f" 남았습니다 (DataForSEO 추정 {r['date']} 기준, 서치콘솔 없이 본 순위)"
                if r.get("src") == "labs" else f" 남았습니다 (구글 실적 {ctx['cur']} 기준)")),
         play=_SD_PLAY),
     "ctr_gap": dict(
@@ -5306,7 +5306,7 @@ _KIND_SPECS = {
         play=dict(
             what="같은 검색어에 내 페이지가 둘 이상 걸려 노출을 나눠 갖습니다. 구글이 어느 쪽을 올릴지 못 정합니다.",
             # 정본 기준은 여기 한 곳이다 — 근거 표(brief._ev_cannibal)는 표가 이 기준에서 갈리는지만 말한다
-            acts=["먼저 두 페이지의 검색 의도가 같은지 '근거'의 제목 표로 봅니다 — 다르면 합치지 "
+            acts=["먼저 두 페이지의 검색 의도가 같은지 '근거'의 제목 표로 봅니다. 다르면 합치지 "
                   "않고 3번으로 갑니다. 같으면 클릭이 많은 쪽이 정본이고, 클릭이 같으면 노출이 "
                   "많은 쪽입니다.",
                   "나머지는 정본으로 301 리다이렉트하거나 canonical 을 정본으로 겁니다.",
@@ -5318,7 +5318,7 @@ _KIND_SPECS = {
                      "나머지 페이지 처리 계획: 301 리다이렉트 대상과 canonical 지정",
                      "합칠 경우 병합 후 목차 한 벌. 새 글을 쓰는 게 아니라 두 글을 합칩니다",
                      "의도가 달라 합치지 않을 때의 title·H1: 두 페이지 각각 지금 값 | 바꿀 값과 "
-                     "그 페이지가 맡을 의도 한 줄 — 이때 1~3번은 '합치지 않음'과 이유 한 줄"])),
+                     "그 페이지가 맡을 의도 한 줄. 이때 1~3번은 '합치지 않음'과 이유 한 줄"])),
     # 내부 경쟁의 거울이다: 저쪽은 "한 검색어를 여러 페이지가 나눠 갖는다"고
     # 이쪽은 "한 페이지가 여러 의도를 떠안는다"다. 만드는 쪽이 저쪽만 있어서 이 리포는
     # "합쳐라"는 말할 수 있고 "갈라라"는 못 했다 — 요청문의 fix_page 는 검색어가 몇
@@ -5342,12 +5342,12 @@ _KIND_SPECS = {
         play=dict(
             what="한 페이지가 검색 의도 둘을 떠안고 있습니다. 적은 쪽 묶음은 이 페이지가 "
                  "답하려던 것이 아닌데도 여기로 들어옵니다.",
-            acts=["두 묶음이 정말 다른 답을 원하는지 먼저 봅니다 — 같은 답이면 나누지 않습니다.",
+            acts=["두 묶음이 정말 다른 답을 원하는지 먼저 봅니다. 같은 답이면 나누지 않습니다.",
                   "나눈다면 적은 쪽 묶음을 맡을 지면을 새로 세우고, 지금 페이지는 주된 묶음만 맡습니다.",
                   "두 지면이 서로를 가리키는 내부 링크를 걸어 넘어갈 길을 냅니다.",
                   "떼어낸 지면이 남는 페이지의 검색어를 다시 노리지 않게 제목·H1 을 갈라 둡니다.",
                   "몇 주 뒤 떼어낸 검색어가 새 지면으로 옮겨 갔는지, 남은 쪽 순위가 안 떨어졌는지 봅니다."],
-            deliver=["나눌지 말지의 결정과 그 근거 한 줄 — 안 나누는 것도 답입니다",
+            deliver=["나눌지 말지의 결정과 그 근거 한 줄. 안 나누는 것도 답입니다",
                      "나눈다면 검색어 분배 표: 남길 것 / 떼어낼 것, 줄마다 이유 한 줄",
                      "떼어낼 지면의 제목 3안과 목차(H2 목록). 본문은 안 씁니다",
                      "두 지면을 잇는 내부 링크: 앵커 문장과 넣을 자리"])),
@@ -5371,11 +5371,11 @@ _KIND_SPECS = {
             # 그 페이지를 대지 않아 11위 근처의 글인지 상위 2~3개인지 두 갈래로 읽혔다.
             # 누가 우리를 넘었는지는 우리보다 위에 선 글 안에 있다(요청문이 어디서 얻는지 댄다).
             acts=["그 페이지에 최근 무엇이 바뀌었는지 봅니다(내용 삭제·리다이렉트·템플릿 교체).",
-                  "이 검색어로 지금 우리보다 위에 선 글과 목차를 비교해 빠진 구간을 채웁니다 — "
+                  "이 검색어로 지금 우리보다 위에 선 글과 목차를 비교해 빠진 구간을 채웁니다. "
                   "우리 자리를 가져간 글이 그 안에 있습니다.",
                   "본문을 실제로 갱신합니다. 날짜만 바꾸는 것은 효과가 없습니다.",
                   "그 페이지로 오던 내부 링크가 끊겼는지 확인합니다."],
-            deliver=["되찾으려고 본문에 채울 구간(H2 목록) — 이 검색어로 지금 우리보다 위에 선 글과 "
+            deliver=["되찾으려고 본문에 채울 구간(H2 목록): 이 검색어로 지금 우리보다 위에 선 글과 "
                      "목차를 견줘서",
                      "끊긴 내부 링크를 어디서 다시 걸지"])),
     "pseo_pattern": dict(
@@ -5403,7 +5403,7 @@ _KIND_SPECS = {
             # 한 벌이다(_PSEO_DELIVER). 첫 마디가 '한눈에'의 요약이 된다 — '허브로 쓸 기존 페이지'
             # 까지로 잘려 기존 페이지를 만들라는 말로 읽혔다.
             deliver_page=[*_PSEO_DELIVER,
-                          "허브 페이지에 더할 링크 목록과 그 구간 — 허브는 위 '대상'의 기존 페이지이고, "
+                          "허브 페이지에 더할 링크 목록과 그 구간. 허브는 위 '대상'의 기존 페이지이고, "
                           "무리의 각 페이지로 가는 링크를 어느 구간에 둘지까지입니다. 이 페이지의 "
                           "title·H1·주제는 바꾸지 않습니다"])),
     # 분해 수집은 gsc_snapshots 와 수집일이 어긋날 수 있다(분해 수집을 끄면 뒤처진다)
@@ -5469,7 +5469,7 @@ _KIND_SPECS = {
         play=dict(
             none=dict(
                 what="추적은 하는데 노출도 순위도 없습니다. 제목·H1 에 이 주제가 든 지면은 "
-                     "찾지 못했습니다 — 사이트에 아예 없다는 뜻은 아닙니다.",
+                     "찾지 못했습니다. 사이트에 아예 없다는 뜻은 아닙니다.",
                 acts=["이 클러스터를 다루는 페이지가 실제로 있는지 사이트(저장소·사이트맵)에서 "
                       "먼저 찾습니다.",
                       "없으면 대표 글 하나부터 만듭니다. 클러스터 전체를 한 번에 찍지 않습니다.",
@@ -5478,7 +5478,7 @@ _KIND_SPECS = {
                          "찍지 않습니다"]),
             covered=dict(
                 what="추적하는 키워드가 노출도 순위도 없습니다. 하지만 이 주제를 다루는 지면은 "
-                     "이미 있습니다 — 지면이 없어서가 아니라, 그 지면이 이 키워드들의 의도에 "
+                     "이미 있습니다. 지면이 없어서가 아니라, 그 지면이 이 키워드들의 의도에 "
                      "답하지 않거나 순위에 못 든 것입니다.",
                 acts=["그 지면을 열어, 묶인 키워드마다 이 지면에 그 의도에 답하는 구간이 있는지 "
                       "봅니다.",
@@ -5486,13 +5486,13 @@ _KIND_SPECS = {
                       "맞는 것 · 이 사이트가 맡을 수 없는 것(지역·시술 범위 밖, 광고 규정에 "
                       "걸리는 표현).",
                       "새 글을 만들지 않습니다. 같은 주제의 두 번째 지면은 한 검색어를 나눠 갖습니다."],
-                deliver=["키워드 분류 표 — 키워드 | 월 검색량 | 이 지면에 이미 답이 있나"
+                deliver=["키워드 분류 표: 키워드 | 월 검색량 | 이 지면에 이미 답이 있나"
                          "(있음·부분·없음) | 처리(구간 추가 · 별도 글 제안 · 손대지 않음) | 이유 "
                          "한 줄. 위 근거의 키워드가 빠짐없이 한 줄씩 있어야 합니다",
-                         "구간 추가 문안 — '구간 추가'로 가른 키워드마다 넣을 H2(또는 H3) 문구, "
+                         "구간 추가 문안: '구간 추가'로 가른 키워드마다 넣을 H2(또는 H3) 문구, "
                          "그 구간이 답할 질문, 지금 어느 구간 뒤에 들어가는지, 그리고 그 구간에 "
                          "붙여 넣을 본문(근거 출처를 달고, 확인 못 한 사실은 [확인 필요])",
-                         "별도 글 제안 — 표에 한 줄로만 남깁니다. 이 답에서 설계하지 않습니다"]))),
+                         "별도 글 제안: 표에 한 줄로만 남깁니다. 이 답에서 설계하지 않습니다"]))),
     # ── 여기까지가 GSC·색인에서 나오는 기회다. 아래는 나머지 네 화면의 재료 —
     #    라벨(KIND_LABEL)과 플레이북(PLAY)은 이미 있었는데 만드는 쪽이 없어서
     #    [AI 인용]·[경쟁 검색어]·[백링크]·[사이트 점검] 이 점수도 트리아지도 못 가졌다.
@@ -5514,8 +5514,8 @@ _KIND_SPECS = {
             + (f". 이름만 나온 것은 {r['named_only']}건입니다" if r["named_only"] else "")
             + (f". 대신 인용되는 곳: {ai_rivals_text(r['rivals'], r['misses'])}"
                if r["rivals"] else "")
-            + (" — 대부분 제3자 플랫폼입니다" if r.get("lean") == "third_party" else
-               " — 대부분 언론입니다" if r.get("lean") == "press" else "")
+            + (". 대부분 제3자 플랫폼입니다" if r.get("lean") == "third_party" else
+               ". 대부분 언론입니다" if r.get("lean") == "press" else "")
             + (f" (AI 확인 {str(r['measured_at'])[:10]} 기준)"
                if r.get("measured_at") else "")),
         # 처방이 대신 인용된 곳의 갈래로 갈린다(ai_tally 의 lean) — 제3자 플랫폼이
@@ -5549,16 +5549,16 @@ _KIND_SPECS = {
             # 기사에서 우리를 출처로 삼게 하는 것이다(전문가 코멘트·자료).
             "press": dict(
                 what="챗봇이 이 질문에서 내 사이트 대신 신문·방송·매거진 기사를 출처로 씁니다. "
-                     "그 기사는 우리가 고칠 수 없습니다 — 다음 기사에 우리 전문가·자료가 "
+                     "그 기사는 우리가 고칠 수 없습니다. 다음 기사에 우리 전문가·자료가 "
                      "출처로 실리게 하는 것이 일입니다.",
                 acts=["대신 인용된 언론 중 가장 잦은 한두 곳과, 이 주제를 쓴 기자·섹션을 찾습니다.",
-                      "그 기사들이 누구를 전문가로 인용했는지 봅니다 — 그 자리가 우리 자리입니다.",
+                      "그 기사들이 누구를 전문가로 인용했는지 봅니다. 그 자리가 우리 자리입니다.",
                       "기자가 쓸 수 있는 것을 준비합니다: 실명 전문가 코멘트, 우리만 가진 수치·"
                       "사례(개인정보 없이), 확인 가능한 1차 출처.",
                       "기사가 링크할 근거 페이지가 우리 사이트에 있는지 보고, 없으면 그것부터 만듭니다."],
                 deliver=["언론별 계획 표: 매체 · 이 주제를 다룬 기사(모르면 [확인 필요]) · 그 기사가 "
                          "인용한 전문가 · 우리가 줄 수 있는 것",
-                         "기자에게 보낼 짧은 제안문 한 벌 — 광고·기사 거래가 아니라 코멘트·자료 제공",
+                         "기자에게 보낼 짧은 제안문 한 벌: 광고·기사 거래가 아니라 코멘트·자료 제공",
                          "기사가 링크할 만한 우리 근거 페이지(없으면 먼저 만들 것)",
                          "4주 순서표와 다음 AI 확인에서 볼 신호"])}),
     "aio_exposure": dict(
@@ -5645,12 +5645,12 @@ _KIND_SPECS = {
                  "콘텐츠가 아닐 수 있습니다.",
             acts=["막는 것이 의도였는지 먼저 정합니다. 학습을 거부하려던 것이라면 이 봇이 "
                   "아니라 학습 전용 봇(GPTBot·ClaudeBot·Google-Extended·CCBot 등)만 막으면 "
-                  "됩니다 — 학습만 막는 것은 인용과 무관한 흔한 선택입니다.",
+                  "됩니다. 학습만 막는 것은 인용과 무관한 흔한 선택입니다.",
                   "열기로 했으면 robots.txt 에서 그 User-agent 의 Disallow 를 지웁니다. "
                   "User-agent: * 로 한꺼번에 막혀 있으면 그 봇 이름으로 묶음을 따로 둡니다.",
                   "고친 뒤 robots.txt 를 직접 열어 확인하고, 다음 크롤에서 이 항목이 "
                   "사라지는지 봅니다."],
-            deliver=["고칠 robots.txt 줄 — 지금 값과 바꿀 값을 그대로",
+            deliver=["고칠 robots.txt 줄: 지금 값과 바꿀 값을 그대로",
                      "막힌 봇을 열면 무엇이 달라지고 무엇을 내주는지 한 줄씩",
                      "(글은 손대지 않습니다. 막힌 채로는 고쳐도 안 읽힙니다)"])),
     "backlink_prospect": dict(
@@ -5690,7 +5690,7 @@ _KIND_SPECS = {
                   "글쓴이·편집부 연락처를 찾습니다. 기사면 기자 이메일, 블로그면 소개란·댓글입니다.",
                   "짧게 고맙다고 하고, 그 이름에 링크 하나를 걸어 줄 수 있는지 묻습니다. "
                   "한 통에 부탁 하나입니다."],
-            deliver=["보낼 연락문 한 벌(제목·본문) — 우리 이름이 나온 문장을 짚어서",
+            deliver=["보낼 연락문 한 벌(제목·본문): 우리 이름이 나온 문장을 짚어서",
                      "그 이름에 걸 우리 페이지 주소와 고른 이유 한 줄"])),
 }
 
@@ -5855,7 +5855,7 @@ def _resolve_aio(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
     # 채웠다(gucci: 한때 미국 검색어로 잰 sneakers·bamboo 가 추적에서 빠진 뒤에도 할 일로 남았다).
     # "추적을 그만뒀다"는 긍정된 사실이다 — 다시 켜면 다음 순위 확인에서 다시 선다(aio_gaps).
     if not kw[1]:
-        return _out("추적 키워드에서 뺀 검색어라 더 재지 않습니다 — 다시 추적하면 다음 순위 확인에서 다시 판단합니다")
+        return _out("추적 키워드에서 뺀 검색어라 더 재지 않습니다. 다시 추적하면 다음 순위 확인에서 다시 판단합니다")
     r = conn.execute(
         """SELECT checked_at, position, aio_present, aio_cited FROM rank_snapshots
             WHERE keyword_id=? ORDER BY replace(checked_at,'T',' ') DESC, id DESC LIMIT 1""",
@@ -5878,11 +5878,11 @@ def _resolve_aio(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
         # 기회가 선 뒤에 잰 '없음'은 순위 밖으로 **밀린 것**이다 — 오진이 아니라 나빠진 것일 수
         # 있어 판단 중단(out)이다. 선 시점 이전의 '없음'은 옛 규칙이 순위 밖 검색어에 세운 줄이다.
         if _after_ts(r["checked_at"], since):
-            return _out(f"순위 조회 깊이 밖으로 밀렸습니다 ({str(r['checked_at'])[:10]} 순위 확인) — 구글 AI "
+            return _out(f"순위 조회 깊이 밖으로 밀렸습니다 ({str(r['checked_at'])[:10]} 순위 확인). 구글 AI "
                         f"요약은 상위 페이지에서 출처를 뽑으니 지금은 요약이 아니라 순위 문제입니다. 순위에 "
                         f"들면 다음 순위 확인에서 다시 판단합니다")
         return _misjudged(f"순위 조회 깊이 안에 우리 페이지가 없는 검색어입니다 ({str(r['checked_at'])[:10]} "
-                          f"순위 확인) — 구글 AI 요약은 상위 페이지에서 출처를 뽑으니 요약이 아니라 순위 "
+                          f"순위 확인). 구글 AI 요약은 상위 페이지에서 출처를 뽑으니 요약이 아니라 순위 "
                           f"문제입니다. 순위에 들면 다음 순위 확인에서 다시 판단합니다")
     if not r or not _after_ts(r["checked_at"], since):
         return None
@@ -5989,7 +5989,7 @@ def _resolve_ctr(conn, pid: int, target: str, since: str, ctx: dict) -> str | No
     expected = EXPECTED_CTR[min(max(round(pos), 1), STRIKING_HI)]
     actual = (r["clk"] or 0) * 100.0 / r["imp"]
     if actual >= expected * CTR_GAP_FACTOR:
-        return _better(f"{pos}위에서 클릭률 {round(actual, 2)}% — 이 순위 기대치 {expected}%의 "
+        return _better(f"{pos}위에서 클릭률 {round(actual, 2)}%, 이 순위 기대치 {expected}%의 "
                        f"절반을 넘었습니다 (구글 실적 {cur} 기준)")
     return None
 
@@ -6049,7 +6049,7 @@ def _resolve_index(conn, pid: int, target: str, since: str, ctx: dict) -> str | 
             WHERE project_id=? AND url=? ORDER BY checked_date DESC LIMIT 1""",
         (pid, target)).fetchone()
     if r and _redirected(r["coverage_state"]):
-        return _misjudged(f"색인 막힘이 아닙니다 — 정상 리다이렉트·대체 페이지입니다: {r['coverage_state']} "
+        return _misjudged(f"색인 막힘이 아닙니다. 정상 리다이렉트·대체 페이지입니다: {r['coverage_state']} "
                           f"(색인 확인 {r['checked_date']})")
     if not r or not _after_day(r["checked_date"], since):
         return None
@@ -6109,7 +6109,7 @@ def _resolve_content_gap(conn, pid: int, target: str, since: str, ctx: dict) -> 
             else ROLES.get(role[0]) if role and role[0] else None)
     return _misjudged(f"근거였던 {dom} 은(는) " + (f"{what}(으)로 판정돼 경쟁사가 아닙니다" if what
                                                 else "더는 경쟁사 목록에 없습니다")
-                      + " — 지금의 경쟁사 격차에서는 이 검색어가 서지 않습니다")
+                      + ". 지금의 경쟁사 격차에서는 이 검색어가 서지 않습니다")
 
 
 def _resolve_backlink_broken(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
@@ -6121,7 +6121,7 @@ def _resolve_backlink_broken(conn, pid: int, target: str, since: str, ctx: dict)
     학습 전용 봇(_resolve_ai_bot)처럼 '애초에 이 종류가 아니었다'는 판정이라 새 데이터를 안 기다린다."""
     why = _backlink_codes_say(conn, pid, target, since)
     if why is None and _is_home(target):
-        return _misjudged("사이트 홈은 깨진 백링크로 되찾을 주소가 아닙니다 — 홈의 가장 가까운 페이지는 홈 "
+        return _misjudged("사이트 홈은 깨진 백링크로 되찾을 주소가 아닙니다. 홈의 가장 가까운 페이지는 홈 "
                           "자신이라 301 할 곳이 없고, 홈이 정말 안 열리면 사이트의 문제입니다")
     return why
 
@@ -6138,7 +6138,7 @@ def _backlink_codes_say(conn, pid: int, target: str, since: str) -> str | None:
                                                        for c in codes):
         return None
     if codes <= set(collect_page.BLOCK_STATUS):
-        return _misjudged(f"이 주소는 크롤러를 막았을 뿐입니다(응답 {', '.join(map(str, sorted(codes)))}) — "
+        return _misjudged(f"이 주소는 크롤러를 막았을 뿐입니다(응답 {', '.join(map(str, sorted(codes)))}). "
                           f"깨진 링크가 아닙니다 (백링크 {d} 기준)")
     return _better(f"이 주소가 응답합니다(응답 {', '.join(map(str, sorted(codes)))}) (백링크 {d} 기준)")
 
@@ -6158,7 +6158,7 @@ def _resolve_ai_bot(conn, pid: int, target: str, since: str, ctx: dict) -> str |
     if not cr or not _after_ts(cr["started_at"], since):
         return None
     if ai_bot_purpose(target) == "training":
-        return _misjudged(f"{target} 는 학습 전용 크롤러라 막아도 인용과 무관합니다 — 기회가 아닙니다 "
+        return _misjudged(f"{target} 는 학습 전용 크롤러라 막아도 인용과 무관합니다. 기회가 아닙니다 "
                           f"(크롤 #{cr['id']})")
     txt = cr["robots_txt"] or ""
     if not re.search(r"(?im)^\s*user-agent\s*:", txt):
@@ -6216,7 +6216,7 @@ def _pseo_reason_frames(reasoning: str) -> set[tuple]:
     r = str(reasoning or "")
     if not r.startswith(PSEO_REASON_HEAD):
         return set()
-    return {_pseo_frame_key(f) for f in re.findall(r"'([^']*)'", r[len(PSEO_REASON_HEAD):].split(" — ")[0])}
+    return {_pseo_frame_key(f) for f in re.findall(r"'([^']*)'", r[len(PSEO_REASON_HEAD):].split(" — ")[0].split(". 바뀌는 값")[0])}
 
 
 def _resolve_pseo(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
@@ -6247,7 +6247,7 @@ def _resolve_pseo(conn, pid: int, target: str, since: str, ctx: dict) -> str | N
         if g and g["seed"] in ctx.get("_pseo_run_seeds", ()) and g["seed"] != t:
             return _merged(f"씨앗이던 이 검색어가 이번 구글 실적에서 무리의 값에서 빠져(노출 {PSEO_VALUE_MIN_IMP} "
                            f"미만이거나 다른 틀이 가져갔습니다) 같은 틀({pseo_frame_label(g)})의 새 씨앗 "
-                           f"'{g['seed']}' 줄로 합쳤습니다 — 할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
+                           f"'{g['seed']}' 줄로 합쳤습니다. 할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
     if not g or len(pseo_todo(g)) >= PSEO_MIN_TODO:
         return None
     have = [v for v in g["values"] if v.get("own")]
@@ -6257,7 +6257,7 @@ def _resolve_pseo(conn, pid: int, target: str, since: str, ctx: dict) -> str | N
     rest = (" · 전용 페이지 없는 값은 " + ", ".join(f"'{v['value']}'" for v in left)
             + " 하나뿐입니다") if left else ""
     return _better(f"이 무리({pseo_frame_label(g)})는 값마다 이미 전용 페이지가 순위에 걸려 있습니다({shown}"
-                   f"{rest}) — 템플릿은 이미 있고, 남은 일은 값마다의 클릭률·순위라 그 검색어의 클릭률·순위 "
+                   f"{rest}). 템플릿은 이미 있고, 남은 일은 값마다의 클릭률·순위라 그 검색어의 클릭률·순위 "
                    f"기회가 맡습니다 (구글 실적 {cur} 기준)")
 
 
@@ -6279,15 +6279,15 @@ _RESOLVERS = {
 }
 # 자동 해소에서 뺀 종류와 그 이유 — 규칙을 세울 수 없거나, 세우면 살아 있는 것을 닫는다.
 _NO_RESOLVE = {
-    "cannibalization": "풀렸다는 증거가 '둘째 페이지 줄이 없다'는 부재다 — 301 로 합친 것과 "
+    "cannibalization": "풀렸다는 증거가 '둘째 페이지 줄이 없다'는 부재다. 301 로 합친 것과 "
                        "GSC 행 상한에 잘린 것을 가르지 못한다",
-    "intent_split": "풀렸다는 증거가 '2위 의도 줄이 없다'는 부재다 — 지면을 갈라 옮겨 간 것과, "
+    "intent_split": "풀렸다는 증거가 '2위 의도 줄이 없다'는 부재다. 지면을 갈라 옮겨 간 것과, "
                     "그 묶음의 노출이 계절적으로 하한 밑으로 내려간 것을 가르지 못한다. 가르기는 "
                     "몇 주가 걸리는 일이라 그 사이의 부재를 완료로 읽으면 안 된다",
-    "coverage": "대상이 클러스터이고 그 구성은 키워드 큐레이션(켜기·끄기·재분류)으로 바뀐다 — "
+    "coverage": "대상이 클러스터이고 그 구성은 키워드 큐레이션(켜기·끄기·재분류)으로 바뀐다. "
                 "비었다는 것이 다룬 것인지 뺀 것인지 모른다",
     "crawl_issue": "크롤 상한에 안 든 주소는 안 보이고, 관계형 문제(중복·상호 참조)는 짝이 "
-                   "크롤돼야 잡힌다 — 이번 크롤에 문제가 없다는 것이 고쳐졌다는 뜻이 아니다",
+                   "크롤돼야 잡힌다. 이번 크롤에 문제가 없다는 것이 고쳐졌다는 뜻이 아니다",
 }
 
 
@@ -6343,7 +6343,7 @@ def kind_table_gaps() -> dict[str, list[str]]:
     for name, tbl in (("_KIND_SPECS", _KIND_SPECS), ("_RESOLVERS", _RESOLVERS),
                       ("RESOLVE_WHEN", RESOLVE_WHEN), ("_NO_RESOLVE", _NO_RESOLVE)):
         for k in sorted(set(tbl) - known):
-            add(k, f"scoring.{name} 에 ALL_KINDS 에 없는 이름이 남았다 — 지운 종류의 줄을 같이 지운다")
+            add(k, f"scoring.{name} 에 ALL_KINDS 에 없는 이름이 남았다. 지운 종류의 줄을 같이 지운다")
     for k in ALL_KINDS:
         if k not in _KIND_SPECS:
             add(k, "scoring._KIND_SPECS 에 명부 줄이 없다 (see·label·defensive·detect·metrics·target·reasoning·play)")
@@ -6370,7 +6370,7 @@ assert not kind_table_gaps(), kind_gap_message(kind_table_gaps())
 
 # 조건이 안 풀리는 흔한 경우 — 저절로 닫히는 종류인데도 사람이 닫아야 하는 갈래가 있으면.
 RESOLVE_ALSO = {
-    "content_gap": "경쟁사가 여전히 경쟁사면 저절로 닫히지 않습니다 — 할 일을 마치면 화면에서 "
+    "content_gap": "경쟁사가 여전히 경쟁사면 저절로 닫히지 않습니다. 할 일을 마치면 화면에서 "
                    "[완료]로 닫습니다.",
 }
 
@@ -6392,7 +6392,7 @@ def _pseo_rejudge(conn, pid: int, o, run_seeds: set[str], ctx: dict) -> str | No
     cur = _pseo_ctx(conn, pid, ctx)
     if not cur or (o["status_at"] and not _after_day(cur, o["status_at"])):
         return None
-    head = (f"{PSEO_RECHECK} — 템플릿 패턴은 이제 '고정 틀 + 바뀌는 칸'으로 묶어, 칸의 값이 수식어가 "
+    head = (f"{PSEO_RECHECK}. 템플릿 패턴은 이제 '고정 틀 + 바뀌는 칸'으로 묶어, 칸의 값이 수식어가 "
             f"아닌 개체로 {PSEO_MIN_VALUES}개 이상이고 값들의 수요가 고를 때(값 하나가 무리 노출의 "
             f"{PSEO_SEED_SHARE:.0%} 미만)만 섭니다. ")
     if is_search_operator(t):
@@ -6410,9 +6410,9 @@ def _pseo_rejudge(conn, pid: int, o, run_seeds: set[str], ctx: dict) -> str | No
         same = next((v for v in g["values"] if set(keys) & fold((v["query"], *v["variants"]))), None)
         # 씨앗과 같은 값(접은 한 검색어)이면 다른 값이 아니라 같은 검색어다 — 사유가 틀을 말하지 않는다
         if same and fold([g["seed"]]) & fold((same["query"], *same["variants"])):
-            return _merged(f"어순·복수형·띄어쓰기만 다른 같은 검색어인 씨앗 '{g['seed']}' 줄로 합쳤습니다 — "
+            return _merged(f"어순·복수형·띄어쓰기만 다른 같은 검색어인 씨앗 '{g['seed']}' 줄로 합쳤습니다. "
                            f"할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
-        return _merged(f"같은 틀({pseo_frame_label(g)})의 무리라 그 씨앗 '{g['seed']}' 줄로 합쳤습니다 — "
+        return _merged(f"같은 틀({pseo_frame_label(g)})의 무리라 그 씨앗 '{g['seed']}' 줄로 합쳤습니다. "
                        f"할 일은 그 줄 하나입니다 (구글 실적 {cur} 기준)")
     if g or not old:
         return None
@@ -6481,7 +6481,7 @@ def resolve_stale(conn: sqlite3.Connection, project_id: int, run_id: int | None,
                 continue
         twin = folded.get((o["kind"], norm(o["target"])))
         if twin and twin != o["target"]:
-            decisions.append((o["id"], _merged(f"띄어쓰기·대소문자만 다른 '{twin}' 줄로 합쳤습니다 — "
+            decisions.append((o["id"], _merged(f"띄어쓰기·대소문자만 다른 '{twin}' 줄로 합쳤습니다. "
                                                f"같은 검색어라 할 일은 그 줄 하나입니다")))
             continue
         rule = _RESOLVERS.get(o["kind"])

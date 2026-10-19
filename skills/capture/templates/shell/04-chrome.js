@@ -245,27 +245,36 @@ SM.api.nextRunning = (viewId, on) => {
 
 /* ── 토스트 ────────────────────────────────────────────────────────────
    눌렀는데 화면이 그대로면 눌렸는지 알 수 없다. 복사됨·실행 시작·실패를 우하단에
-   3초 띄운다. 여러 개면 쌓인다. role="status" 라 화면 낭독기도 같이 읽는다 —
+   3초 띄운다(실패는 읽을 틈이 있게 9초). 여러 개면 쌓인다. 컨테이너가 live 영역(role="status")이라
+   화면 낭독기도 같이 읽는다 —
    색만으로 성공과 실패를 가르지 않는다(글자가 정본이다).
    kind: "ok" | "bad" | 없음(중립). */
 SM.api.toast = (msg, kind) => {
   if (!msg) return;
-  let box = $("toasts");
-  if (!box) {
-    box = document.createElement("div");
-    box.id = "toasts";
-    document.body.appendChild(box);
-  }
+  let box = toastBox();
   const t = document.createElement("div");
   t.className = "toast" + (kind ? " " + kind : "");
-  t.setAttribute("role", "status");
   t.textContent = msg;
   // 다음 걸음 카드가 우하단에 떠 있으면 그 위로 쌓는다
   const nx = document.querySelector(".view:not([hidden]):not(#view-guide) > .next");
   box.style.bottom = nx && nx.offsetHeight ? `calc(var(--sp-4) + ${nx.offsetHeight + 8}px)` : "";
   box.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
+  setTimeout(() => t.remove(), kind === "bad" ? 9000 : 3000);
 };
+// 낭독기는 **이미 있던** live 영역에 글자가 들어올 때 읽는다 — 토스트와 같이 태어난 영역은 안 읽는다.
+// 그래서 컨테이너를 첫 토스트보다 먼저 세워 두고(아래 즉시 호출), 토스트 자신은 role 을 안 단다.
+function toastBox() {
+  let box = $("toasts");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "toasts";
+    box.setAttribute("role", "status");
+    box.setAttribute("aria-live", "polite");
+    document.body.appendChild(box);
+  }
+  return box;
+}
+if (document.body) toastBox();
 
 /* 단계 하나를 실행하는 버튼. 배포가 모양을 고른다 — 로컬에는 누를 서버가 없고
    (명령을 복사해 채팅에 붙인다), 호스팅에는 칠 채팅이 없다(버튼이 서버를 부른다).

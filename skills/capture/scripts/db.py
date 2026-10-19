@@ -1604,7 +1604,7 @@ def site_country_judge(conn: sqlite3.Connection, project_id: int):
 def get_project(conn: sqlite3.Connection, name: str) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM projects WHERE name=?", (name,)).fetchone()
     if not row:
-        raise ProjectNotFound(f"'{name}' 사이트가 아직 등록되지 않았습니다 — "
+        raise ProjectNotFound(f"'{name}' 사이트가 아직 등록되지 않았습니다. "
                               f"먼저 `/capture add {name}` 으로 등록하세요 "
                               "(수동: python db.py register <이름> <도메인>)")
     return row
@@ -3494,7 +3494,7 @@ def move_keywords_market(conn: sqlite3.Connection, project_id: int, ids, locale:
     자리가 없었다(2026-10-15). each(시장 하나의 상한)를 주면 켜진 키워드를 옮겨 그 시장 한도를
     넘기지 않는다 — 넘치면 ValueError(무엇이 넘치는지 사람 말로). 커밋은 호출자가 한다."""
     if locale not in site_locales(conn, project_id):
-        raise ValueError("이 사이트의 시장이 아닙니다 — [설정]에서 시장을 먼저 더하세요.")
+        raise ValueError("이 사이트의 시장이 아닙니다. [설정]에서 시장을 먼저 더하세요.")
     ids = [int(i) for i in ids]
     rows = conn.execute(
         f"SELECT id, is_active, COALESCE(locale, ?) loc FROM keywords WHERE project_id=?"
@@ -3512,7 +3512,7 @@ def move_keywords_market(conn: sqlite3.Connection, project_id: int, ids, locale:
             import serp_adapter
             raise ValueError(
                 f"{serp_adapter.locale_label(locale)} 시장은 추적 {used}/{cap}개라 켜진 검색어 "
-                f"{add}개를 더 옮길 자리가 없습니다 — 그 시장에서 몇 개를 끄거나, 꺼진 것만 옮기세요.")
+                f"{add}개를 더 옮길 자리가 없습니다. 그 시장에서 몇 개를 끄거나, 꺼진 것만 옮기세요.")
     n = 0
     for r in moving:
         if set_keyword_locale(conn, r["id"], locale, "manual"):

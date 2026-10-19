@@ -801,7 +801,7 @@ def blocked(status) -> bool:
 
 def blocked_note(host: str, n: int) -> str:
     """전부 막혔을 때의 사유 한 벌 — 페이지 점검·크롤이 같은 말을 한다."""
-    return (f"{host} 이 이 서버의 요청에 응답하지 않습니다 — 주소 {n}개 전부 시간 초과·거부. "
+    return (f"{host} 이 이 서버의 요청에 응답하지 않습니다. 주소 {n}개 전부 시간 초과·거부. "
             "봇 차단(방화벽)이거나 사이트가 내려가 있습니다. 막는 동안 이 단계는 비어 있고, "
             "우리 쪽에서 고칠 수 있는 문제가 아닙니다.")
 
@@ -976,7 +976,7 @@ def collect(project: str, *,
         gone = recent_gone(conn, p["id"])
         urls = target_urls(conn, p["id"], limit)
         if not urls:
-            return st.skip("감사할 페이지가 없습니다 — 먼저 gsc 를 수집하세요"
+            return st.skip("감사할 페이지가 없습니다. 먼저 gsc 를 수집하세요"
                            " (page 분해가 있어야 어느 URL 인지 알 수 있습니다).")
 
         print(f"[pages] URL {len(urls)}개 · 비용 없음 · 내 사이트 직접 조회 "

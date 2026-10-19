@@ -105,7 +105,19 @@ const chMake = cv => {
   try {
     cv._chart = new Chart(cv, build(chT()));
     cv.dataset.chOk = "1";                       // 섰다 — test_render 가 이 표식을 본다
-  } catch (e) { setTimeout(() => { throw e; }); }   // 하나가 죽어도 나머지는 선다. 오류는 그대로 올린다
+  } catch (e) {
+    setTimeout(() => { throw e; });                 // 하나가 죽어도 나머지는 선다. 오류는 그대로 올린다
+    // 빈 상자만 남기면 차트가 없는지 고장인지 모른다 — 이유 한 줄을 그 자리에 둔다.
+    const w = cv.parentNode;
+    if (w && !w.querySelector("[data-ch-err]")) {
+      // hidden 속성은 `.chwrap canvas{display:block}` 에 진다 - 인라인으로 숨기고, 고정 높이
+      // 상자(overflow:hidden)를 풀어야 문구가 잘리지 않는다.
+      cv.style.display = "none";
+      w.style.height = "auto";
+      w.insertAdjacentHTML("beforeend", `<p class="msg bad" role="alert" data-ch-err>` +
+        `차트를 그리지 못했습니다. [화면 다시 불러오기]를 누르면 다시 그립니다.</p>`);
+    }
+  }
 };
 const chEach = (n, f) => {
   if (n.nodeType !== 1) return;
@@ -177,7 +189,7 @@ SM.api.chStackRow = (rows, opt = {}) => {
   const total = rows.reduce((s, r) => s + Math.max(0, r.value || 0), 0);
   const legend = `<div class="chleg">${rows.map(r => `<span><i style="background:${chTone(r.tone)}"></i>${esc(r.label)}
     ${chVal(r.value, unit)}</span>`).join("")}</div>`;
-  const aria = total > 0 ? `구성비 — ${rows.map(r =>
+  const aria = total > 0 ? `구성비: ${rows.map(r =>
     `${r.label} ${(Math.max(0, r.value || 0) / total * 100).toFixed(0)}%`).join(", ")}` : "데이터 없음";
   const last = rows.length - 1;
   const pct = r => (Math.max(0, r.value || 0) / total * 100).toFixed(0);
@@ -196,7 +208,7 @@ SM.api.chStackRow = (rows, opt = {}) => {
           y: {stacked: true, display: false}},
         plugins: {legend: {display: false}, tooltip: total > 0
           ? chTipSays(T, {callbacks: {title: () => "", label: c =>
-              `${c.dataset.label} — ${chVal(rows[c.datasetIndex].value, unit)} (${pct(rows[c.datasetIndex])}%)`}})
+              `${c.dataset.label}: ${chVal(rows[c.datasetIndex].value, unit)} (${pct(rows[c.datasetIndex])}%)`}})
           : {enabled: false}}}};
   }, aria, "height:30px") + legend;
 };
@@ -206,7 +218,7 @@ SM.api.chStackRow = (rows, opt = {}) => {
 SM.api.chBarList = (rows, opt = {}) => {
   if (!rows || !rows.length) return "";
   const unit = opt.unit || "";
-  const aria = `${rows.length}개 항목 — ` + rows.map(r => `${r.label} ${chVal(r.value, unit)}`).join(", ");
+  const aria = `${rows.length}개 항목: ` + rows.map(r => `${r.label} ${chVal(r.value, unit)}`).join(", ");
   return chMount(T => ({type: "bar",
     data: {labels: rows.map(r => r.label), datasets: [{data: rows.map(r => Math.abs(r.value || 0)),
       backgroundColor: rows.map(r => r.flag ? T.copper : T.patina),
@@ -231,7 +243,7 @@ SM.api.chDonut = (rows, opt = {}) => {
   const onSum = rows.filter(r => r.on).reduce((s, r) => s + Math.max(0, r.value || 0), 0);
   const centerPct = total > 0 && onSum > 0 ? `${Math.round(onSum / total * 100)}%` : "";
   const pct = r => total > 0 ? ` (${(Math.max(0, r.value || 0) / total * 100).toFixed(0)}%)` : "";
-  const aria = total > 0 ? `도넛 — ${rows.map(r =>
+  const aria = total > 0 ? `도넛: ${rows.map(r =>
     `${r.label} ${(Math.max(0, r.value || 0) / total * 100).toFixed(0)}%`).join(", ")}` : "데이터 없음";
   return chMount(T => ({type: "doughnut",
     data: {labels: rows.map(r => r.label), datasets: [{
@@ -259,7 +271,7 @@ SM.api.chFunnel = (steps, opt = {}) => {
   });
   const first = steps[0], last = steps[n - 1];
   const overall = first.value > 0 ? Math.round((1 - last.value / first.value) * 100) : 0;
-  const aria = `${n}단계 퍼널 — ${first.label} ${chVal(first.value, unit)}에서 `
+  const aria = `${n}단계 퍼널: ${first.label} ${chVal(first.value, unit)}에서 `
     + `${last.label} ${chVal(last.value, unit)}까지, 총 ${overall}% 감소`;
   return chMount(T => ({type: "bar",
     data: {labels: steps.map(s => s.label), datasets: [{data: steps.map(s => s.value || 0),
@@ -294,7 +306,7 @@ SM.api.chDumbbell = (groups, opt = {}) => {
   });
   const maxK = Math.max(0, ...G.map(g => g.items.length));
   const titled = groups.some(g => g.title);
-  const aria = `작은 배수 ${groups.length}개 — ` + groups.map((g, gi) => g.title
+  const aria = `작은 배수 ${groups.length}개: ` + groups.map((g, gi) => g.title
     || G[gi].items.map((it, k) => `${it.label} ${chVal(G[gi].vals[k], unit)}`).join(" · ")).join(", ");
   return chMount(T => ({type: "bar",
     data: {labels: groups.map(g => g.title || ""), datasets: [
@@ -310,7 +322,7 @@ SM.api.chDumbbell = (groups, opt = {}) => {
       scales: {x: {min: -0.03, max: 1.03, display: false}, y: {...chCat(T), display: titled}},
       plugins: {legend: {display: false},
         tooltip: chTipSays(T, {filter: c => c.dataset.type === "scatter",
-          callbacks: {title: () => "", label: c => `${c.raw.label} — ${chVal(c.raw.v, unit)}`}})}}}),
+          callbacks: {title: () => "", label: c => `${c.raw.label}: ${chVal(c.raw.v, unit)}`}})}}}),
     aria, `height:${groups.length * 44 + 8}px`);
 };
 
@@ -322,7 +334,7 @@ SM.api.chLine = (series, opt = {}) => {
   const ys = series.map(p => p.y || 0);
   const mn = Math.min(...ys, 0);
   const last = series[series.length - 1];
-  const aria = `${series.length}개 지점 추이 — 최근 ${String(last.x)} ${chVal(last.y, unit)}`;
+  const aria = `${series.length}개 지점 추이, 최근 ${String(last.x)} ${chVal(last.y, unit)}`;
   return chMount(T => ({type: "line",
     data: {labels: series.map(p => String(p.x)), datasets: [{data: ys,
       borderColor: T.patina, borderWidth: 2, fill: "start", tension: .35, cubicInterpolationMode: "monotone",

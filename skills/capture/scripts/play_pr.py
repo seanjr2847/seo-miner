@@ -86,7 +86,7 @@ def instructions(play: dict, project: str) -> str:
     br = BRANCH.format(id=pid)
     kws = ", ".join(str(k) for k in (play.get("keywords") or []))
     return (
-        f"# 적용 작업 — {project} · 이번 달 할 일 #{pid}\n\n"
+        f"# 적용 작업: {project} · 이번 달 할 일 #{pid}\n\n"
         "아래 '---' 뒤의 수정안 문서를 이 저장소에 그대로 적용하고 PR 을 엽니다. "
         "사람이 지켜보지 않으니 묻지 말고 끝까지 진행합니다.\n\n"
         f"1. 커밋 안 된 변경이 있으면 아무것도 바꾸지 말고 멈춥니다(마지막 줄: `실패: 커밋 안 된 변경이 있습니다`).\n"
@@ -117,7 +117,7 @@ def parse_result(log: str, code: int | None) -> tuple[str | None, str]:
         return None, said[len("실패:"):].strip() or "이유를 안 남겼습니다"
     tail = lines[-1][:200] if lines else ""
     why = f"PR 주소를 못 받았습니다(종료 코드 {code})"
-    return None, why + (f" — {tail}" if tail else "")
+    return None, why + (f": {tail}" if tail else "")
 
 
 # ── 상태 파일 ───────────────────────────────────────────────────────────────
@@ -162,15 +162,15 @@ def ready(project: str) -> dict:
     exe = _which(tool[2]) if tool else None
     if not exe:
         label = tool[1] if tool else doctor.PR_TOOL
-        return {"ok": False, "fix": "", "why": f"{label} 이(가) 이 PC 에 없습니다 — PR 자동 "
+        return {"ok": False, "fix": "", "why": f"{label} 이(가) 이 PC 에 없습니다. PR 자동 "
                                               f"적용은 {label} 로 돕니다. 설치한 뒤 다시 누르세요."}
     if not _which("gh"):
-        return {"ok": False, "fix": "", "why": "GitHub CLI(gh)가 이 PC 에 없습니다 — 설치하고 "
+        return {"ok": False, "fix": "", "why": "GitHub CLI(gh)가 이 PC 에 없습니다. 설치하고 "
                                               "gh auth login 까지 하면 PR 을 열 수 있습니다."}
     d = paths.site_dirs().get(project)
     if not d or not Path(d).is_dir():
         return {"ok": False, "fix": "settings",
-                "why": "이 사이트의 저장소 폴더를 아직 안 정했습니다 — [설정]의 사이트별 "
+                "why": "이 사이트의 저장소 폴더를 아직 안 정했습니다. [설정]의 사이트별 "
                        "로컬 폴더에 적으면 PR 을 그 폴더에서 만듭니다."}
     if not (Path(d) / ".git").exists():      # 워크트리면 .git 이 파일이다 — exists 로 둘 다 받는다
         return {"ok": False, "fix": "settings",
@@ -296,7 +296,7 @@ def apply(body: dict, *, load, record, mark) -> dict:
             return {"ok": False, "error": "이 할 일은 이미 PR 을 만들었습니다."}
         md_text = (play.get("markdown") or "").strip()
         if not md_text:
-            return {"ok": False, "error": "이 할 일에는 수정안 문서가 없습니다 — 할 일을 다시 "
+            return {"ok": False, "error": "이 할 일에는 수정안 문서가 없습니다. 할 일을 다시 "
                                           "만든 뒤 눌러 주세요."}
 
         box = _box(project)

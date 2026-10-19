@@ -25,11 +25,9 @@
 
 /* ── 걸음 카드(8열) ───────────────────────────────────────── */
 #start .step { grid-column:1 / span 8; grid-row:2; padding:28px; min-width:0; }
-#start .st-head { display:flex; align-items:flex-start; justify-content:space-between;
-  gap:16px; margin-bottom:24px; }
+#start .st-head { margin-bottom:24px; }
 #start .st-head h2 { margin:0 0 4px; }
 #start .st-head .sub { margin:0; }
-#start .st-no { flex:none; font-variant-numeric:tabular-nums; }
 
 .form { display:grid; gap:20px; }
 .field { display:grid; gap:8px; min-width:0; }
@@ -61,7 +59,7 @@ textarea { resize:vertical; min-height:96px; }
 #start .alt .alt-t span { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); }
 #start .alt .go.sec { background:var(--card); }
 #start .alt .props { grid-column:1 / -1; margin-top:4px; background:var(--card); }
-/* .props 의 display:grid 가 [hidden] 을 이긴다 — entry 의 .ptool·.act 와 같은 함정. */
+/* .props 의 display:grid 가 [hidden] 을 이긴다 — entry 의 .act 와 같은 함정. */
 #start .alt .props[hidden] { display:none; }
 code { font:500 .95em var(--mono); }
 
@@ -72,20 +70,11 @@ code { font:500 .95em var(--mono); }
 #start .prop:hover { background:var(--card); }
 #start .prop.on { background:var(--accent-wash); }
 #start .prop + .prop { border-top:1px solid var(--line); }
-#start .prop .av { flex:none; }
 #start .empty { background:var(--sunk); box-shadow:none; }
 #start .empty.err { background:var(--warn-wash); }
 #start .empty.info { background:var(--accent-wash); }
 #start .empty.err .go.sec, #start .empty.info .go.sec { background:var(--card); }
 #start .empty .go.sec { background:var(--card); box-shadow:none; }
-
-/* 이니셜 아바타 — 파비콘 자리다. 색은 첫 글자로 두 색조 중 하나 */
-#start .av { width:32px; height:32px; border-radius:50%; display:inline-flex; align-items:center;
-  justify-content:center; font:700 var(--fs-2)/1 var(--sans); background:var(--accent-wash);
-  color:var(--accent); text-transform:none; }
-#start .av.i { background:var(--info-wash); color:var(--info); }
-#start .av.lg { width:44px; height:44px; font-size:var(--fs-3); }
-#start .av.none { background:var(--card); color:var(--sub); }
 
 /* 3단계 — 지금 되는 것 / 붙이면 더해지는 것. 색조 면 둘이라 "없어도 된다"가 먼저 온다. */
 .gain { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));
@@ -107,7 +96,9 @@ code { font:500 .95em var(--mono); }
 /* ── 4단계 — 진행 링 카드. 첫 분석이 도는 순간이 온보딩의 유일한 기다림이라 화면에서 가장 크다.
    걸음 카드 자체가 옅은 강조 면이 되고, 링은 흰 트랙 위에 그린다. ── */
 #start #s4 { background:var(--accent-wash); padding:36px; }
-#start #s4 .st-no { background:var(--card); }
+#start .badge.bad { color:var(--dn); background:var(--dn-wash); }
+#start #s4.failed .ring .val { stroke:var(--dn); }
+#start #retry4[hidden] { display:none; }
 .runbox { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:40px; padding:8px 0; }
 .runbox .ring { position:relative; width:216px; height:216px; flex:none; }
 .runbox .ring svg { width:100%; height:100%; transform:rotate(-90deg); display:block; }
@@ -115,9 +106,9 @@ code { font:500 .95em var(--mono); }
 .runbox .ring .val { stroke:var(--accent); transition:stroke-dashoffset .5s ease; }
 .runbox .ring .ctr { position:absolute; inset:0; display:flex; align-items:center;
   justify-content:center; font:700 var(--fs-5)/1 var(--sans);
-  font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+  font-variant-numeric:tabular-nums; }
 .runbox .ring .ctr span { font:700 var(--fs-4)/1 var(--sans); }
-.runbox .ring .ctr small { font:600 var(--fs-3)/1 var(--sans); color:var(--sub); margin-left:2px; letter-spacing:0; }
+.runbox .ring .ctr small { font:600 var(--fs-3)/1 var(--sans); color:var(--sub); margin-left:2px; }
 .runbox .info { display:grid; gap:14px; min-width:0; }
 .runbox .top { display:grid; gap:10px; justify-items:start; }
 .runbox .dom { font:600 var(--fs-4)/1.3 var(--mono); overflow-wrap:anywhere; }
@@ -133,7 +124,6 @@ code { font:500 .95em var(--mono); }
 
 /* ── 미리보기 카드(4열): 입력이 결과 카드가 되는 과정을 보여 준다 ─── */
 #pv { grid-column:9 / -1; grid-row:2; padding:24px; display:grid; gap:20px; align-content:start; min-width:0; }
-#pv .pv-h { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
 #pv .pv-h > div { display:grid; gap:2px; }
 #pv .pv-h b { font:650 var(--fs-3)/1.4 var(--sans); }
 #pv .pv-h span { font-size:var(--fs-1); color:var(--sub); }
@@ -166,7 +156,7 @@ code { font:500 .95em var(--mono); }
 #get4 { grid-column:9 / -1; grid-row:2; padding:28px 24px; gap:20px; align-content:start; min-width:0; }
 #get4 h3 { font:650 var(--fs-3)/1.4 var(--sans); margin:0; }
 #get4 .ls { display:grid; gap:18px; }
-#get4 .li { display:grid; grid-template-columns:auto minmax(0,1fr); gap:12px; align-items:start; }
+#get4 .li { min-width:0; }
 
 @media (prefers-reduced-motion: reduce) {
   #start .progress i, .runbox .ring .val { transition:none; }
@@ -181,14 +171,15 @@ code { font:500 .95em var(--mono); }
   #start #s4 { padding:24px 16px; }
   #pv, #get4 { padding:20px 16px; }
   #learn .lg { grid-template-columns:minmax(0,1fr); }
-  #learn .lc { grid-template-columns:auto minmax(0,1fr); align-items:center; padding:16px; gap:12px; }
-  #start .st-head { flex-direction:column-reverse; gap:8px; }
+  #learn .lc { padding:16px; gap:12px; }
   #start .alt { grid-template-columns:minmax(0,1fr); }
   /* 네 칸은 유지하고 지금 칸만 이름을 보인다 */
   #start .rail ol { gap:8px; }
   #start .rail li { gap:8px; grid-template-columns:auto; justify-content:start; }
   #start .rail li.here { flex:3 1 0; grid-template-columns:auto minmax(0,1fr); }
-  #start .rail li:not(.here) .nm { display:none; }
+  /* 이름은 화면 밖으로 치울 뿐 지우지 않는다 — 낭독기가 숫자만 읽지 않게. */
+  #start .rail li:not(.here) .nm { position:absolute; width:1px; height:1px; overflow:hidden;
+    clip:rect(0 0 0 0); white-space:nowrap; }
   .runbox { grid-template-columns:minmax(0,1fr); justify-items:start; gap:24px; }
   .runbox .ring { width:152px; height:152px; }
   .runbox .ring .ctr { font-size:var(--fs-4); }
@@ -221,13 +212,12 @@ code { font:500 .95em var(--mono); }
         <h2>어느 사이트를 볼까요?</h2>
         <p class="sub">주소만 있으면 시작합니다. 서치콘솔 권한이 없어도 됩니다.</p>
       </div>
-      <span class="badge muted st-no">1 / 4</span>
     </div>
     <form class="form" id="f1" novalidate>
       <label class="field"><span>사이트 주소</span>
         <input type="text" id="url" inputmode="url" autocomplete="url" spellcheck="false"
                placeholder="example.com" autofocus>
-        <p class="hint">나라·언어별 경로가 따로 있으면 경로까지 적으세요. 예: brand.com/kr/ko/ — 그 아래만 봅니다.</p>
+        <p class="hint">나라·언어별 경로가 따로 있으면 경로까지 적으세요. 예: brand.com/kr/ko/ 라고 적으면 그 아래만 봅니다.</p>
       </label>
       <div class="row">
         <label class="field"><span>사이트 종류</span><select id="type"></select></label>
@@ -241,7 +231,7 @@ code { font:500 .95em var(--mono); }
     </div>
     <div class="act">
       <button class="go" id="next1" type="submit" form="f1">다음</button>
-      <span class="msg" id="msg1"></span>
+      <span class="msg" id="msg1" role="status"></span>
     </div>
   </section>
 
@@ -252,7 +242,6 @@ code { font:500 .95em var(--mono); }
         <h2>어떤 검색어에서 보이고 싶나요?</h2>
         <p class="sub" id="sub2"></p>
       </div>
-      <span class="badge muted st-no">2 / 4</span>
     </div>
     <div class="form">
       <label class="field"><span>씨앗 키워드 · 한 줄에 하나</span>
@@ -268,7 +257,7 @@ code { font:500 .95em var(--mono); }
     <div class="act">
       <button class="go ghost" type="button" data-back="1">이전</button>
       <button class="go" id="next2" type="button">다음</button>
-      <span class="msg" id="msg2"></span>
+      <span class="msg" id="msg2" role="status"></span>
     </div>
   </section>
 
@@ -279,12 +268,10 @@ code { font:500 .95em var(--mono); }
         <h2>서치콘솔도 붙일까요?</h2>
         <p class="sub">없어도 바로 시작합니다. 권한이 있으면 붙여 두세요. 실제 클릭 수가 더해집니다.</p>
       </div>
-      <span class="badge muted st-no">3 / 4</span>
     </div>
     <div class="gain">
       <div class="now"><h3>지금 바로 되는 것</h3>
-        <ul><li>키워드 순위 · 검색량</li><li>경쟁사가 가져가는 검색어</li>
-            <li>AI 답변에 내 사이트가 나오는지</li><li>깨진 링크 · 페이지 점검 · 속도</li></ul></div>
+        <ul id="nowList"></ul></div>
       <div><h3>서치콘솔을 붙이면 더해지는 것</h3>
         <ul class="plus"><li>실제 클릭 · 노출 · 클릭률</li><li>조금만 밀면 1페이지 갈 검색어</li>
             <li>색인이 막힌 페이지</li></ul></div>
@@ -293,7 +280,7 @@ code { font:500 .95em var(--mono); }
     <div class="act">
       <button class="go ghost" type="button" data-back="2">이전</button>
       <button class="go" id="go" type="button">분석 시작</button>
-      <span class="msg" id="msg3"></span>
+      <span class="msg" id="msg3" role="status"></span>
     </div>
   </section>
 
@@ -302,9 +289,8 @@ code { font:500 .95em var(--mono); }
     <div class="st-head">
       <div>
         <h2 id="h4">첫 분석을 시작했습니다</h2>
-        <p class="sub" id="sub4">몇 분 걸립니다. 창을 닫아도 계속 진행되고, 끝나면 대시보드에 결과가 쌓입니다.</p>
+        <p class="sub" id="sub4">창을 닫아도 계속 진행되고, 끝나면 대시보드에 결과가 쌓입니다.</p>
       </div>
-      <span class="badge muted st-no">4 / 4</span>
     </div>
     <div class="runbox">
       <div class="ring" role="img" aria-label="첫 분석 진행률">
@@ -319,19 +305,19 @@ code { font:500 .95em var(--mono); }
         <div class="top"><span class="dom" id="dom4"></span>
           <span class="badge run" id="badge4">진행 중</span></div>
         <div class="progress"><i id="bar4"></i></div>
-        <p class="stg" id="stg4">수집을 준비합니다</p>
+        <p class="stg" id="stg4" role="status">수집을 준비합니다</p>
       </div>
     </div>
     <div class="act">
       <a class="go" id="open4" href="/">대시보드 열기</a>
       <a class="go sec" href="/">사이트 목록</a>
+      <button class="go sec" type="button" id="retry4" hidden>다시 확인</button>
     </div>
   </section>
 
   <!-- 미리보기 — 적는 대로 채워진다. -->
   <aside class="card" id="pv" aria-label="입력 미리보기">
-    <div class="pv-h"><div><b>미리보기</b><span>적는 대로 여기에 채워집니다</span></div>
-      <span class="badge muted" id="pvStep">1 / 4</span></div>
+    <div class="pv-h"><div><b>미리보기</b><span>적는 대로 여기에 채워집니다</span></div></div>
     <div class="pv-id" id="pvId"></div>
     <div class="pls" id="pvPills"></div>
     <div class="pv-k" id="pvSeeds"></div>
@@ -347,7 +333,7 @@ code { font:500 .95em var(--mono); }
 
   <!-- 1·2단계 아래 — 첫 분석이 채우는 것 -->
   <section id="learn" aria-label="첫 분석이 채우는 것">
-    <div class="lh"><b>첫 분석이 끝나면 받는 것</b><span>몇 분 걸립니다. 창을 닫아도 계속 진행됩니다.</span></div>
+    <div class="lh"><b>첫 분석이 끝나면 받는 것</b><span>창을 닫아도 계속 진행됩니다.</span></div>
     <div class="lg" id="learnGrid"></div>
   </section>
 </div>
@@ -387,25 +373,18 @@ const looseScope = v => {
     .filter(Boolean).join("/").toLowerCase();
   return p ? "/" + p + "/" : "";
 };
-// 이니셜 아바타 — 첫 글자와 두 색조 중 하나.
-const avatar = (s, cls) => {
-  const t = String(s || "").replace(/^sc-domain:/, "").replace(/^https?:\/\/(www\.)?/i, "");
-  const c = (t.match(/[0-9A-Za-z가-힣]/) || ["–"])[0].toUpperCase();
-  return '<span class="av' + (cls ? " " + cls : "") + (/\bi\b/.test(cls || "") || c.charCodeAt(0) % 2 ? "" : " i") +
-    '" aria-hidden="true">' + esc(c) + '</span>';
-};
-
-// 첫 분석이 채우는 것 — 아래 카드 넷과 4단계 옆 카드가 이 목록 한 벌에서 그려진다.
+// 첫 분석이 채우는 것 — 아래 카드 넷, 4단계 옆 카드, 3단계 "지금 바로 되는 것"이 이 목록 한 벌에서 그려진다.
 const LEARN = [
   ["키워드 순위", "검색어별 순위와 검색량을 잽니다."],
   ["경쟁사 검색어", "경쟁사가 가져가는 검색어를 찾습니다."],
   ["AI 답변 노출", "AI 답변에 내 사이트가 나오는지 봅니다."],
   ["사이트 점검", "깨진 링크 · 페이지 점검 · 속도를 봅니다."],
 ];
-const learnItem = (l, i, cls) => '<div class="' + cls + '">' + avatar(l[0], i % 2 ? "i" : "") +
+const learnItem = (l, cls) => '<div class="' + cls + '">' +
   '<div><b>' + esc(l[0]) + '</b><span class="d">' + esc(l[1]) + '</span></div></div>';
-$("learnGrid").innerHTML = LEARN.map((l, i) => learnItem(l, i, "card lc")).join("");
-$("get4List").innerHTML = LEARN.map((l, i) => learnItem(l, i, "li")).join("");
+$("learnGrid").innerHTML = LEARN.map(l => learnItem(l, "card lc")).join("");
+$("get4List").innerHTML = LEARN.map(l => learnItem(l, "li")).join("");
+$("nowList").innerHTML = LEARN.map(l => "<li>" + esc(l[0]) + "</li>").join("");
 
 TYPES.forEach(t => $("type").add(new Option(t[1], t[0])));
 LOCALES.forEach(l => $("locale").add(new Option(l[1], l[0])));
@@ -419,15 +398,14 @@ if (CARRY.gsc_property) S.property = CARRY.gsc_property;
 
 // ── 미리보기 카드 — 입력이 결과 카드가 되는 과정 ────────────
 function renderPv(announce) {
-  $("pvStep").textContent = CUR + " / 4";
   const dom = CUR === 1 ? looseDom($("url").value) : S.domain;
   const scope = CUR === 1 ? looseScope($("url").value) : S.scope;
   const seeds = CUR === 2 ? lines($("seeds").value) : S.seeds;
   const comp = CUR === 2 ? lines($("comp").value) : S.comp;
   const opt = id => { const o = $(id).selectedOptions[0]; return o ? o.text : ""; };
   $("pvId").innerHTML = dom
-    ? avatar(dom, "lg") + '<span class="pv-dom">' + esc(dom + (dom ? scope : "")) + '</span>'
-    : avatar("", "lg none") + '<span class="pv-dom empty-dom">사이트 주소를 적으면 여기에 나옵니다</span>';
+    ? '<span class="pv-dom">' + esc(dom + (dom ? scope : "")) + '</span>'
+    : '<span class="pv-dom empty-dom">사이트 주소를 적으면 여기에 나옵니다</span>';
   let pills = '<span class="pl">' + esc(opt("type")) + '</span><span class="pl">' + esc(opt("locale")) + '</span>';
   if (S.property) pills += '<span class="pl ok">서치콘솔 연결</span>';
   else if (CUR >= 3) pills += '<span class="pl off">서치콘솔 없이</span>';
@@ -458,6 +436,11 @@ function show(n) {
   }
   const f = { 1: "url", 2: "seeds" }[n];
   if (f) $(f).focus();
+  else {                                   // 3·4단계는 입력이 없다 — 새 단계 제목으로 포커스를 옮긴다.
+    const h = $("s" + n).querySelector("h2");
+    h.tabIndex = -1;
+    h.focus({ preventScroll: true });
+  }
   window.scrollTo(0, 0);
   renderPv(true);
 }
@@ -513,7 +496,7 @@ $("f1").addEventListener("submit", async ev => {
 // 1단계의 둘째 길 — 이미 서치콘솔을 연결해 둔 사람은 목록에서 고른다.
 if (GSC) $("alt").hidden = false;
 const propRow = (name, lv, extra) =>
-  '<label class="prop">' + extra + avatar(name) +
+  '<label class="prop">' + extra +
   '<span class="pname">' + esc(name) + '</span><span class="lv">' + lv + '</span></label>';
 $("pickgsc").addEventListener("click", async () => {
   const box = $("plist");
@@ -621,10 +604,10 @@ async function fill3() {
   if (!ok.some(p => p.property === S.property)) S.property = ok[0].property;
   box.innerHTML = '<div class="props">' + ok.map(p =>
     '<label class="prop' + (p.property === S.property ? " on" : "") + '"><input type="radio" name="gsc" value="' +
-    esc(p.property) + '"' + (p.property === S.property ? " checked" : "") + '>' + avatar(p.property) +
+    esc(p.property) + '"' + (p.property === S.property ? " checked" : "") + '>' +
     '<span class="pname">' + esc(p.property) + '</span><span class="lv">' + LEVELS[p.level] + '</span></label>'
   ).join("") +
-    '<label class="prop"><input type="radio" name="gsc" value=""><span class="av none" aria-hidden="true">–</span>' +
+    '<label class="prop"><input type="radio" name="gsc" value="">' +
     '<span class="pname" style="font-family:var(--sans)">서치콘솔 없이 시작</span></label>' +
     '</div>';
   renderPv();
@@ -671,29 +654,65 @@ function begin4(project) {
   $("open4").href = "/d#" + encodeURIComponent(project);
   show(4);
   $("r4").className = "here";
+  // 상태를 못 읽거나(네트워크·500) 이 사이트의 상태가 계속 없으면 조용히 돌지 않고 멈춰서 말한다.
+  const MAX_FAIL = 6, MAX_MISSING = 12;       // 약 50초 · 약 1분
+  let fails = 0, missing = 0;
+  const giveUp = reason => {
+    const b = $("badge4");
+    b.className = "badge bad"; b.textContent = "상태 확인 실패";
+    $("stg4").textContent = reason;
+    $("sub4").textContent = "분석은 서버에서 계속 진행 중일 수 있습니다. [다시 확인]을 누르거나, 대시보드에서 진행을 확인하세요.";
+    $("retry4").hidden = false;
+  };
+  $("retry4").onclick = () => {
+    fails = 0; missing = 0;
+    $("retry4").hidden = true;
+    const b = $("badge4");
+    b.className = "badge run"; b.textContent = "진행 중";
+    $("stg4").textContent = "상태를 다시 확인합니다";
+    tick();
+  };
   async function tick() {
     let st;
-    try { st = await (await fetch("/api/run/status")).json(); } catch (e) { return setTimeout(tick, 8000); }
+    try {
+      const r = await fetch("/api/run/status");
+      if (!r.ok) throw new Error("status " + r.status);
+      st = await r.json();
+    } catch (e) {
+      if (++fails >= MAX_FAIL) return giveUp("진행 상태를 가져오지 못했습니다.");
+      return setTimeout(tick, 8000);
+    }
+    fails = 0;
     const s = st[project];
-    if (s && s.last_run_at && !s.running) {
+    if (!s) {
+      if (++missing >= MAX_MISSING) return giveUp("이 사이트의 분석 상태를 찾지 못했습니다.");
+      return setTimeout(tick, 5000);
+    }
+    missing = 0;
+    if (s.last_run_at && !s.running) {
       const b = $("badge4");
-      b.className = "badge ok"; b.textContent = "분석 완료";
       setProgress(100);
-      $("stg4").textContent = s.last_ok === 0
-        ? "끝났습니다. 몇몇 단계는 실패했습니다 — 대시보드 위쪽에 이유가 있습니다."
-        : "끝났습니다. 대시보드에서 결과를 보세요.";
       $("open4").className = "go";
       $("r4").className = "done";
-      // 끝났는데 "몇 분 걸립니다"가 남아 있으면 그 문구가 거짓이 된다.
-      $("h4").textContent = "첫 분석이 끝났습니다";
-      $("sub4").textContent = "다음 측정부터는 자동으로 다시 잽니다.";
+      if (s.last_ok === 0) {
+        // 실패한 단계가 있다 — 초록 "완료"로 보이면 안 된다.
+        b.className = "badge bad"; b.textContent = "일부 실패";
+        $("s4").classList.add("failed");
+        $("stg4").textContent = "끝났지만 몇몇 단계가 실패했습니다. 대시보드 위쪽에 이유가 있습니다.";
+        $("h4").textContent = "첫 분석이 일부 실패했습니다";
+        $("sub4").textContent = "대시보드에서 실패한 단계와 이유를 확인하세요.";
+      } else {
+        b.className = "badge ok"; b.textContent = "분석 완료";
+        $("stg4").textContent = "끝났습니다. 대시보드에서 결과를 보세요.";
+        // 끝났는데 "시간이 걸립니다"가 남아 있으면 그 문구가 거짓이 된다.
+        $("h4").textContent = "첫 분석이 끝났습니다";
+        $("sub4").textContent = "다음 측정부터는 자동으로 다시 잽니다.";
+      }
       return;
     }
-    if (s) {
-      const t = s.stage && (STAGES[s.stage] || {}).t;
-      if (t) $("stg4").textContent = t;
-      if (s.pct) setProgress(Math.max(6, Math.round(s.pct)));
-    }
+    const t = s.stage && (STAGES[s.stage] || {}).t;
+    if (t) $("stg4").textContent = t;
+    if (s.pct) setProgress(Math.max(6, Math.round(s.pct)));
     setTimeout(tick, 5000);
   }
   tick();

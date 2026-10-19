@@ -95,7 +95,7 @@ def _openrouter_state(key: str) -> tuple[bool, str, float | None]:
     d = (r.json().get("data") or {})
     limit, used = d.get("limit"), d.get("usage")
     if limit is not None and used is not None and float(used) >= float(limit):
-        return False, (f"OpenRouter 크레딧 소진 (${float(used):.2f}/${float(limit):.2f}) — "
+        return False, (f"OpenRouter 크레딧 소진 (${float(used):.2f}/${float(limit):.2f}). "
                        f"{serp_adapter.FATAL_FIX['OpenRouter']}"), 0.0
     if isinstance(d.get("limit_remaining"), (int, float)):
         left.append(float(d["limit_remaining"]))
@@ -128,11 +128,11 @@ def openrouter_ok(need: float = 0.0) -> tuple[bool, str]:
         ok, msg, left = serp_adapter.canary_cached("openrouter", key,
                                                    lambda: _openrouter_state(key))
     except Exception as e:
-        return True, f"OpenRouter 키 확인 실패 ({e}) — 그대로 진행합니다"
+        return True, f"OpenRouter 키 확인 실패 ({e}). 그대로 진행합니다"
     if not ok:
         return False, msg
     if left is not None and need > 0 and left < need:
-        return False, (f"OpenRouter 잔액 ${left:.2f} — 이번 단계 예상 ${need:.2f} 보다 적어 돈 쓰기 "
+        return False, (f"OpenRouter 잔액 ${left:.2f}: 이번 단계 예상 ${need:.2f} 보다 적어 돈 쓰기 "
                        f"전에 건너뜁니다. {serp_adapter.FATAL_FIX['OpenRouter']}")
     return True, (f"OpenRouter 키 유효 · 잔액 ${left:.2f}" if left is not None else msg)
 

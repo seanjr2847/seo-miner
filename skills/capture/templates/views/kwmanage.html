@@ -28,28 +28,42 @@
 "use strict";
 /* 이 파일의 전역은 전부 KM_ — 조립하면 형제 화면들과 한 문서가 된다. */
 
-// 「추적 중 N / 100」은 편집기(sm-kw.html 의 kwLoad)가 .cnt 에 글자로 쓴다 — 그 글자에서 숫자를
-// 읽어 진행 막대만 그린다. 글자를 여기서 다시 짓지 않는다(숫자의 정본은 서버 응답 한 벌).
+// 편집기(sm-kw.html 의 kwLoad)가 .cnt 에 서버 숫자를 data-n(추적 수)·data-limit(한도)로 싣는다 —
+// 막대는 그 두 값만 읽는다. 화면에 찍힌 「추적 중 N / M개」 글자를 정규식으로 되읽지 않는다
+// (문구를 바꾸거나 천 단위 쉼표를 넣어도 막대가 말없이 숨지 않게). 편집기가 목록을 못 읽어
+// 상자가 .dead 가 되면 앞 사이트 숫자가 남아 있어도 막대를 숨긴다.
 // [순위 상승 기회] 화면(keywords.html 의 KW_wireTrack)에서 이 화면으로 옮겨 왔다 — 막대는 편집기의 일부다.
 function KM_wireTrack(box) {
   if (!box || box.dataset.kwProg) return;
   const cnt = box.querySelector(".cnt"), bar = box.querySelector(".kwprog");
   if (!cnt || !bar) return;
   box.dataset.kwProg = "1";
+  const num = v => v !== undefined && v !== "" && Number.isFinite(+v);
   const paint = () => {
-    const m = /(\d+)\s*\/\s*(\d+)/.exec(cnt.textContent);
-    const p = m && +m[2] ? Math.min(100, +m[1] / +m[2] * 100) : 0;
-    bar.hidden = !m;
+    const n = cnt.dataset.n, lim = cnt.dataset.limit;
+    const ok = num(n) && num(lim) && !box.classList.contains("dead");
+    const p = ok && +lim ? Math.min(100, +n / +lim * 100) : 0;
+    bar.hidden = !ok;
     bar.firstElementChild.style.width = p + "%";
     bar.classList.toggle("full", p >= 100);
-    bar.setAttribute("aria-label", m ? `추적 ${m[1]}개, 한도 ${m[2]}개` : "");
+    bar.setAttribute("aria-label", ok ? `추적 ${+n}개, 한도 ${+lim}개` : "");
+    bar.setAttribute("aria-valuenow", String(Math.round(p)));
   };
-  new MutationObserver(paint).observe(cnt, {childList: true, characterData: true, subtree: true});
+  new MutationObserver(paint).observe(cnt, {attributes: true, attributeFilter: ["data-n", "data-limit"]});
+  new MutationObserver(paint).observe(box, {attributes: true, attributeFilter: ["class"]});
   paint();
 }
 
 VIEW("kwmanage", function () {
-  // 박제본은 이 화면을 뺀다(SM.drop) — 상자째 사라졌으면 그릴 것이 없다.
-  KM_wireTrack($("sm-kw"));
+  // 박제본은 이 화면을 뺀다(SM.drop) — 그래서 편집기 상자가 없다면 박제본 탓이 아니라 조립이 빠진 것이다.
+  // 말없이 빈 화면을 두지 않고 이유를 한 줄 말한다.
+  const box = $("sm-kw");
+  if (!box) {
+    const v = $("view-kwmanage");
+    if (v) v.insertAdjacentHTML("afterbegin", `<div class="empty err" data-render-err><b>추적 목록 편집기를 불러오지 못했습니다</b>
+      <p>화면을 새로 고쳐 보세요. 계속 이러면 대시보드를 다시 만들어야 합니다.</p></div>`);
+    return;
+  }
+  KM_wireTrack(box);
 });
 </script>

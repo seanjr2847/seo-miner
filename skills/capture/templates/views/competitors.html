@@ -10,6 +10,7 @@
      종류(도넛), 그 아래가 이 화면의 힘 카드인 점수순 격차 큐, 맨 아래가 보조 두 장. -->
 <script type="application/json" class="view-def">
 {"id": "competitors", "group": "compete", "title": "경쟁 검색어",
+ "sub": "경쟁사가 잡은 검색어 중 우리가 놓친 것을 봅니다.",
  "sections": ["cp-share", "cp-gap"], "stages": ["competitors", "gaps"], "head": ["competitors"],
  "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.competitors"}, {"id": "manage", "label": "관리"}],
  "queue": {"mode": "work"}}
@@ -118,7 +119,7 @@
 .cp-dn-c span { font:400 var(--fs-1)/1.35 var(--sans); color:var(--sub); max-width:96px; }
 .cp-lgs { display:flex; flex-direction:column; gap:2px; min-width:0; flex:1; }
 .cp-lg { display:grid; grid-template-columns:10px minmax(0,1fr) auto; align-items:center; gap:0 10px;
-  min-height:40px; padding:0 12px; border:0; border-radius:12px; background:transparent;
+  min-height:44px; padding:0 12px; border:0; border-radius:12px; background:transparent;
   color:var(--ink); font:500 var(--fs-2)/1.3 var(--sans); text-align:left; cursor:pointer; }
 .cp-lg i { width:10px; height:10px; border-radius:50%; background:var(--kc, var(--mute)); }
 .cp-lg b { font:650 var(--fs-2)/1 var(--sans); font-variant-numeric:tabular-nums; }
@@ -147,9 +148,13 @@
 #cp-gaps .opp { padding:0; margin:0; border-radius:14px; background:transparent; box-shadow:none;
   transition:background .12s; }
 #cp-gaps .opp:hover, #cp-gaps .opp.cp-on { background:var(--sunk); }
-/* 줄은 서랍을 여는 버튼이다(오른쪽 서랍 SM.drawer) — 늘어나지 않으므로 셰브론은 돌지 않는다. */
+/* 줄은 서랍을 연다(오른쪽 서랍 SM.drawer) — 늘어나지 않으므로 셰브론은 돌지 않는다.
+   키보드 손잡이는 검색어 버튼(.cp-open)이고, 줄은 버튼이 아니라서 초점 고리는 그 버튼이 갖는다. */
 #cp-gaps .opp { cursor:pointer; }
-#cp-gaps .opp:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+#cp-gaps .opp .cp-open { display:block; max-width:100%; appearance:none; border:0; background:none;
+  padding:0; text-align:left; color:inherit; cursor:pointer; overflow-wrap:anywhere; }
+#cp-gaps .opp .cp-open:focus-visible { outline:2px solid var(--accent); outline-offset:3px;
+  border-radius:4px; }
 #cp-gaps .opp > .cp-sum { display:grid; grid-template-columns:var(--cols); column-gap:var(--cgap);
   align-items:start; padding:14px 12px; border-radius:14px; }
 #cp-gaps .opp > .cp-sum::before { content:""; width:9px; height:9px; margin:7px 0 0; align-self:start;
@@ -344,7 +349,7 @@ function CP_shareRows(d) {
         <p class="cp-meta">순위를 가진 검색어 ${num(r.keywords)}개${
           r.top10 == null ? "" : ` · 1페이지 ${num(r.top10)}개`}</p></div>
       <div class="cp-tr"><div class="cp-track"><i style="width:${w}%"></i></div></div>
-      <div class="cp-n">${r.share == null ? "—" : Math.round(r.share * 100) + "%"}</div>
+      <div class="cp-n">${r.share == null ? "-" : Math.round(r.share * 100) + "%"}</div>
       <div class="cp-etv">${r.etv == null ? "" : num(Math.round(r.etv))}</div>
     </div>`;
   }).join("") + `</div>`;
@@ -417,7 +422,7 @@ function CP_donutBody(d) {
       plugins: {legend: {display: false},
         tooltip: chTip(T, {callbacks: {title: x => x[0].label,
           label: x => `${num(x.raw)}개 · ${Math.round(x.raw / total * 100)}%`}})}}}),
-    `검색어 ${total}개를 종류로 나눈 도넛 — ` +
+    `검색어 ${total}개를 종류로 나눈 도넛: ` +
       rows.map(r => `${r[1]} ${r[2]}개`).join(", "), "height:180px");
   const shown = CP_KIND ? (c[CP_KIND] || 0) : total;
   const cap = CP_KIND ? CP_kind(CP_KIND)[1] : "검색어";
@@ -477,7 +482,7 @@ const CP_noOpp = g => {
     return "우리가 같거나 위입니다. 지킬 자리라 새 작업이 붙지 않습니다.";
   if (!r)
     return "경쟁사 순위를 받지 못해 누가 위인지 모릅니다. 비교할 수 없어 새 작업이 붙지 않습니다.";
-  return `${CP_kind(r.kind)[2]}입니다. 점수는 검색량이 큰 25건까지만 매깁니다. ` +
+  return `${CP_kind(r.kind)[2]}입니다. 점수는 검색량이 큰 쪽부터 정해진 건수까지만 매깁니다. ` +
     "이 줄은 그 밖이거나, 수집 뒤 점수를 아직 안 냈습니다.";
 };
 
@@ -500,17 +505,16 @@ const CP_rivs = g => g.map(x => `<div class="cp-rv"><span class="cp-dom">${esc(x
       <span class="badge ${CP_kind(x.kind)[4]}" title="${esc(CP_kind(x.kind)[2])}">${
         esc(CP_kind(x.kind)[1])}</span></div>`).join("");
 
-/* 줄은 서랍을 여는 버튼이다 — 누르면 오른쪽 서랍(SM.drawer)에 근거·경쟁사 순위·할 일이 열린다.
-   점수가 없어도 연다: 서랍 안에서만 갈린다(CP_drawerOpts). 안의 행동 버튼은 전파를 멈춰
-   서랍이 같이 열리지 않는다(oppActs). */
+/* 줄 어디를 눌러도 오른쪽 서랍(SM.drawer)에 근거·경쟁사 순위·할 일이 열린다(마우스).
+   키보드·스크린리더의 손잡이는 검색어 버튼(.cp-open) 하나다 - 줄 전체를 role=button 으로
+   두면 안의 행동 버튼이 버튼 속 버튼이 된다. 점수가 없어도 연다: 서랍 안에서만 갈린다
+   (CP_drawerOpts). 안의 행동 버튼은 전파를 멈춰 서랍이 같이 열리지 않는다(oppActs). */
 function CP_card(g) {
   const r = g[0], o = oppOf(r.keyword), vol = CP_vol(g);
-  const main = `<div class="target">${esc(r.keyword)}</div>
+  const main = `<button type="button" class="target cp-open" aria-haspopup="dialog">${esc(r.keyword)}</button>
     <p class="cp-meta">${CP_me(g)}</p>
     ${o ? oppWhy(o) : ""}`;
-  return `<div class="opp" role="button" tabindex="0" aria-haspopup="dialog"
-      data-key="${esc(r.keyword)}"${o ? ` data-opp="${o.id}"` : ""} onclick="CP_row(this)"
-      onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();CP_row(this)}">
+  return `<div class="opp" data-key="${esc(r.keyword)}"${o ? ` data-opp="${o.id}"` : ""} onclick="CP_row(this)">
     <div class="cp-sum">
       <div class="cp-sc">${oppScore(o)}${o ? oppMeter(o) : ""}</div>
       <div class="cp-main">${main}</div>
@@ -563,7 +567,7 @@ function CP_closed() {
     if (document.activeElement && document.activeElement !== document.body) return;
     const row = [...document.querySelectorAll("#cp-gaps .opp[data-key]")]
       .find(x => CP_key({keyword: x.dataset.key}) === key);
-    if (row) row.focus({preventScroll: true});
+    if (row) CP_opener(row).focus({preventScroll: true});
   }, 0);
 }
 
@@ -575,7 +579,8 @@ function CP_show(keyword, from) {
   CP_mark();
   CP_polish();
 }
-const CP_row = el => CP_show(el.dataset.key, el);
+const CP_opener = row => row.querySelector(".cp-open") || row;   // 서랍이 닫히면 초점이 돌아올 자리
+const CP_row = el => CP_show(el.dataset.key, CP_opener(el));
 
 function CP_sync() {
   if (CP_SEL == null) return;
@@ -637,23 +642,37 @@ const CP_defaultKind = d => {
   return c.weak ? "weak" : c.missing ? "missing" : "";
 };
 
+// 칩·선택 상자를 누르면 목록 영역을 통째로 다시 그려 초점이 body 로 떨어졌다 - 그린 뒤 같은 자리의 같은 요소에 돌려준다.
+function CP_keep(roots, draw) {
+  const a = document.activeElement, id = a && roots.find(x => $(x) && $(x).contains(a));
+  const tag = id && /^(BUTTON|SELECT)$/.test(a.tagName) ? a.tagName : "";
+  const i = tag ? [...$(id).querySelectorAll(tag)].indexOf(a) : -1;
+  draw();
+  const el = i >= 0 && $(id).querySelectorAll(tag)[i];
+  if (el) el.focus({preventScroll: true});
+}
+const CP_ROOTS = ["cp-gap-tools", "cp-chips", "cp-donut-body", "cp-gaps"];
 function CP_setSt(v) {
   CP_ST = v;
-  $("cp-gaps").innerHTML = CP_gapRows(CP_D);
-  CP_mark();
-  CP_tools(CP_D);
+  CP_keep(CP_ROOTS, () => {
+    $("cp-gaps").innerHTML = CP_gapRows(CP_D);
+    CP_mark();
+    CP_tools(CP_D);
+  });
 }
 
 // 도넛·범례·칩이 같은 상태를 본다 — 하나를 누르면 셋이 함께 바뀐다.
 function CP_pick(kind) {
   CP_KIND = (CP_KIND === kind) ? "" : kind;
-  $("cp-gap-h").textContent = CP_title();
-  $("cp-chips").innerHTML = CP_chips(CP_D);
-  $("cp-gaps").innerHTML = CP_gapRows(CP_D);
-  CP_mark();
-  const dn = $("cp-donut-body");
-  if (dn) dn.innerHTML = CP_donutBody(CP_D);
-  CP_tools(CP_D);
+  CP_keep(CP_ROOTS, () => {
+    $("cp-gap-h").textContent = CP_title();
+    $("cp-chips").innerHTML = CP_chips(CP_D);
+    $("cp-gaps").innerHTML = CP_gapRows(CP_D);
+    CP_mark();
+    const dn = $("cp-donut-body");
+    if (dn) dn.innerHTML = CP_donutBody(CP_D);
+    CP_tools(CP_D);
+  });
 }
 
 // 표 위 도구줄은 카드 머리 오른쪽 한 자리다 — 개수는 지금 걸러 놓은 검색어를 센다.
@@ -729,7 +748,7 @@ function CP_open() {
   // 서랍 뒤의 목록도 그 줄이 보이게 올려 둔다 — 닫았을 때 어디였는지 남는다.
   const sec = $("cp-gap-card");
   (sec || row).scrollIntoView({behavior: "smooth", block: "start"});
-  CP_show(CP_TOP, row);
+  CP_show(CP_TOP, CP_opener(row));
 }
 
 /* 맞댄 경쟁 도메인 수. 몫(comp_metrics)은 자동 탐지에서 지표를 받은 곳만 싣고,
@@ -830,7 +849,7 @@ function CP_shareCard(d, rv, cls) {
                 CP_toSettings()))
     : window.runFailed("competitors", d)
       ? `<div class="empty err"><b>${esc(CP_name("competitors"))}에서 멈췄습니다</b>
-          <p>보통 수집원 키가 없거나 잔액이 0일 때 이렇게 끝납니다. 채운 뒤 다시 찾으면
+          <p>멈춘 이유는 [기록] 화면에 남아 있습니다. 풀고 다시 찾으면
             이어서 채워집니다.</p>${CP_do("competitors", "", false)}</div>`
       : CP_ran(d)
       ? SM.ui.empty(`${esc(CP_name("competitors"))}는 돌았지만 몫을 잰 도메인이 없습니다`,
@@ -862,8 +881,6 @@ VIEW("competitors", function (d) {
   if (site !== CP_SITE) { CP_SITE = site; CP_KIND = CP_defaultKind(d); }
   const rv = CP_rivals(d);
   CP_nextStep(d);
-  window.viewSub && viewSub("competitors",
-    "경쟁사가 잡은 검색어 중 우리가 놓친 것을 봅니다.");
 
   const hasGap = !!d.gap_date && (d.kw_gap || []).length > 0;
   const hasShare = !!d.comp_date && (d.comp_metrics || []).length > 0;

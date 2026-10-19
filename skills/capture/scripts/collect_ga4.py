@@ -317,7 +317,7 @@ def collect(project: str, *,
         prop_id = p["ga4_property"]
         scope = scoring.scopes_of([sc for _, sc in db.site_markets(conn, p["id"])])
         if not prop_id:
-            return st.skip(f"'{project}' 에 GA4 속성이 연결되어 있지 않습니다 — "
+            return st.skip(f"'{project}' 에 GA4 속성이 연결되어 있지 않습니다. "
                            "project yaml 에 ga4_property: '숫자 ID' 를 넣고 "
                            "대시보드 [설정]에서 등록하세요 (연결 화면은 다음 단계)")
 
@@ -350,7 +350,7 @@ def collect(project: str, *,
         except HttpError as e:
             if getattr(e.resp, "status", None) == 403:
                 return st.skip(
-                    f"GA4 접근 권한이 없습니다(속성 {prop_id}) — 이 구글 계정이 그 속성의 "
+                    f"GA4 접근 권한이 없습니다(속성 {prop_id}). 이 구글 계정이 그 속성의 "
                     "뷰어 이상 권한을 가졌는지 확인하거나, GSC 로그인 뒤에 GA4 스코프가 "
                     f"추가됐으니 재로그인이 필요할 수 있습니다: {db.gsc_token()} 를 지우고 "
                     "채팅에 \"GSC 로그인해줘\"")
@@ -375,7 +375,7 @@ def collect(project: str, *,
                 # GSC 와 같은 규칙 — 본체는 안 죽이되 세기는 한다(안 세면 축이 몇 주째
                 # 비어도 기록이 stderr 한 줄뿐이다).
                 status = getattr(getattr(e, "resp", None), "status", None)
-                st.fail(f"수집을 건너뜁니다 ({e}) — 본체 스냅샷은 그대로 저장됩니다.",
+                st.fail(f"수집을 건너뜁니다 ({e}). 본체 스냅샷은 그대로 저장됩니다.",
                         item=label, kind=type(e).__name__,
                         status=status if isinstance(status, int) else None)
                 return None

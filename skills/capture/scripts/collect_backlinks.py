@@ -407,7 +407,7 @@ def collect(project: str, *,
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
         if not serp_adapter.has_dataforseo():
-            return st.skip("백링크는 DataForSEO 유료 키가 필요합니다 — "
+            return st.skip("백링크는 DataForSEO 유료 키가 필요합니다. "
                            "DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 를 설정하세요. "
                            "발급: https://dataforseo.com")
 
@@ -421,7 +421,7 @@ def collect(project: str, *,
                 "SELECT 1 FROM backlink_summary WHERE project_id=? AND"
                 " checked_date > date('now', ?) LIMIT 1",
                 (pid, f"-{max_age} days")).fetchone() and not _legacy_broken(conn, pid):
-            reason = (f"최근 {max_age}일 안에 이미 수집했습니다 — 백링크는 하루 단위로 "
+            reason = (f"최근 {max_age}일 안에 이미 수집했습니다: 백링크는 하루 단위로 "
                       f"움직이지 않습니다. 다시 사려면 `--max-age 0`.")
             print(f"[backlinks] {reason}")
             return st.noop(reason=reason)
@@ -434,7 +434,7 @@ def collect(project: str, *,
         notes: list[str] = []
         if dropped:
             notes.append(f"교집합에서 뺀 플랫폼 {len(dropped)}개({', '.join(dropped[:5])}"
-                         f"{' …' if len(dropped) > 5 else ''}) — 경쟁사가 아니라 검색결과의 플랫폼입니다")
+                         f"{' …' if len(dropped) > 5 else ''}). 경쟁사가 아니라 검색결과의 플랫폼입니다")
 
         def _bump(name: str, n: int, c: float) -> None:
             nonlocal cost
@@ -463,12 +463,12 @@ def collect(project: str, *,
         if limit > 0:
             tasks += [refdomains, links, anchors]
         else:
-            notes.append("limit=0 — 요약만 삽니다 (참조 도메인·개별 링크·앵커 생략)")
+            notes.append("limit=0: 요약만 삽니다 (참조 도메인·개별 링크·앵커 생략)")
         # 교집합은 경쟁사가 둘 이상일 때만 뜻이 있다. 없다고 단계를 죽이지는 않는다.
         if limit > 0 and len(rivals) >= INTERSECT_MIN_RIVALS:
             tasks.append(intersect)
         elif limit > 0:
-            notes.append(f"Link Intersect 생략 — 경쟁사가 {len(rivals)}개뿐입니다"
+            notes.append(f"Link Intersect 생략: 경쟁사가 {len(rivals)}개뿐입니다"
                          f"(교집합은 {INTERSECT_MIN_RIVALS}개부터). "
                          "`/capture rank` 를 한 바퀴 돌리면 상위 도메인이 자동 적재됩니다.")
 
@@ -486,9 +486,9 @@ def collect(project: str, *,
                    [{"keyword": a, "search_mode": "one_per_domain", "limit": MENTION_LIMIT}],
                    _stash(a)) for a in aliases]
         if limit > 0 and not aliases:
-            notes.append("링크 없는 언급 생략 — 설정에 브랜드 별칭이 없습니다(설정 → 브랜드 별칭)")
+            notes.append("링크 없는 언급 생략. 설정에 브랜드 별칭이 없습니다(설정 → 브랜드 별칭)")
         if fragments:
-            notes.append(f"언급 찾기에서 뺀 별칭 {', '.join(fragments)} — 더 긴 별칭의 조각입니다")
+            notes.append(f"언급 찾기에서 뺀 별칭 {', '.join(fragments)}: 더 긴 별칭의 조각입니다")
 
         n_ix = sum(1 for t in tasks if t[0] == "intersect")
         est = (len(tasks) * REQUEST_COST
@@ -516,7 +516,7 @@ def collect(project: str, *,
                 if generic:
                     notes.append("언급 찾기에서 뺀 별칭 " + ", ".join(
                         f"{a}({found[a][0]:,}곳)" for a in generic)
-                        + f" — 웹에 {MENTION_GENERIC_MAX}곳 넘게 나와 우리만 가리키는 이름이 "
+                        + f". 웹에 {MENTION_GENERIC_MAX}곳 넘게 나와 우리만 가리키는 이름이 "
                           "아닙니다. 더 구체적인 표기를 별칭에 넣으면 그걸로 찾습니다")
                 best: dict[str, dict] = {}
                 for a, (_, got) in found.items():
@@ -527,7 +527,7 @@ def collect(project: str, *,
                 linked, c, n = _linked_hosts(post, target, ms) if ms else (set(), 0.0, 0)
                 r.api_calls = (r.api_calls or 0) + n
                 if linked is None:
-                    notes.append("언급한 곳이 이미 링크했는지 확인하지 못했습니다 — 다음 수집에서 다시 봅니다")
+                    notes.append("언급한 곳이 이미 링크했는지 확인하지 못했습니다. 다음 수집에서 다시 봅니다")
                 _bump("mentions", _put_mentions(conn, pid, today, ms, linked), c)
             r.cost = cost
             r.notes = (" ".join(f"{k}={v}" for k, v in sorted(rows.items()))
@@ -873,7 +873,7 @@ def _selfcheck() -> None:
     assert "디아더 피부과 이승주" in ms["www.news.com"]["snippet"], ms
     note = conn.execute("SELECT notes, api_calls FROM runs WHERE kind='backlinks'"
                         " ORDER BY id DESC LIMIT 1").fetchone()
-    assert "이승주(1,141곳)" in note["notes"] and "디아더 — 더 긴 별칭의 조각" in note["notes"], note[0]
+    assert "이승주(1,141곳)" in note["notes"] and "디아더: 더 긴 별칭의 조각" in note["notes"], note[0]
     assert "mentions=2" in note["notes"] and note["api_calls"] == len(calls), dict(note)
 
     # 링크 확인이 실패하면 '안 함'이 아니라 '모름'(NULL)이다 — 안 그러면 이미 링크한 곳에

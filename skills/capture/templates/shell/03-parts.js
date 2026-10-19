@@ -39,7 +39,7 @@ SM.ui = (() => {
       hue ? ` style="--h:${o.hue}"` : ""}></span>`;
   };
   const hint = (t, o = {}) =>
-    `<span class="hint"${o.id ? ` id="${o.id}"` : ""} tabindex="0" data-tip="${esc(t)}"${
+    `<span class="hint"${o.id ? ` id="${o.id}"` : ""} tabindex="0" role="note" data-tip="${esc(t)}"${
       o.title === false ? "" : ` title="${esc(t)}"`} aria-label="${esc(t)}">i</span>`;
   const empty = (title, why, acts, tip) =>
     `<div class="empty"><b>${title}${tip ? hint(tip) : ""}</b><p>${why}</p>${acts || ""}</div>`;
@@ -67,7 +67,21 @@ SM.ui = (() => {
     if (was && was.focus) was.focus({preventScroll: true});
     return ok;
   }
-  return {avatar, hint, empty, sign, act, copyText};
+  // 서랍·대화상자 안에서 Tab 이 밖으로 새지 않게 — 끝에서 처음으로, 처음에서 끝으로 감는다.
+  // aria-modal 은 낭독기에게 "뒤는 없는 셈"이라고 말하는 약속이다: 키보드도 같은 약속을 지킨다.
+  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), ' +
+    'select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+  const trapTab = (e, box) => {
+    if (e.key !== "Tab" || !box) return;
+    const f = [...box.querySelectorAll(FOCUSABLE)].filter(x => x.getClientRects().length);
+    if (!f.length) { e.preventDefault(); return; }
+    const at = document.activeElement, first = f[0], last = f[f.length - 1];
+    if (e.shiftKey ? (at === first || at === box || !box.contains(at)) : (at === last || !box.contains(at))) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    }
+  };
+  return {avatar, hint, empty, sign, act, copyText, trapTab};
 })();
 
 /* ── 공용 서랍 (SM.drawer) ──────────────────────────────────────────────────
@@ -87,20 +101,26 @@ SM.drawer = (() => {
     let dr = q("sdr");
     if (!dr) {
       document.body.insertAdjacentHTML("beforeend", `<div class="sdr-bg" id="sdr-bg" hidden></div>
-        <aside class="sdr" id="sdr" role="dialog" aria-modal="true" aria-labelledby="sdr-t" hidden></aside>`);
+        <aside class="sdr" id="sdr" role="dialog" aria-modal="true" aria-labelledby="sdr-t" tabindex="-1" hidden></aside>`);
       dr = q("sdr");
       q("sdr-bg").addEventListener("click", () => SM.drawer.close());
-      dr.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); SM.drawer.close(); } });
+      dr.addEventListener("keydown", e => {
+        if (e.key === "Escape") { e.stopPropagation(); SM.drawer.close(); }
+        else SM.ui.trapTab(e, dr);
+      });
       dr.addEventListener("click", e => { if (e.target.closest(".sdr-x")) SM.drawer.close(); });
     }
     return dr;
   }
   function paint(o) {
     const dr = els();
+    // 다시 칠하면 포커스를 쥔 요소가 사라져 body 로 떨어진다 - 키보드 가둠과 Esc 가 서랍에 안 닿게 된다.
+    const held = open && dr.contains(document.activeElement);
     dr.innerHTML = `<div class="sdr-h"><div class="sdr-top">
         <div class="sdr-tt"><h2 id="sdr-t">${esc1(o.title)}</h2>${o.sub ? `<div class="sdr-sub">${esc1(o.sub)}</div>` : ""}</div>
         <button type="button" class="sdr-x" aria-label="닫기">✕</button></div></div>
       <div class="sdr-b">${o.bodyHtml || ""}</div>${o.footHtml ? `<div class="sdr-f">${o.footHtml}</div>` : ""}`;
+    if (held && !dr.contains(document.activeElement)) dr.focus({preventScroll: true});
   }
   return {
     open(o) {

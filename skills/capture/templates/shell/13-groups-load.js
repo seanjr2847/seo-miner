@@ -47,7 +47,7 @@ function groupHead(d) {
       // 묶음 이름을 줄 맨 앞에 세운다 — 레일의 묶음 제목(.navgrp)은 좁은 화면에서 안
       // 그려져, 모바일에서는 "이 묶음"이 무엇인지 말하는 자리가 여기뿐이다. 버튼이 다시
       // 재는 범위(g.stages)는 이름표(title·aria-label)로 말한다.
-      const scope = `${GRP_LABEL} — ${g.name}: ${(g.stages || []).map(stageName).join(" · ")}`;
+      const scope = `${GRP_LABEL}(${g.name}): ${(g.stages || []).map(stageName).join(" · ")}`;
       html = `<b class="gname">${esc(g.name)}</b><span class="k">마지막으로 잰 날</span>${ax}` +
         (READONLY || !(g.stages && g.stages.length) ? "" :
         `<button class="go sm sec" data-grp="${esc(g.id)}" title="${esc(scope)}"
@@ -73,7 +73,7 @@ function groupHead(d) {
     }
     el.innerHTML = html;
     // 넓은 화면의 머리에는 날짜가 둘까지만 서고(CSS), 전부는 이 줄에 마우스를 올리면 나온다.
-    el.title = clock.length ? "마지막으로 잰 날 — " + clock.map(st =>
+    el.title = clock.length ? "마지막으로 잰 날: " + clock.map(st =>
       `${stageName(st)} ${g.last[st] || "아직"}`).join(" · ") : "";
     if (more) el.appendChild(more);
   }
@@ -109,7 +109,7 @@ async function groupRun(btn) {
   if (!ok) {
     btn.disabled = false;
     // 원인 + 다음 행동. 서버 문구(detail·error)가 있으면 그게 원인이다.
-    return toast(`${(r && (r.detail || r.error)) || "서버가 응답하지 않았습니다."} 잠시 뒤 다시 누르면 재시도합니다.`, "bad");
+    return toast(`${(r && (r.detail || r.error)) || "서버가 응답하지 않았습니다. 잠시 뒤 다시 눌러 주세요."}`, "bad");
   }
   const who = gid ? ((SM.groupOf(gid) || {}).name || "이 묶음") : "전체";
   toast(r.queued ? `지금 도는 재기가 끝나면 ${who}도 이어서 잽니다.`
@@ -135,7 +135,7 @@ SM.api.grpStatus = st => {
   return now;
 };
 
-let GRP_TIMER = 0;
+let GRP_TIMER = 0, GRP_FAIL = 0;
 function grpPoll(wait) {
   if (window.SM_HOSTED || READONLY) return;
   clearTimeout(GRP_TIMER);
@@ -144,14 +144,45 @@ function grpPoll(wait) {
     if (!p) return;
     try {
       const res = await fetch("/api/run/status?project=" + encodeURIComponent(p));
-      if (res.ok && window.grpStatus(await res.json())) grpPoll(5000);
-    } catch (e) { /* 다음 새로고침에 다시 묻는다 — 폴링 실패는 버튼을 안 잠근다 */ }
+      if (!res.ok) throw new Error("status " + res.status);
+      GRP_FAIL = 0;
+      if (window.grpStatus(await res.json())) grpPoll(5000);
+    } catch (e) {
+      // 못 물었다고 버튼을 "재는 중"으로 굳히지 않는다: 두 번은 다시 묻고, 세 번째에 상태를 놓아
+      // 주며 말한다(돌던 것이 끝났는지 모르는 채 잠가 두면 다시 재기가 영영 안 눌린다).
+      if (++GRP_FAIL < 3) grpPoll(5000);
+      else {
+        GRP_FAIL = 0; GRP_ST = {}; grpPaint();
+        if (window.toast) toast("재는 상태를 확인하지 못했습니다. [화면 다시 불러오기]를 누르면 다시 확인합니다.", "bad");
+      }
+    }
   }, wait || 0);
 }
-document.addEventListener("sm:site", () => { GRP_ST = {}; grpPoll(0); });
+document.addEventListener("sm:site", () => { GRP_ST = {}; GRP_FAIL = 0; grpPoll(0); });
+
+/* 시작 실패 — 자리표(#sm-boot)를 내리고 이유와 [다시 시도]를 같은 자리에 둔다. 자리표만 남기면
+   서버가 안 뜬 날 화면이 영원히 "불러오는 중"처럼 반짝인다. */
+function loadFail(msg, retry) {
+  const b = $("sm-boot");
+  if (b) b.hidden = true;
+  const e = $("err");
+  e.hidden = false;
+  e.textContent = msg + " ";
+  const btn = document.createElement("button");
+  btn.type = "button"; btn.className = "go sec sm"; btn.textContent = "다시 시도";
+  btn.addEventListener("click", () => {
+    e.hidden = true;
+    if (b && !LOADED) b.hidden = false;
+    retry();
+  });
+  e.appendChild(btn);
+}
 
 async function loadProjects() {
-  const names = await (await fetch("/api/projects")).json();
+  const pr = await fetch("/api/projects");
+  if (!pr.ok) throw new Error("projects " + pr.status);
+  const names = await pr.json();
+  if (!Array.isArray(names)) throw new Error("projects shape");
   const want = decodeURIComponent(location.hash.slice(1));
   // 없는 사이트를 가리키는 주소로 들어오면 여태 조용히 첫 사이트가 열렸다 —
   // 링크를 받은 사람은 자기가 부른 사이트를 보고 있다고 믿는다. 말하고, 주소를
@@ -186,6 +217,7 @@ async function checkTriageLand() {
   if (!SM.restored && none) SM.land("triage", 1);
 }
 
+let LOAD_SEQ = 0, LOADED = "";        // 마지막 요청 번호 / 마지막으로 그린 사이트
 async function load() {
   const name = $("proj").value;
   // 사이트가 없어도 본문은 세워 둔다 — 첫 등록을 하는 곳이 [설정] 화면이고,
@@ -194,27 +226,37 @@ async function load() {
   // 첫 방문자는 자리표만 보고 [설정]에 닿지 못한다.
   if (!name) { bootDone(); SM.show(SM.at("settings") >= 0 ? "settings" : "guide"); return; }
   location.hash = encodeURIComponent(name);
-  const res = await fetch("/api/data?project=" + encodeURIComponent(name) +
-                          (PINNED ? "&date=" + encodeURIComponent(PINNED) : ""));
-  const d = await res.json();
-  if (!res.ok) {
+  // 늦게 온 응답 가드 — 사이트를 빠르게 바꾸면 앞 요청의 응답이 뒤에 도착해 새 사이트 이름
+  // 아래 옛 사이트 숫자를 그렸다. 가장 나중에 부른 load() 의 응답만 그린다.
+  const seq = ++LOAD_SEQ, box = $("content");
+  box.setAttribute("aria-busy", "true");
+  box.classList.add("loading");
+  let res = null, d = {};
+  try {
+    res = await fetch("/api/data?project=" + encodeURIComponent(name) +
+                      (PINNED ? "&date=" + encodeURIComponent(PINNED) : ""));
+    // 본문이 JSON 이 아니면(프록시 오류 페이지) 상태 코드로 말한다 — 여기서 던지면 아래가 안 돈다.
+    d = await res.json().catch(() => ({}));
+  } catch (e) { res = null; }
+  if (seq !== LOAD_SEQ) return;               // 더 나중 요청이 이어받는다 — 표시도 그쪽이 내린다
+  box.removeAttribute("aria-busy");
+  box.classList.remove("loading");
+  if (!res || !res.ok) {
     // 실패해도 자리표(#sm-boot)는 내린다 — 안 내리면 오류를 말하면서 동시에
-    // "아직 불러오는 중"처럼 반짝인다. 본문(#content)은 채울 자료가 없으니 그대로
-    // 감춰 둔다(첫 로드가 실패한 경우) — 이미 열려 있던 뒤 새로고침이면 no-op.
-    const b = $("sm-boot");
-    if (b) b.hidden = true;
-    $("err").hidden = false;
-    $("err").textContent = (d.error || "이 사이트의 자료를 불러오지 못했습니다.") +
-      " [화면 다시 불러오기]를 누르면 다시 시도합니다.";
-    return;
+    // "아직 불러오는 중"처럼 반짝인다. 사이트를 바꾸다 실패했으면 옛 사이트의 숫자가
+    // 새 이름 아래 남지 않게 본문을 감춘다(같은 사이트의 새로고침이면 그대로 둔다).
+    if (LOADED !== name) box.hidden = true;
+    return loadFail((d.error || (res ? "이 사이트의 자료를 불러오지 못했습니다."
+                                      : "서버에 닿지 않았습니다.")), load);
   }
   // 그 사이트에 없는 날을 고정하면 서버가 빈 짝을 준다 — 고정을 풀고 최신으로 되돌린다.
   // (PINNED 를 먼저 비우므로 데이터가 아예 없는 사이트에서도 두 번 이상 돌지 않는다.)
   if (PINNED && !d.gsc_date) { PINNED = ""; return load(); }
   $("err").hidden = true;
   $("content").hidden = false;
+  LOADED = name;
   render(d);
-  checkTriageLand();
+  checkTriageLand().catch(() => {});
   // 사이트가 확정됐다고 한 번 알린다. 뒤에 얹히는 계층(호스팅 애드온)은 자기 데이터를
   // 사이트 이름이 정해진 뒤에야 부를 수 있는데, 여태 그걸 아는 방법이 #proj 의
   // change 이벤트뿐이었다 — 그리고 hash 로 자동 선택될 때는 change 가 안 난다.
@@ -277,7 +319,9 @@ async function loadDoctor() {
     // 추론이 안 되면(사이트 여럿 + 리포 미등록) 안내가 비어 버린다.
     const cur = $("proj") ? $("proj").value : "";
     if (window.SM_HOSTED && !cur) return;    // 호스팅은 사이트 없이 물으면 404 다 — 고른 뒤에 다시 불린다
-    const d = await (await fetch("/api/doctor?project=" + encodeURIComponent(cur || ""))).json();
+    const dr = await fetch("/api/doctor?project=" + encodeURIComponent(cur || ""));
+    if (!dr.ok) throw new Error("doctor " + dr.status);     // 오류 본문을 진단 결과로 읽지 않는다 — 아래 catch 가 [다시 시도]를 낸다
+    const d = await dr.json();
     window.SETUP = d; SM.repaint();   // 기회 카드의 실행 자리(SM.host.oppBtn)가 여기서 도구 상태를 읽는다 — 늦게 오면 다시 그린다
     if (SM.host.playSync) SM.host.playSync();   // 할 일의 [PR 만들기] 준비·진행 상태(로컬만 — 호스팅 SM.host 에는 없다)
     // verdict·must·extra 는 이제 청중별로 갈려서 온다(doctor.py 가 SEOMINER_HOSTED
@@ -333,6 +377,7 @@ async function loadDoctor() {
     // 그린다. docban 을 쓰기 **전에** 부른다 — #nx 가 아직 없어 배너를 안 건드린다
     // (배너는 이 상태에서 [설정]의 사이트 등록 칸을 가리키는 쪽이 더 구체적이다).
     for (const h of DOCTOR_RENDER) if (h.before) h.before(d);
+    $("docban").className = "";                 // 앞서 실패해 붙은 bad 를 지운다 - 안 지우면 banSync 가 빈 경고 면을 세워 둔다
     $("docban").innerHTML = h;
     // 할 말이 없으면 상자도 안 세운다 — 호스팅에서 준비물 목록을 뺀 뒤 빈 띠만
     // 남아 화면 맨 위에 뜻 없는 상자가 서는 일이 없게 한다. 뒤늦게 renderGuide 가
@@ -408,7 +453,10 @@ if (window.__SNAPSHOT__) {
   // 폴더로 추론하지만 호스팅은 사이트 소유를 확인하므로 404 이고 다시 안 불려서,
   // 호스팅의 유일한 사용자 몫('구글 연결' 안내)이 첫 화면에 영영 안 떴다.
   // 목록을 못 받아도 진단은 띄운다 — 로컬에선 그게 "무엇이 빠졌나"를 보는 창이다.
-  const listed = loadProjects();
-  listed.then(load);
-  listed.then(() => loadDoctor(), () => loadDoctor());
+  const bootStart = () => {
+    const listed = loadProjects();
+    listed.then(load, () => loadFail("사이트 목록을 불러오지 못했습니다.", bootStart));
+    listed.then(() => loadDoctor(), () => loadDoctor());
+  };
+  bootStart();
 }

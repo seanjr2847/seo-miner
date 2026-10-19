@@ -28,7 +28,7 @@ function renderDates(d) {
   const ph = $("printhead");
   if (ph) {
     const when = window.__SNAPSHOT__ ? `${window.__SNAPSHOT__.exported} 기록` : "";
-    ph.innerHTML = `<div class="t">${esc(d.project.name)} — 검색·AI 가시성 보고서</div>` +
+    ph.innerHTML = `<div class="t">${esc(d.project.name)}: 검색·AI 가시성 보고서</div>` +
       `<div class="m">${esc($("meta").textContent)}${when ? " · " + esc(when) : ""}</div>`;
   }
 
@@ -45,7 +45,7 @@ function renderDates(d) {
   // 수집일 알약 줄은 화면 머리에서 걷었다(CSS: .hax:not(:has(b))). 정보는 레일 상태 카드가 갖는다 —
   // 마우스를 올리면 축별 마지막 수집일이 나온다.
   const axTxt = AXES.filter(([, key]) => d[key]).map(([name, key]) => `${name} ${d[key]}`).join(" · ");
-  $("meta").title = axTxt ? `마지막 수집 — ${axTxt}` : "";
+  $("meta").title = axTxt ? `마지막 수집: ${axTxt}` : "";
 }
 
 // 첫 render() 가 자리표를 내리고 본문을 연다 — 이후 재렌더(SM.repaint 등)는
@@ -127,8 +127,20 @@ function render(d) {
   // 화면 하나가 던져도 나머지는 그려져야 한다 — 예전에는 조립 순서상 뒤에 오는
   // 화면이 통째로 비었고, 왜 비었는지는 아무 데도 안 남았다.
   for (const v of VIEW_RENDER) {
+    // 못 그린 화면은 콘솔에만 남기면 사용자에게는 빈 화면이다 — 이유 한 줄을 화면 머리 아래에 둔다.
+    // 다음 render() 가 성공하면 이 줄은 처음에 걷힌다.
+    const box = v && v.id ? $("view-" + v.id) : null;
+    if (box) box.querySelectorAll(":scope > [data-render-err]").forEach(x => x.remove());
     try { (v.render || v)(d); }
-    catch (e) { console.error(`화면 [${(v && v.id) || "?"}] 을 그리지 못했습니다`, e); }
+    catch (e) {
+      console.error(`화면 [${(v && v.id) || "?"}] 을 그리지 못했습니다`, e);
+      if (box) {
+        const vh = box.querySelector(":scope > .vh");
+        (vh || box).insertAdjacentHTML(vh ? "afterend" : "afterbegin",
+          `<p class="msg bad" role="alert" data-render-err>이 화면을 그리지 못했습니다. ` +
+          `[화면 다시 불러오기]를 누르면 다시 그립니다.</p>`);
+      }
+    }
   }
   // 뷰가 방금 그린 자리에서도 박제본의 거짓말을 뗀다 — 뷰마다 READONLY 를 물어보게
   // 하면 열한 곳이 각자 기억해야 하고, 그중 몇은 언젠가 잊는다(실제로 잊었다).
