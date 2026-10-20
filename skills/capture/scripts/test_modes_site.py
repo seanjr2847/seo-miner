@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""[사이트 점검]의 [처리]·[관리] 두 탭 — 선언·마크업·실제 화면(로컬·호스팅)을 함께 본다.
+"""[사이트 점검]의 [할 것]·[전체] 두 탭 — 선언·마크업·실제 화면(로컬·호스팅)을 함께 본다.
 
 틀(view-def `modes`/`queue`, 섹션 `data-mode`)은 셸이 한 벌로 갖는다(test_seams 170·180번대).
 여기서는 **이 화면이 그 틀 위에 바르게 섰는지**만 본다:
 
   · 선언: view-def 에 modes(처리·관리)와 queue(mode=work)가 있고, 종류 목록은 적지 않았다.
-  · 마크업: 이 화면의 섹션이 전부 [관리]에 든다(큐 카드는 셸이 [처리]에 세운다).
+  · 마크업: 이 화면의 섹션이 전부 [전체]에 든다(큐 카드는 셸이 [할 것]에 세운다).
   · 이음매: 셸이 탭으로 접는 `hidden` 과 이 화면이 "자료 없음"으로 접는 것이 **같은 속성을
-    쓰지 않는다**. 같이 쓰면 [처리]에서 상태판이 텅 비고(숨은 섹션을 「자료 없음」으로 읽는다),
-    [관리]로 넘어올 때 자료 없는 섹션이 셸 손에 펴진다.
-  · 화면: 헤드리스 크롬으로 열어 [처리]↔[관리]를 누르고, [처리]에서 기회 상태를 바꿔 서버 값을 읽고,
-    숨은 탭에서 그려진 도넛이 [관리]에서 폭 0 이 아닌지, 인쇄 규칙이 접힌 섹션을 펴는지 본다.
+    쓰지 않는다**. 같이 쓰면 [할 것]에서 상태판이 텅 비고(숨은 섹션을 「자료 없음」으로 읽는다),
+    [전체]로 넘어올 때 자료 없는 섹션이 셸 손에 펴진다.
+  · 화면: 헤드리스 크롬으로 열어 [할 것]↔[전체]를 누르고, [할 것]에서 기회 상태를 바꿔 서버 값을 읽고,
+    숨은 탭에서 그려진 도넛이 [전체]에서 폭 0 이 아닌지, 인쇄 규칙이 접힌 섹션을 펴는지 본다.
 
 크롬이 없으면 화면 검사는 건너뛴다(test_render 와 같은 규칙).
 """
@@ -65,11 +65,11 @@ def test_site_declares_work_and_manage_modes_and_a_queue_without_kinds():
     d = _view_def()
     ms = d.get("modes")
     assert ms and [m["id"] for m in ms] == ["work", "manage"], f"modes 는 처리·관리 순이어야 한다: {ms}"
-    assert [m["label"] for m in ms] == ["처리", "관리"], ms
-    assert ms[0].get("count") == "queue_open_by_view.site", f"[처리] 배지는 페이로드의 열린 기회 수여야 한다: {ms[0]}"
-    assert "count" not in ms[1], "[관리]에는 건수 배지가 없다"
+    assert [m["label"] for m in ms] == ["할 것", "전체"], ms
+    assert ms[0].get("count") == "queue_open_by_view.site", f"[할 것] 배지는 페이로드의 열린 기회 수여야 한다: {ms[0]}"
+    assert "count" not in ms[1], "[전체]에는 건수 배지가 없다"
     q = d.get("queue")
-    assert q is not None and q.get("mode") == "work", f"queue 는 [처리] 탭에 서야 한다: {q}"
+    assert q is not None and q.get("mode") == "work", f"queue 는 [할 것] 탭에 서야 한다: {q}"
     assert "kinds" not in q or q["kinds"] == "see", \
         f"큐 종류 목록을 뷰에 적으면 종류→화면 사본이다(정본 scoring.KINDS 의 see): {q}"
 
@@ -80,7 +80,7 @@ def test_every_site_section_is_in_the_manage_tab():
     for attrs in sections:
         sid = re.search(r'id="([^"]+)"', attrs)
         assert re.search(r'\bdata-mode="manage"', attrs), \
-            f"섹션 {sid.group(1) if sid else attrs.strip()} 이 [관리]에 안 들었다 — 탭을 단 화면의 섹션은 data-mode 가 있어야 한다"
+            f"섹션 {sid.group(1) if sid else attrs.strip()} 이 [전체]에 안 들었다 — 탭을 단 화면의 섹션은 data-mode 가 있어야 한다"
     # view-def 의 sections 목록이 가리키는 id 도 전부 이 파일 마크업에 있다(밖으로 새는 섹션 없음)
     ids = set(re.findall(r'\bid="([^"]+)"', _markup()))
     for s in _view_def()["sections"]:
@@ -109,7 +109,7 @@ def test_site_print_opens_tab_folded_sections_and_has_no_important():
     assert "!important" not in src, "!important 금지"
     prints = re.findall(r"@media print\s*\{([\s\S]*?)\n\}", src)
     assert any("[data-mode][hidden]" in p for p in prints), \
-        "인쇄에서 탭으로 접힌 섹션([data-mode][hidden])을 펴는 규칙이 이 화면 CSS 에 없다 — 종이에서 [관리]가 통째로 사라진다"
+        "인쇄에서 탭으로 접힌 섹션([data-mode][hidden])을 펴는 규칙이 이 화면 CSS 에 없다 — 종이에서 [전체]가 통째로 사라진다"
 
 
 # ── 화면 ──────────────────────────────────────────────────────────────────────
@@ -268,24 +268,24 @@ def _open(browser: str, base: str, home: Path, query: str = "") -> dict:
 
 
 def _judge(label: str, o: dict) -> None:
-    assert [t[:2] for t in o["tabs"]] == ["처리", "관리"], f"{label}: 탭 줄 {o['tabs']}"
-    assert o["sel0"] == ["true", "false"], f"{label}: 처음은 [처리]여야 한다(선언 첫째): {o['sel0']}"
-    assert o["q0"] and o["qrows"] >= 1, f"{label}: [처리]에 큐 줄이 안 섰다: q={o['q0']} rows={o['qrows']}"
-    assert o["vis0"] == [], f"{label}: [처리]인데 [관리] 섹션이 보인다: {o['vis0']}"
+    assert [re.sub(r"\d+$", "", t) for t in o["tabs"]] == ["할 것", "전체"], f"{label}: 탭 줄 {o['tabs']}"
+    assert o["sel0"] == ["true", "false"], f"{label}: 처음은 [할 것]여야 한다(선언 첫째): {o['sel0']}"
+    assert o["q0"] and o["qrows"] >= 1, f"{label}: [할 것]에 큐 줄이 안 섰다: q={o['q0']} rows={o['qrows']}"
+    assert o["vis0"] == [], f"{label}: [할 것]인데 [전체] 섹션이 보인다: {o['vis0']}"
     assert o["gridOk0"], f"{label}: 탭 줄·큐 카드가 12열 격자에서 전폭으로 안 섰다"
-    assert o["sel1"] == ["false", "true"] and not o["q1"], f"{label}: [관리]를 눌렀는데 큐가 남았다: {o['sel1']} q={o['q1']}"
-    assert o["stRows"] >= 3, f"{label}: [처리]에서 자료가 그려진 뒤 [관리]를 열었는데 상태판이 비었다({o['stRows']}줄) — 접힌 섹션을 「자료 없음」으로 읽었다"
-    assert o["stBoard"], f"{label}: 상태판 카드가 [관리]에서 안 보인다"
+    assert o["sel1"] == ["false", "true"] and not o["q1"], f"{label}: [전체]를 눌렀는데 큐가 남았다: {o['sel1']} q={o['q1']}"
+    assert o["stRows"] >= 3, f"{label}: [할 것]에서 자료가 그려진 뒤 [전체]를 열었는데 상태판이 비었다({o['stRows']}줄) — 접힌 섹션을 「자료 없음」으로 읽었다"
+    assert o["stBoard"], f"{label}: 상태판 카드가 [전체]에서 안 보인다"
     assert o["stOffAttr"], f"{label}: 자료 없는 섹션이 하나도 없어 「스스로 접기」 검사가 헛돈다(픽스처)"
-    assert not o["stOffShown"], f"{label}: 자료 없어 접힌 섹션이 [관리]에서 펴졌다: {o['stOffShown']}"
+    assert not o["stOffShown"], f"{label}: 자료 없어 접힌 섹션이 [전체]에서 펴졌다: {o['stOffShown']}"
     assert set(o["secs"]) - set(o["stOffAttr"]) == set(o["vis1"]), \
-        f"{label}: [관리]에서 자료 있는 섹션이 정확히 서야 한다: 보임={o['vis1']} 접힘={o['stOffAttr']}"
+        f"{label}: [전체]에서 자료 있는 섹션이 정확히 서야 한다: 보임={o['vis1']} 접힘={o['stOffAttr']}"
     d = o["donut"]
     assert o["ixdShown"] and d and d["w"] > 100 and d["h"] > 100 and d["chart"], \
-        f"{label}: 숨은 탭에서 그려진 색인 도넛이 [관리]에서 폭 0 이다: {d}"
+        f"{label}: 숨은 탭에서 그려진 색인 도넛이 [전체]에서 폭 0 이다: {d}"
     assert o["foldedN"] >= 5 and o["printOpen"] == [], \
         f"{label}: 인쇄에서 접힌 섹션이 안 펴진다(접힘 {o['foldedN']}): {o['printOpen']}"
-    assert o.get("srvStatus") == "acked", f"{label}: [처리]에서 진행 중으로 바꿨는데 서버 값이 {o.get('srvStatus')!r}"
+    assert o.get("srvStatus") == "acked", f"{label}: [할 것]에서 진행 중으로 바꿨는데 서버 값이 {o.get('srvStatus')!r}"
     assert not o["_net"], f"{label}: /api/* 실패: {o['_net']}"
 
 

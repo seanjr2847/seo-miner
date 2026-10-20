@@ -144,6 +144,7 @@ button.st-row:hover { background:var(--accent-wash); }
 .st-row .dot.wait { background:var(--rule); }
 .st-row .rt b { display:block; font:650 var(--fs-2)/1.4 var(--sans); }
 .st-row .rt small { display:none; }
+.st-row.opt .rt b { font-weight:500; color:var(--sub); }   /* 선택 줄은 필수 줄보다 한 단 낮춘다 */
 .st-row .chev { width:14px; height:14px; background:var(--mute);
   -webkit-mask:var(--chev) center/9px 9px no-repeat; mask:var(--chev) center/9px 9px no-repeat; }
 button.st-row:hover .chev { background:var(--accent); }
@@ -548,6 +549,7 @@ function ST_open(el) {
 let ST_AUTO = "";        // "" 시작 전 · "wait" 준비 상태를 기다리는 중 · "off" 끝
 document.addEventListener("sm:mode", e => {
   if (e.detail && e.detail.view === "settings" && !e.detail.auto) ST_AUTO = "off";
+  ST_soon();             // 탭이 바뀌면 머리 버튼이 가리키는 칸이 보이는지 다시 본다
 });
 function ST_where(j) {
   const sec = document.getElementById("sm-set");
@@ -701,7 +703,7 @@ function ST_paint() {
       `<span class="rt"><b>${esc(r.name)}</b><small>${esc(r.desc)}</small></span>` +
       `<span class="badge ${r.pill.cls}">${esc(r.pill.text)}</span>` +
       (r.jump ? `<i class="chev" aria-hidden="true"></i>` : `<i></i>`);
-    const cls = "st-row" + (r === first ? " first" : "");
+    const cls = "st-row" + (r === first ? " first" : "") + (r.req ? "" : " opt");
     // 줄은 접힌 한 줄이라 설명은 마우스를 올리면 title 로 뜬다
     if (!r.jump) return `<li><div class="${cls}" title="${esc(r.desc)}">${inner}</div></li>`;
     return r.jump.ids
@@ -759,7 +761,10 @@ function ST_head() {
     const sp = vh.querySelector(".sp");
     if (sp) sp.insertAdjacentElement("afterend", b); else vh.appendChild(b);
   }
-  b.hidden = false;
+  // GA4 칸으로 가는 머리 버튼은 그 칸이 이미 화면에 서 있으면 뺀다(체크리스트·칸의 버튼이 같은 길이다)
+  const key = src ? src.dataset.smJump : fb && fb.jump;
+  const dst = key === "ga4" && document.querySelector("#sm-set ." + key);
+  b.hidden = !!(dst && dst.offsetParent);
   const cls = src ? (src.classList.contains("go") && !src.classList.contains("sec") ? "go" : "go sec") : "go sec";
   if (b.className !== cls) b.className = cls;
   const t = src ? src.textContent.trim() : "다음: " + ST_paint.first.name;

@@ -2,16 +2,16 @@
 """[순위 상승 기회](keywords)의 「내부 경쟁(카니벌라이제이션)」 소카드 — 근거 보기가 항상 선다.
 
 문제였던 것: 내부 경쟁(cannibalization) 기회의 근거 섹션이 `log`(검색어별 표)였는데, 그 표는 4~20위 상위 15개만 싣는다.
-기회의 검색어가 그 표에 없으면 개요/큐의 [자세히 보기]가 근거를 못 보여 줬다. 지금은 [관리] 탭에 소카드가 서고,
+기회의 검색어가 그 표에 없으면 개요/큐의 [자세히 보기]가 근거를 못 보여 줬다. 지금은 [전체] 탭에 소카드가 서고,
 기회로 선 검색어마다 그 검색어를 나눠 가진 내 페이지들(주소·노출·클릭·순위·점유율)과 정본 후보를 보인다.
 
 못 박는 것:
-  · 마크업 — `kw-cannibal` 섹션이 [관리] 탭 안에 있고, 비면 뷰가 data-kw-off 로 접는다(hidden 은 셸 탭이 쓴다).
+  · 마크업 — `kw-cannibal` 섹션이 [전체] 탭 안에 있고, 비면 뷰가 data-kw-off 로 접는다(hidden 은 셸 탭이 쓴다).
   · 이음매 — scoring 의 cannibalization see 가 그 섹션을 가리킨다(섹션 존재·탭 검사는 test_modes_assign 이 이미 한다).
   · 사본 금지 — 소카드는 기회(d.opps)와 페이지(d.query_pages)를 셸에서 읽는다. 정본 후보의 기준은 처방(scoring play)의
     한 곳이라 이 화면은 그 순서(클릭 → 노출)를 따르고 새 기준을 만들지 않는다.
   · 화면(브라우저) — 상위 15개 밖 검색어도 소카드에 서고, 페이지별 숫자가 나오고, 정본 후보가 하나만 달리고,
-    [상태 바꾸기]가 [처리] 큐의 서랍(같은 기회 한 벌)을 열고, 개요 줄의 [자세히 보기]가 [관리] 탭의 소카드로 온다.
+    [상태 바꾸기]가 [할 것] 큐의 서랍(같은 기회 한 벌)을 열고, 개요 줄의 [자세히 보기]가 [전체] 탭의 소카드로 온다.
     기회가 없는 사이트에서는 소카드가 접힌다. 로컬·호스팅(serve_hosted) 둘 다.
 
 CLAUDE.md 의 규율: 검사를 추가했으면 일부러 깨서 FAIL 이 나는 것까지 확인한다.
@@ -54,7 +54,7 @@ def test_section_exists_in_manage_and_is_not_the_old_log():
     chain = ma._chains("keywords")
     assert SEC in chain, f"keywords.html 마크업에 소카드 섹션 #{SEC} 가 없다"
     tabs = [a.get("data-mode") for a in chain[SEC] if a.get("data-mode")]
-    assert tabs == ["manage"], f"#{SEC} 가 [관리] 탭 래퍼 안에 없다: {tabs}"
+    assert tabs == ["manage"], f"#{SEC} 가 [전체] 탭 래퍼 안에 없다: {tabs}"
     sec = chain[SEC][-1]
     assert sec["_tag"] == "section", f"#{SEC} 는 화면 상자로 옮겨지는 <section> 이어야 한다(탭 래퍼): {sec['_tag']}"
     body = _markup(_kw())
@@ -159,7 +159,7 @@ PROBE = r"""<script>
     var tabs = [].slice.call(box.querySelectorAll(":scope > .vtabs [role=tab]"));
     out.tabs = tabs.map(function (t) { return t.firstChild.textContent.trim(); });
     tabs[0].click(); await sleep(150);
-    out.firstOnWork = !vis(document.getElementById("kw-cannibal"));      // [처리] 탭에서는 소카드가 안 보인다
+    out.firstOnWork = !vis(document.getElementById("kw-cannibal"));      // [할 것] 탭에서는 소카드가 안 보인다
     tabs[1].click(); await sleep(250);
     var sec = document.getElementById("kw-cannibal");
     out.sec = {exists: !!sec, visible: vis(sec), off: !!sec && sec.hasAttribute("data-kw-off"),
@@ -173,7 +173,7 @@ PROBE = r"""<script>
                 return {url: tr.dataset.kwcPage, cand: tr.querySelectorAll(".kwc-cand").length, text: txt(tr)}; }),
               cand: cand.length, text: txt(el), hasOpen: !!el.querySelector("[data-kwc-open]")};
     });
-    // 소카드에서 상태 서랍을 연다 — [처리] 큐의 서랍과 같은 기회 한 벌.
+    // 소카드에서 상태 서랍을 연다 — [할 것] 큐의 서랍과 같은 기회 한 벌.
     var first = sec && sec.querySelector("[data-kwc-open]");
     if (first) {
       first.click(); await sleep(400);
@@ -197,11 +197,11 @@ PROBE = r"""<script>
 
 
 def _assert_with_cards(label: str, o: dict) -> None:
-    assert o["tabs"][:2] == ["처리", "관리"] or o["tabs"][0].startswith("처리"), f"{label}: 탭 줄이 이상하다: {o['tabs']}"
+    assert o["tabs"][:2] == ["할 것", "전체"] or o["tabs"][0].startswith("할 것"), f"{label}: 탭 줄이 이상하다: {o['tabs']}"
     s = o["sec"]
-    assert s["exists"] and s["visible"], f"{label}: [관리] 탭에서 소카드가 안 보인다: {s}"
+    assert s["exists"] and s["visible"], f"{label}: [전체] 탭에서 소카드가 안 보인다: {s}"
     assert s["h2"] == TITLE, f"{label}: 소카드 제목이 다르다: {s['h2']!r}"
-    assert o["firstOnWork"], f"{label}: [처리] 탭인데 소카드가 보인다 — 탭 래퍼가 아니다"
+    assert o["firstOnWork"], f"{label}: [할 것] 탭인데 소카드가 보인다 — 탭 래퍼가 아니다"
     rows = {r["q"]: r for r in o["rows"]}
     for q in (TOP, FAR, NOPG):
         assert q in rows, f"{label}: 기회로 선 검색어 {q!r} 가 소카드에 없다: {sorted(rows)}"
@@ -232,7 +232,7 @@ def _assert_with_cards(label: str, o: dict) -> None:
     # 개요 줄 → 자세히 보기
     assert o["see"] == ["keywords", SEC], f"{label}: 셸이 아는 cannibalization see 가 {o['see']}"
     g = o["goSee"]
-    assert g["tab"] == "manage" and g["visible"], f"{label}: '자세히 보기'가 [관리] 탭의 소카드에 못 닿았다: {g}"
+    assert g["tab"] == "manage" and g["visible"], f"{label}: '자세히 보기'가 [전체] 탭의 소카드에 못 닿았다: {g}"
     assert -40 <= g["top"] <= 400, f"{label}: 소카드가 화면 위쪽에 서지 않았다(top={g['top']})"
 
 

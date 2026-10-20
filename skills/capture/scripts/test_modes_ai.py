@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""[AI 인용]·[AI 요약] 두 화면의 [처리]·[관리] 탭 — 선언·마크업·화면 동작을 한 파일에서 못 박는다.
+"""[AI 인용]·[AI 요약] 두 화면의 [할 것]·[전체] 탭 — 선언·마크업·화면 동작을 한 파일에서 못 박는다.
 
 틀 자체(view-def modes / queue, 셸의 SM.modeApply·SM.queue)는 test_seams 170·180번대가 지킨다.
 여기는 **이 두 화면이 그 틀에 제대로 올라탔는가** 만 본다:
@@ -8,10 +8,10 @@
              큐 종류 목록은 뷰에 적지 않는다(정본 scoring.KINDS 의 see → queue_kinds_by_view).
   2. 마크업 — view-def 가 담는다고 한 모든 요소는 data-mode="manage" 인 섹션 **안에** 있다(또는 그것이다).
              셸은 data-mode 가 달린 화면 상자 직계에만 hidden 을 걸고, 섹션 안쪽의 hidden 은 뷰가 쓴다 —
-             섹션마다 따로 달면 [처리]→[관리]로 돌아올 때 셸이 뷰가 숨긴 빈 카드까지 펴 버린다.
+             섹션마다 따로 달면 [할 것]→[전체]로 돌아올 때 셸이 뷰가 숨긴 빈 카드까지 펴 버린다.
   3. CSS   — display:contents 같은 id 규칙이 hidden 을 이기면 접힌 탭이 안 접힌다. 인쇄에서는 접힌 섹션이 살아난다.
   4. 화면  — 헤드리스 브라우저로 로컬·호스팅(serve_hosted)을 열어 탭 전환, 처리 큐에서 상태를 바꾼 뒤 서버 값,
-             [관리] 카드가 폭 0 으로 안 그려지는지, 열린 기회 없을 때 [관리]가 먼저 서는지.
+             [전체] 카드가 폭 0 으로 안 그려지는지, 열린 기회 없을 때 [전체]가 먼저 서는지.
 
 CLAUDE.md 의 규율: 검사를 추가했으면 일부러 깨서 FAIL 이 나는 것까지 확인한다.
 """
@@ -98,8 +98,8 @@ def test_modes_are_declared_with_work_and_manage_tabs():
     for vid in VIEWS:
         d = _def(vid)
         assert d.get("modes") == [
-            {"id": "work", "label": "처리", "count": f"queue_open_by_view.{vid}"},
-            {"id": "manage", "label": "관리"}], f"{vid}: modes 선언이 [처리]·[관리]가 아니다: {d.get('modes')}"
+            {"id": "work", "label": "할 것", "count": f"queue_open_by_view.{vid}"},
+            {"id": "manage", "label": "전체"}], f"{vid}: modes 선언이 [할 것]·[전체]가 아니다: {d.get('modes')}"
         assert d.get("queue") == {"mode": "work"}, \
             f"{vid}: queue 는 {{mode: work}} 만 — 종류 목록은 뷰에 적지 않는다(scoring.KINDS see 의 뒤집기): {d.get('queue')}"
 
@@ -130,7 +130,7 @@ def test_every_declared_section_sits_inside_a_manage_section():
         wraps = [a for sid in d["sections"] for a in chain[sid] if a.get("data-mode")]
         assert wraps and all(a["_tag"] == "section" for a in wraps), \
             f"{vid}: 접는 단위는 <section> 이어야 한다(test_seams 170 이 section/.band 만 센다)"
-    # 호스팅 전용 섹션(질문 편집기)은 화면 상자 직계라 스스로 [관리]에 선다.
+    # 호스팅 전용 섹션(질문 편집기)은 화면 상자 직계라 스스로 [전체]에 선다.
     for f, sd in _section_defs("aicite"):
         a = _chains(f.read_text("utf-8"))[sd["id"]][-1]
         assert a.get("data-mode") == "manage", f"{f.name}: 화면 상자 직계 섹션은 data-mode=\"manage\" 가 있어야 한다"
@@ -166,7 +166,7 @@ def test_wrapper_display_rules_do_not_beat_hidden():
                 one = one.strip()
                 if re.search(rf"(?<![\w-])#{vid}\b(?![-\w])", one) and "[data-mode" not in one:
                     assert ":not([hidden])" in one, \
-                        f"{vid}: `{one}` 의 display:contents 가 hidden 을 이긴다 — 접힌 [관리]가 안 접힌다"
+                        f"{vid}: `{one}` 의 display:contents 가 hidden 을 이긴다 — 접힌 [전체]가 안 접힌다"
 
 
 def test_print_shows_folded_manage_section():
@@ -174,7 +174,7 @@ def test_print_shows_folded_manage_section():
         css = re.sub(r"/\*[\s\S]*?\*/", "", _css(vid))
         blocks = re.findall(r"@media\s+print\s*\{((?:[^{}]|\{[^{}]*\})*)\}", css)
         assert any(f"#{vid}" in b and "[hidden]" in b and "display" in b for b in blocks), \
-            f"{vid}: 인쇄에서 접힌 [관리] 섹션을 되살리는 @media print 규칙이 없다 — 종이에서 사라진다"
+            f"{vid}: 인쇄에서 접힌 [전체] 섹션을 되살리는 @media print 규칙이 없다 — 종이에서 사라진다"
 
 
 def test_no_important_and_no_tracking_on_korean_in_the_new_rules():
@@ -185,7 +185,7 @@ def test_no_important_and_no_tracking_on_korean_in_the_new_rules():
 # ───────────────────────── 4. 첫 탭 ─────────────────────────
 
 def test_default_tab_follows_open_queue_count():
-    """열린 기회가 없을 때 [관리]를 앞에 세우는 일은 셸(SM.modeDefaults)이 한 벌로 한다 — 뷰가 제 사본을
+    """열린 기회가 없을 때 [전체]를 앞에 세우는 일은 셸(SM.modeDefaults)이 한 벌로 한다 — 뷰가 제 사본을
     들면 화면마다 규칙이 갈린다. 배지(count)가 0 이면 그 탭은 첫 탭이 아니다."""
     shell = _shell_src()
     assert "modeDefaults" in shell, "셸에 첫 탭 규칙(modeDefaults)이 없다"
@@ -209,7 +209,7 @@ def test_go_see_opens_the_tab_of_its_target():
 def test_docs_describe_the_two_tabs():
     for vid in VIEWS:
         t = (DOCS / f"{vid}.md").read_text("utf-8")
-        assert "[처리]" in t and "[관리]" in t, f"docs/screens/{vid}.md 에 [처리]·[관리] 구성 설명이 없다"
+        assert "[할 것]" in t and "[전체]" in t, f"docs/screens/{vid}.md 에 [할 것]·[전체] 구성 설명이 없다"
 
 
 # ───────────────────────── 6. 화면(브라우저) ─────────────────────────
@@ -233,11 +233,11 @@ PROBE = r"""<script>
       o.sel0 = tabs.map(function (t) { return t.getAttribute("aria-selected"); });
       var wrap = document.getElementById(V), host = document.getElementById("q-" + V);
       var cards = function () { return [].slice.call(box.querySelectorAll(".card")).filter(function (c) { return !host || !host.contains(c); }); };
-      // [처리]
+      // [할 것]
       tabs[0].click(); await sleep(150);
       o.work = {wrapDisp: getComputedStyle(wrap).display, host: vis(host), rows: host ? host.querySelectorAll(".qlist details.opp").length : -1,
                 manageCards: cards().filter(vis).map(function (c) { return c.id; })};
-      // [관리]
+      // [전체]
       tabs[1].click(); await sleep(150);
       var shown = cards().filter(function (c) { return !c.closest("[hidden]"); });
       o.manage = {wrapDisp: getComputedStyle(wrap).display, host: vis(host),
@@ -254,7 +254,7 @@ PROBE = r"""<script>
       var see = (window.KIND_VIEWS || {}); var k = Object.keys(see).filter(function (x) { return see[x][0] === V; })[0];
       if (k) { SM.queue.goSee(see[k][0], see[k][1]); await sleep(150);
                o.goSee = {sec: see[k][1], tab: SM.modeNow(V), secVisible: vis(document.getElementById(see[k][1]))}; }
-      // [처리]에서 상태 바꾸기 → 서버 값
+      // [할 것]에서 상태 바꾸기 → 서버 값
       SM.show(V); tabs[0].click(); await sleep(150);
       var row = host && host.querySelector(".qlist details.opp");
       if (row) {
@@ -284,7 +284,7 @@ def _seed(home: Path) -> None:
         conn.executemany(
             "INSERT INTO opportunities(project_id,kind,target,score,reasoning,status) VALUES(?,?,?,?,?,'new')",
             [(pid, "ai_citation_gap", f"{tr.SITES[1]} 질문 {i}", 60 - i, "AI 가 우리를 인용하지 않습니다") for i in range(3)])
-        # 질문도 심사 대상이다(TRIAGE_KINDS) — 작업으로 보낸 것만 [처리] 큐에 선다
+        # 질문도 심사 대상이다(TRIAGE_KINDS) — 작업으로 보낸 것만 [할 것] 큐에 선다
         import scoring
         db.set_verdicts(conn, pid, [scoring.verdict_key("ai_citation_gap", f"{tr.SITES[1]} 질문 {i}") for i in range(3)], "work")
         conn.commit()
@@ -306,29 +306,29 @@ def _assert_open_site(label: str, vs: dict) -> None:
     for V in VIEWS:
         o = vs[V]
         L = f"{label} {V}"
-        assert o["tabs"][:2] and o["tabs"][0].startswith("처리") and o["tabs"][1].startswith("관리"), f"{L}: 탭 글 {o['tabs']}"
-        assert o["cnt"] > 0, f"{L}: 열린 기회가 있는 사이트인데 [처리] 배지 값이 0 이다"
+        assert o["tabs"][:2] and o["tabs"][0].startswith("할 것") and o["tabs"][1].startswith("전체"), f"{L}: 탭 글 {o['tabs']}"
+        assert o["cnt"] > 0, f"{L}: 열린 기회가 있는 사이트인데 [할 것] 배지 값이 0 이다"
         assert o["initial"] == "work" and o["sel0"] == ["true", "false"], \
-            f"{L}: 열린 기회가 있으면 [처리]가 먼저 서야 한다: {o['initial']} {o['sel0']}"
+            f"{L}: 열린 기회가 있으면 [할 것]가 먼저 서야 한다: {o['initial']} {o['sel0']}"
         w, m = o["work"], o["manage"]
-        assert w["wrapDisp"] == "none", f"{L}: [처리]에서 [관리] 래퍼가 안 접혔다(display={w['wrapDisp']})"
-        assert w["host"] and w["rows"] > 0, f"{L}: [처리]에 큐 카드/줄이 없다: {w}"
-        assert not w["manageCards"], f"{L}: [처리]에 [관리] 카드가 새어 보인다: {w['manageCards']}"
-        assert m["wrapDisp"] != "none" and not m["host"], f"{L}: [관리]에서 래퍼/큐 상태가 틀렸다: {m}"
-        assert m["nShown"] > 0, f"{L}: [관리]에 보이는 카드가 하나도 없다"
-        assert not m["invisible"], f"{L}: [관리]의 카드가 안 그려지거나 폭이 0 에 가깝다: {m['invisible']}"
-        assert not m["leaked"], f"{L}: view 가 숨긴(hidden) 카드가 [처리]→[관리] 전환 뒤 펴졌다: {m['leaked']}"
-        assert not m["zeroSvg"], f"{L}: [관리]의 그림(svg)이 폭 0 으로 그려졌다(숨은 탭에서 그려진 듯): {m['zeroSvg']}"
+        assert w["wrapDisp"] == "none", f"{L}: [할 것]에서 [전체] 래퍼가 안 접혔다(display={w['wrapDisp']})"
+        assert w["host"] and w["rows"] > 0, f"{L}: [할 것]에 큐 카드/줄이 없다: {w}"
+        assert not w["manageCards"], f"{L}: [할 것]에 [전체] 카드가 새어 보인다: {w['manageCards']}"
+        assert m["wrapDisp"] != "none" and not m["host"], f"{L}: [전체]에서 래퍼/큐 상태가 틀렸다: {m}"
+        assert m["nShown"] > 0, f"{L}: [전체]에 보이는 카드가 하나도 없다"
+        assert not m["invisible"], f"{L}: [전체]의 카드가 안 그려지거나 폭이 0 에 가깝다: {m['invisible']}"
+        assert not m["leaked"], f"{L}: view 가 숨긴(hidden) 카드가 [할 것]→[전체] 전환 뒤 펴졌다: {m['leaked']}"
+        assert not m["zeroSvg"], f"{L}: [전체]의 그림(svg)이 폭 0 으로 그려졌다(숨은 탭에서 그려진 듯): {m['zeroSvg']}"
         st = o.get("status")
-        assert st, f"{L}: [처리] 큐에 줄이 있는데 상태 바꾸기를 못 해 봤다"
+        assert st, f"{L}: [할 것] 큐에 줄이 있는데 상태 바꾸기를 못 해 봤다"
         assert st["before"] and set(st["before"]) <= {"new", "acked"}, f"{L}: 바꾸기 전 상태 {st['before']}"
         assert st["after"] and set(st["after"]) == {"done"}, f"{L}: 서버 값이 안 바뀌었다: {st}"
         assert st["cntAfter"] == st["badgeSrv"] and st["cntAfter"] < o["cnt"], f"{L}: 탭 배지가 서버 값을 안 따라간다: {st} (전 {o['cnt']})"
-        assert o["statusRowGone"], f"{L}: 끝낸 기회가 [처리] 큐에 남아 있다"
+        assert o["statusRowGone"], f"{L}: 끝낸 기회가 [할 것] 큐에 남아 있다"
     assert vs["aisum"]["gapBtn"]["tab"] == "work" and vs["aisum"]["gapBtn"]["host"], \
-        f"{label}: 띠의 [빠진 검색어 보기]가 [처리] 큐로 안 데려간다: {vs['aisum']['gapBtn']}"
+        f"{label}: 띠의 [빠진 검색어 보기]가 [할 것] 큐로 안 데려간다: {vs['aisum']['gapBtn']}"
     assert vs["aicite"]["missBtn"]["tab"] == "manage" and vs["aicite"]["missBtn"]["sec"], \
-        f"{label}: 띠의 [질문 열기]가 근거 표([관리])를 안 연다: {vs['aicite']['missBtn']}"
+        f"{label}: 띠의 [질문 열기]가 근거 표([전체])를 안 연다: {vs['aicite']['missBtn']}"
 
 
 def _assert_quiet_site(label: str, vs: dict) -> None:
@@ -337,8 +337,8 @@ def _assert_quiet_site(label: str, vs: dict) -> None:
         L = f"{label} {V}"
         assert o["cnt"] == 0, f"{L}: 열린 기회가 없는 사이트가 아니다({o['cnt']})"
         assert o["initial"] == "manage" and o["sel0"] == ["false", "true"], \
-            f"{L}: 열린 기회가 없으면 [관리]가 먼저 서야 한다: {o['initial']} {o['sel0']}"
-        assert o["manage"]["wrapDisp"] != "none" and not o["manage"]["invisible"], f"{L}: [관리] 상태 {o['manage']}"
+            f"{L}: 열린 기회가 없으면 [전체]가 먼저 서야 한다: {o['initial']} {o['sel0']}"
+        assert o["manage"]["wrapDisp"] != "none" and not o["manage"]["invisible"], f"{L}: [전체] 상태 {o['manage']}"
 
 
 def run() -> None:
@@ -387,7 +387,7 @@ def run() -> None:
                 _assert_open_site("호스팅", _read(pg))
                 pg2 = tr.dom(browser, f"{site.base}/d?reload_probe=1#{alpha}", prof)
                 _assert_quiet_site("호스팅", _read(pg2))
-                assert 'id="sm-aiq"' in re.sub(r"<script[\s\S]*?</script>", "", pg), "호스팅: 질문 편집기(sm-aiq)가 [관리]에 안 섰다"
+                assert 'id="sm-aiq"' in re.sub(r"<script[\s\S]*?</script>", "", pg), "호스팅: 질문 편집기(sm-aiq)가 [전체]에 안 섰다"
         finally:
             tr.RELOAD_TOUCH = saved
         print("  호스팅: ok")

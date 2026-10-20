@@ -313,6 +313,22 @@ def home(request: Request):
         return _html(pages.chrome(pages.page("landing.html")), "검색·AI 답변 가시성 추적 | seo-miner")
     with store.session(uid) as conn:
         rows = store.sites(conn, uid)
+    # 카드에 올릴 숫자 — 이 유저의 brain 을 한 번 열어 사이트마다 가볍게 읽는다(store.glance).
+    # brain 이 아직 없으면(첫 분석 전) 만들지 않고 건너뛴다. 못 읽은 카드는 숫자 줄만 빠진다.
+    glance: dict[str, dict] = {}
+    if rows and db.db_path(store.home(uid)).exists():
+        try:
+            brain = db.connect(home=store.home(uid))
+        except Exception:
+            brain = None
+        if brain is not None:
+            try:
+                for r in rows:
+                    g = store.glance(brain, r["project"]) if r["last_run_at"] else None
+                    if g:
+                        glance[r["project"]] = g
+            finally:
+                brain.close()
     # 처음 온 사람의 "/" 는 온보딩이다 — 빈 사이트 목록을 보여 주고 거기서 등록을
     # 찾게 하지 않는다. 목록 화면(app.html)은 사이트가 있는 사람의 것이다.
     # 로컬 플러그인이 설정을 실어 보낸 링크도 온보딩으로 간다 — 그 칸들을 채우는 곳이 거기다.
@@ -332,7 +348,9 @@ def home(request: Request):
         # 누르나(대시보드 열기). 상태는 배지고 행동은 버튼이다 — 섞이면 "첫 분석
         # 진행 중"이 누를 수 있는 것처럼 보인다.
         items = "".join(
-            f'<li class="{"waiting" if not r["last_run_at"] else "done"}">'
+            f'<li class="{"waiting" if not r["last_run_at"] else "done"}"'
+            + "".join(f' data-{k}="{int(v)}"' for k, v in glance.get(r["project"], {}).items())
+            + '>'
             f'<div class="s-id"><span class="nm">{e(r["project"])}</span>'
             f'<span class="pr">{e(r["gsc_property"] or r["domain"])}</span></div>'
             '<div class="s-state">'

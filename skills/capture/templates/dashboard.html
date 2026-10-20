@@ -346,12 +346,18 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
   /* 메뉴가 열한 개인데 좁은 화면에는 대여섯 개만 들어간다. 잘렸다는 표시가 없으면
      나머지는 없는 것이 된다 — 양 끝을 흐려 더 있다고 말한다. 끝까지 밀었거나 넘칠 게
      없으면 navFade 가 .end/.begin 을 달아 그쪽 페이드를 끈다. */
-  .navscroll { --fade:34px; --fadeL:34px; display:flex; align-items:center; gap:6px;
+  .navscroll { --fade:0px; --fadeL:34px; display:flex; align-items:center; gap:6px;
     overflow-x:auto; scrollbar-width:none; padding:8px 16px;
     -webkit-mask-image:linear-gradient(to right, transparent, #000 var(--fadeL), #000 calc(100% - var(--fade)), transparent);
             mask-image:linear-gradient(to right, transparent, #000 var(--fadeL), #000 calc(100% - var(--fade)), transparent); }
-  .navscroll.end { --fade:0px; }
   .navscroll.begin { --fadeL:0px; }
+  /* 오른쪽 끝은 마스크 대신 바탕색 페이드 + 화살표다 — 글자가 흐려지기만 하면 "잘렸다"로
+     읽혀도 "더 있다"로는 안 읽혔다. 끝까지 밀었으면(.end) 끈다. 눌리지는 않는다. */
+  .navbar::after { content:"›"; position:absolute; right:0; top:0; bottom:0; width:52px;
+    display:flex; align-items:center; justify-content:flex-end; padding-right:12px;
+    font:500 22px/1 var(--sans); color:var(--sub); pointer-events:none;
+    background:linear-gradient(to right, transparent, var(--canvas) 62%); }
+  .navbar:has(.navscroll.end)::after { display:none; }
   .navscroll::-webkit-scrollbar { display:none; }
   #nav, #navfoot { flex:none; gap:6px; }
   #navfoot { padding-left:10px; margin-left:4px; border-left:1px solid var(--line); }
@@ -653,7 +659,7 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
   background:var(--card); border-radius:var(--r-in); box-shadow:var(--shadow-2); }
 .vh-more .vh-menu > * { white-space:nowrap; }
 .vh .sp { flex:1; }
-.vh + section, .view > section:first-child { margin-top:32px; }
+.vh + section, .vh + .vban + section, .view > section:first-child { margin-top:32px; }
 
 /* ── 다음 행동 띠 ────────────────────────────────────────────
    화면당 하나. 머리(.vh) 바로 밑에 서서 "무엇을 왜"를 한 문장으로 말하고, 그
@@ -722,7 +728,7 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
   .view:not(#view-guide) > .next .progress { order:3; }
   @media (max-width:560px) { .view:not(#view-guide) > .next { left:var(--sp-4); width:auto; } }
   /* 카드가 본문 끝을 가리지 않게 — 떠 있는 동안만 아래를 더 비운다 */
-  body:has(.view:not([hidden]):not(#view-guide) > .next) main { padding-bottom:200px; }
+  body:has(.view:not([hidden]):not(#view-guide) > .next) main { padding-bottom:var(--nx-pad, 200px); }
 }
 .nx-x { position:absolute; top:8px; right:8px; width:28px; height:28px; display:grid; place-items:center;
   border:0; border-radius:var(--r-in); background:none; color:var(--sub); cursor:pointer;
@@ -795,6 +801,14 @@ html[data-rail="min"] .fold svg { transform:rotate(180deg); }
 .vgrp .gst { font:var(--micro); color:var(--accent); }
 .vgrp .gst:empty { display:none; }
 .vgrp .go { margin-left:var(--sp-2); }
+/* 다시 잴 때가 아니면 [이 묶음 다시 재기]는 알약이 아니라 [단계별로 다시]와 같은 글자 링크다 —
+   화면 오른쪽 위의 제일 눈에 띄는 자리를 측정 관리가 차지하지 않게. 때가 되면(.quiet 이 빠지고
+   .sec 도 빠져) 채운 알약으로 선다. 누르는 일은 그대로다. */
+.vgrp .go.quiet { background:none; box-shadow:none; padding:0 4px; color:var(--sub);
+  font:500 var(--fs-1)/1 var(--sans); }
+.vgrp .go.quiet:hover { background:none; color:var(--accent); text-decoration:underline; }
+.vgrp .go.quiet[disabled], .vgrp .go.quiet[disabled]:hover { background:none; color:var(--mute);
+  text-decoration:none; }
 /* 묶음 이름 — 레일의 묶음 제목이 안 서는 좁은 화면에서도 "이 묶음"이 무엇인지 말한다. */
 .vgrp .gname { font:600 var(--fs-1)/1.35 var(--sans); color:var(--ink); }
 /* 좁은 화면의 머리는 한 줄이다 — 축별 "마지막 수집" 줄은 바로 아래 묶음 줄(.vgrp)과
@@ -1579,6 +1593,18 @@ button.chip.on { color:var(--accent); background:var(--accent-wash); font-weight
 /* 준비물 줄의 복사 칩 — .cmd 의 위 여백은 문단용이라 목록 안에서는 줄인다. */
 #docban .must .cmd { margin:7px 0 3px; background:var(--card); }
 #docban > details { margin-top:4px; }
+/* 한 줄 띠 — 이미 데이터가 있는 사이트. 문구 + 버튼 하나가 한 줄에 서고, [자세히]·[더 켤 수 있는
+   기능]은 그 줄 안의 작은 글자 링크다(펴면 그 아래로 내려온다). 첫 상태의 큰 상자는 그대로. */
+#docban.slim { display:flex; flex-wrap:wrap; align-items:center; gap:2px var(--sp-4);
+  padding:8px 16px; margin-top:var(--sp-4); }
+#docban.slim .nx, #docban.slim .verdict { display:none; }
+#docban.slim ul.must { flex:1 1 auto; font-size:var(--fs-1); line-height:1.5; }
+#docban.slim .must > li > details:not([open]) { flex:0 0 auto; }
+#docban.slim details:not([open]) { margin:0; }
+#docban.slim > details { flex:0 0 auto; }
+#docban.slim > details[open] { flex:1 1 100%; }
+#docban.slim summary { min-height:var(--btn-h-sm); font-size:var(--fs-1); color:var(--sub); }
+#docban.slim summary:hover { color:var(--accent); }
 #docban summary { display:flex; align-items:center; min-height:var(--btn-h-sm);
   font:500 var(--fs-1)/1.4 var(--sans); color:var(--accent); cursor:pointer; text-decoration:none; }
 #docban summary:hover { text-decoration:underline; }

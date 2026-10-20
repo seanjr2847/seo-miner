@@ -28,6 +28,19 @@
   #ov-grid:has(.ov-hero[data-board]) .ov-side { grid-column:1 / -1; grid-template-columns:repeat(2, minmax(0,1fr)); }
   #ov-grid:has(.ov-hero[data-board]) .ov-side > .card[hidden] + .card { grid-column:1 / -1; }
 }
+/* 좁은 화면: 개선 기회(스포트라이트)가 KPI 5장·이번 달 할 일 뒤 1,700px 아래로 밀렸다. 화면 상자를 세로
+   flex 로 바꾸고 격자를 풀어(contents) 순서만 다시 매긴다 — 개선 기회 → 지표 → 나머지. 데스크톱 격자는 그대로. */
+@media (max-width:560px) {
+  #view-overview:not([hidden]) { display:flex; flex-direction:column; gap:var(--gap); }
+  #view-overview #ov-grid, #view-overview .ov-in { display:contents; }
+  #view-overview .ov-hero { order:1; }
+  #view-overview > .band { order:2; margin-top:0; }
+  #view-overview .ov-side, #view-overview .ov-plays, #view-overview .ov-health,
+  #view-overview .ov-daily { order:3; }
+  /* 셸이 덧붙인 섹션(시장 안내·검색 성과·무엇으로 들어오나)도 격자와 같은 칸 — order 기본값 0 이면
+     개선 기회·KPI 띠보다 위로 올라온다. 머리(.vh)·배너(#docban)만 맨 위에 남는다. */
+  #view-overview > #sm-kwnudge, #view-overview > #sm-perf, #view-overview > #sm-dim { order:3; }
+}
 @container (max-width:760px) { .kboard { grid-template-columns:minmax(0,1fr); } .kcol { min-height:0; } }
 
 .nw { white-space:nowrap; }              /* 날짜 범위·기준 캡션은 중간에서 꺾이지 않는다 */
@@ -666,7 +679,12 @@ VIEW("overview", function (d) {
   const md = s => String(s || "").slice(5);
   const gap = d.gsc_prev && d.gsc_date
     ? Math.round((new Date(d.gsc_date) - new Date(d.gsc_prev)) / 864e5) : 0;
-  const vs = pp ? `직전 ${per || "기간"}(<span class="nw">${md(pp.from)}~${md(pp.to)}</span>)`
+  // 지금 창의 날짜도 적어 두 기간을 나란히 읽게 한다 — 창은 서버가 센다(gsc_cur_period·gsc_prev_period).
+  // 첫 줄은 지금 창, 둘째 줄은 직전 창과 그 값. 직전 날짜는 괄호로 묶는다 — 안 묶으면
+  // "04-28 12" 처럼 끝 날짜와 값이 붙어 날짜 하나로 읽혔다.
+  const win = d.gsc_cur_period || null;
+  const rng = w => `<span class="nw">${md(w.from)} → ${md(w.to)}</span>`;
+  const vs = pp ? `직전(${rng(pp)})`
     : gap > 0 ? `${gap === 1 ? "하루" : `${gap}일`} 전 ${per || "수집분"} 대비` : "직전";
   const cmp = pp ? `${pp.from}~${pp.to} 과 비교`
     : d.gsc_prev && d.gsc_date ? `${d.gsc_prev} → ${d.gsc_date}${per ? ` · 같은 ${per} 기준` : ""}` : "";
@@ -675,9 +693,9 @@ VIEW("overview", function (d) {
   // 안 실으면 한 화면에 "28일 합계 6"과 "합계 19"가 나란히 서서 고장으로 읽혔다.
   // 「노출된 검색어」는 합이 아니라 개수다 — 거기엔 기간만 붙인다.
   const was = k => {
-    const base = per && (k === "q" ? `${per} 동안` : `검색어별 ${per} 합계`);
-    return [base, Number.isFinite(prev[k]) ? `${vs} ${num(prev[k])}` : "견줄 직전 기록 없음"]
-      .filter(Boolean).join(" · ");
+    const base = per && (k === "q" ? `${per} 동안` : `검색어별 ${per} 합계`) + (win ? ` · ${rng(win)}` : "");
+    return [base, Number.isFinite(prev[k]) ? `${vs} ${num(prev[k])}` : "비교할 직전 기록 없음"]
+      .filter(Boolean).join("<br>");
   };
   $("band").innerHTML = [
     ["클릭", num(last.clk), delta(last.clk - prev.clk, false, prev.clk, cmp),

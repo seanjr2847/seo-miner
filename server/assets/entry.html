@@ -218,12 +218,20 @@ h2 { font:700 var(--fs-4)/1.35 var(--sans); margin:4px 0 4px; }
 .sites .lastrow .v { display:flex; align-items:baseline; flex-wrap:wrap; gap:2px 10px; }
 .sites .ago { font:650 var(--fs-3)/1.4 var(--sans); }
 .sites .ago:empty { display:none; }
-.sites .fresh { grid-area:fresh; display:grid; gap:16px; margin-top:20px; }
+/* 카드 맨 위 숫자(클릭·할 일) — 들어갈 이유가 먼저다. 측정 신선도(.fresh)는 그 아래 보조 줄. */
+.sites .nums { display:flex; flex-wrap:wrap; gap:6px 20px; margin-bottom:12px; }
+.sites .nums .st { display:grid; gap:2px; min-width:0; }
+.sites .nums b { font:700 var(--fs-4)/1.2 var(--sans); font-variant-numeric:tabular-nums; }
+.sites .nums small { font:var(--micro); color:var(--sub); }
+.sites .nums .dl { font:650 var(--fs-1)/1 var(--sans); font-style:normal; margin-left:6px; color:var(--sub); }
+.sites .nums .dl.up { color:var(--up); }
+.sites .nums .dl.dn { color:var(--dn); }
+.sites .fresh { grid-area:fresh; display:grid; gap:10px; margin-top:16px; }
 .sites .fresh:empty { display:none; }
 .fsum { display:flex; align-items:center; gap:14px; }
-.fsum .ring { width:56px; height:56px; }
+.fsum .ring { width:36px; height:36px; }
 .fsum .ring circle { stroke-width:10; }
-.fsum .rc b { font-size:var(--fs-2); }
+.fsum .rc b { font-size:var(--fs-1); }
 .ftxt { display:grid; gap:4px; justify-items:start; min-width:0; }
 .fcap { font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
 .sites .badge.due { color:var(--warn); background:var(--warn-wash); }
@@ -232,10 +240,10 @@ h2 { font:700 var(--fs-4)/1.35 var(--sans); margin:4px 0 4px; }
 
 /* 경과일 막대: 측정 묶음마다 알약 트랙 하나, 채움 높이가 "마지막으로 잰 뒤 지난 날"이다.
    높을수록 오래됐다. 다시 잴 때가 된 묶음은 주황, 재는 중은 파랑. 트랙은 면 색조로만 가른다. */
-.bars { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); gap:8px;
-  padding:14px 12px 12px; background:var(--sunk); border-radius:var(--r-in); }
+.bars { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); gap:6px;
+  padding:8px 10px; background:var(--sunk); border-radius:var(--r-in); }
 .bars .col { display:grid; justify-items:center; gap:6px; min-width:0; }
-.bars .trk { position:relative; width:28px; height:72px; border-radius:var(--r-pill);
+.bars .trk { position:relative; width:16px; height:32px; border-radius:var(--r-pill);
   background:var(--card); overflow:hidden; }
 .bars .trk i { position:absolute; left:0; right:0; bottom:0; border-radius:var(--r-pill);
   background:var(--up); min-height:6px; }
@@ -273,26 +281,9 @@ h2 { font:700 var(--fs-4)/1.35 var(--sans); margin:4px 0 4px; }
   --f:color-mix(in srgb, var(--warn) 45%, var(--info)); }
 .sites > li.waiting .av { background:var(--card); }
 
-/* 사이트 추가 타일: 점선 상자가 아니라 가라앉은 면. 마지막 줄이 차 있으면 한 줄 전체(JS 가 data-fit). */
-.sites > li.addtile { display:block; grid-column:span 4; padding:0; background:var(--sunk);
-  box-shadow:none; }
-.addtile a { display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:12px; height:100%; min-height:120px; padding:24px; text-align:center;
-  color:var(--sub); text-decoration:none; border-radius:var(--r-card); }
-.addtile a:hover { background:var(--accent-wash); }
-.addtile .plus { width:48px; height:48px; border-radius:16px; display:grid; place-items:center;
-  background:var(--card); color:var(--accent); font:500 var(--fs-4)/1 var(--sans); }
-.addtile .t { display:grid; gap:2px; }
-.addtile b { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); }
-.addtile .t span { font-size:var(--fs-1); }
-.sites > li.addtile[data-fit="row"] { grid-column:1 / -1; }
-.sites > li.addtile[data-fit="row"] a { flex-direction:row; justify-content:flex-start;
-  min-height:0; padding:14px 20px; text-align:left; gap:16px; }
-.sites > li.addtile[data-fit="row"] .plus { width:40px; height:40px; border-radius:14px; }
-
 /* 사이트 한 곳이면 카드가 전폭 가로형(왼쪽 정보 · 오른쪽 측정 현황), 두 곳이면 반씩. */
-.sites[data-n="2"] > li:not(.addtile) { grid-column:span 6; }
-.sites[data-n="1"] > li:not(.addtile) { grid-column:1 / -1; }
+.sites[data-n="2"] > li { grid-column:span 6; }
+.sites[data-n="1"] > li { grid-column:1 / -1; }
 @media (min-width:1000px) {
   .sites[data-n="1"] > li.done { padding:24px 28px; column-gap:20px;
     grid-template-columns:56px minmax(0,1fr) auto minmax(0,1.4fr);
@@ -302,7 +293,7 @@ h2 { font:700 var(--fs-4)/1.35 var(--sans); margin:4px 0 4px; }
   .sites[data-n="1"] .fresh { margin-top:0; align-self:stretch; align-content:center; }
   .sites[data-n="1"] .go { width:220px; }
   .sites[data-n="1"] .av { width:56px; height:56px; border-radius:18px; }
-  .sites[data-n="1"] .trk { height:96px; }
+  .sites[data-n="1"] .trk { height:44px; }
 }
 
 /* 진행 안내: 상자 없이 옅은 강조 면 한 줄. 카드가 다 끝나면 스크립트가 지운다. */
@@ -310,9 +301,8 @@ h2 { font:700 var(--fs-4)/1.35 var(--sans); margin:4px 0 4px; }
   background:var(--accent-wash); border-radius:var(--r-in); }
 
 @media (max-width:999px) {
-  .sites > li, .sites[data-n="2"] > li:not(.addtile) { grid-column:span 6; }
-  .sites[data-n="1"] > li:not(.addtile) { grid-column:1 / -1; }
-  .sites > li.addtile { grid-column:span 6; }
+  .sites > li, .sites[data-n="2"] > li { grid-column:span 6; }
+  .sites[data-n="1"] > li { grid-column:1 / -1; }
   .strip, .ringcard { grid-column:1 / -1; }
   .sumrow > * { padding:18px 20px; }
 }
@@ -321,12 +311,11 @@ h2 { font:700 var(--fs-4)/1.35 var(--sans); margin:4px 0 4px; }
   .pcs { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .pc { grid-template-columns:36px minmax(0,1fr); column-gap:10px; }
   .pc .ic { width:36px; height:36px; border-radius:12px; }
-  .sites[data-n] > li:not(.addtile), .sites > li.addtile { grid-column:1 / -1; }
+  .sites[data-n] > li { grid-column:1 / -1; }
   .sites > li { padding:16px; }
   .sites .pr { white-space:normal; overflow-wrap:anywhere; }
   .rg { gap:16px; }
   .ring { width:88px; height:88px; }
-  .fsum .ring { width:56px; height:56px; }
 }
 
 /* ── 고르는 목록: 행 사이는 옅은 선 ───────────────────────── */

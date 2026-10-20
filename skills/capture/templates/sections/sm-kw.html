@@ -259,8 +259,9 @@
     var where = kwWhere(KW.markets);
     var bad = KW.markets.filter(function (m) { return m.market; }).map(function (m) {
       var why = !m.active ? "비어 있음" : m.limit && m.active > m.limit ? "한도 넘음" : "";
+      // 같은 말을 두 번 하지 않는다 — 0개면 「비어 있음」만, 한도를 넘었으면 144/100 숫자만.
       return why && '<span class="nw">' + esc(where[m.locale].g) + ' <span class="warn">' +
-        m.active + "/" + (m.limit || "-") + "</span> (" + why + ")</span>";
+        (m.active ? m.active + "/" + (m.limit || "-") : "(" + why + ")") + "</span></span>";
     }).filter(Boolean);
     sec.hidden = !bad.length;
     sec.querySelector("p").innerHTML = bad.length

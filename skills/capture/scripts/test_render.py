@@ -297,10 +297,6 @@ MUSTS = [
     (r'id="ai-markets"[^>]*>(?:(?!</section>).)*영어 · 미국(?:(?!</section>).)*일본어 · 일본'
      r'(?:(?!</section>).)*질문이 없어 AI 답변을 한 번도 안 봤습니다',
      "AI 인용 화면에 시장별 카드가 안 섰거나 질문 없는 시장을 말하지 않는다"),
-    # 질문 없는 시장 줄에는 그 시장 질문을 짓는 명령 칩이 선다 — 로컬·웹 둘 다(웹은 버튼 옆에).
-    # 웹 화면을 보면서 플러그인 채팅에서 치는 사람이 칠 명령을 몰랐다(2026-10-15).
-    (r'id="ai-markets"(?:(?!</section>).)*class="cmd[^"]*"[^>]*>/capture add \S+ ja-JP</button>',
-     "시장별 카드의 질문 없는 시장 줄에 그 시장 질문을 짓는 명령이 없다"),
     # 칸을 합친(colspan) 줄에서 뒤 칸 이름표가 한 열씩 당겨져 행동 칸이 "언급률"로 붙었다
     (r'!data-label="언급률"><button', "칸을 합친 줄의 행동 칸에 엉뚱한 열 이름(언급률)이 붙었다"),
     (r'<select[^>]*aria-label="시장으로 거르기"(?:(?!</select>).)*<option value="en-US"[^>]*>영어 · 미국<',
@@ -321,13 +317,13 @@ MUSTS = [
     ("!" + re.escape(TRIAGE_TOPIC), "주제 묶음의 줄이 검색어 묶음 표에 섞여 그려졌다"),
     ("!" + re.escape(TRIAGE_DOMAIN), "링크 도메인 묶음의 줄이 검색어 묶음 표에 섞여 그려졌다"),
     # 카운트는 거르기와 무관한 전체다(요약이 거짓말하면 안 된다) — 영어 줄까지 2.
-    (r'id="tr-counts"[^>]*>(?:(?!</p>).)*미판정 <b>2</b>', "심사 화면 상단 카운트가 안 나왔다"),
+    (r'id="tr-counts"[^>]*>(?:(?!</p>).)*<b>4</b>건 남음(?:(?!</p>).)*검색어 <b>2</b>', "심사 화면 머리가 레일 알약과 같은 전체 남은 수(4)와 내역을 안 말한다"),
     # 다국어 — 섞여 있으면 처음엔 사이트 언어(한국어)만 보이고, 언어 거르개가 영어 줄 수를
     # 말하며, 가린 줄이 있다고 부제가 말한다(안 말하면 영어 줄이 없는 것으로 읽힌다).
     (r'<select[^>]*aria-label="언어로 거르기"(?:(?!</select>).)*<option value="en"[^>]*>영어 \(1\)</option>',
      "심사 화면에 언어 거르개(영어 1줄)가 없다 — 다국어 검색어가 한 줄로 섞인다"),
     ("!" + TRIAGE_EN, "심사 화면이 처음부터 다른 언어 줄을 사이트 언어 줄과 섞어 그렸다"),
-    (r'id="tr-qsub"[^>]*>(?:(?!</p>).)*한국어만 봅니다\(다른 언어 1줄', "언어로 가린 줄 수를 부제가 안 말한다"),
+    (r'id="tr-qsub"[^>]*>(?:(?!</p>).)*한국어만 봅니다\.(?:(?!</p>).)*다른 언어 1줄은 숨김(?:(?!</p>).)*모든 언어 보기', "언어로 가린 줄 수와 푸는 버튼을 부제가 안 말한다"),
     # 기회 묶음 — 같은 페이지의 AI 요약 기회 셋이 개요에서 카드 **하나**(id 셋)로 서고,
     # 접힌 줄에 변형이, 펼침 패널에 묶은 이유가 그려진다.
     # 울타리가 </details> 가 아니라 다음 카드인 이유: 패널 안에 요청문 상자(<details
@@ -780,7 +776,7 @@ KWM_HOSTED_MUSTS = [
     # [개요]의 할 일 쪽 알림 — 추적 0 인 시장(일본)이 있으면 선다. 화면은 검색 성과 묶음에 두고
     # 손볼 것이 생겼을 때만 할 일에서 끌어온다(2026-10-16). 같은 자료(시장 탭)와 같은 이름을 쓴다.
     (r'id="view-overview"(?:(?!id="view-).)*<section id="sm-kwnudge" class="card"(?![^>]*hidden)>'
-     r'(?:(?!</section>).)*정리할 시장 \d+곳(?:(?!</p>).)*일본 구글 <span class="warn">0/\d+</span> \(비어 있음\)',
+     r'(?:(?!</section>).)*정리할 시장 \d+곳(?:(?!</p>).)*일본 구글 <span class="warn">\(비어 있음\)</span>',
      "[개요]에 추적 0 인 시장(일본 구글)을 [키워드 관리]로 끌어오는 알림이 안 섰다"),
     (r"id=\"sm-kwnudge\"(?:(?!</section>).)*SM\.show\('kwmanage'\)",
      "[개요] 알림의 버튼이 [키워드 관리]로 안 간다"),
@@ -803,6 +799,10 @@ SHELL_LOCAL_MUSTS = [
      "행 카드가 펼침 줄의 통짜 칸에 라벨을 달았다"),
     # 로컬에는 사이트 목록 화면이 없다 — 로고는 글자 그대로다(링크는 호스팅 몫).
     (r'!<a class="mark"', "로컬 레일 로고가 링크가 됐다 — 갈 목록 화면이 없다"),
+    # 질문 없는 시장 줄의 질문 짓기: 로컬에는 버튼이 없어 명령 칩이 그 자리를 맡는다.
+    # 웹은 버튼이 있어 칩을 두지 않는다(아래 HOSTED_MUSTS).
+    (r'id="ai-markets"(?:(?!</section>).)*class="cmd[^"]*"[^>]*>/capture add \S+ ja-JP</button>',
+     "시장별 카드의 질문 없는 시장 줄에 그 시장 질문을 짓는 명령이 없다"),
 ]           # 앞 셋(도구 없음 배지·로컬 주기 점)은 로컬 몫
 
 # 호스팅 입구 화면 — 대시보드(/d) 밖에서 서버가 따로 내보내는 것. 로그인 전 랜딩(/)과
@@ -824,6 +824,10 @@ ENTRY_PAGES = [
 # 호스팅 애드온이 런타임에 만드는 것 — 하나라도 없으면 조립이 조용히 멈춘 것이다.
 # "!" 로 시작하면 반대다: 그 패턴이 **없어야** 통과한다.
 HOSTED_MUSTS = MUSTS + RUN_MUSTS + [
+    (r'id="ai-markets"(?:(?!</section>).)*data-sm-locale="ja-JP"[^>]*>질문 만들기</button>',
+     "웹 시장별 카드의 질문 없는 시장 줄에 [질문 만들기] 버튼이 없다"),
+    (r'!id="ai-markets"(?:(?!</section>).)*class="cmd[^"]*"[^>]*>/capture add',
+     "웹 시장별 카드에 버튼 옆 명령 칩이 남았다 — 버튼이 있으면 칩은 두 번째 길이다"),
     # 설정의 사이트 종류 — /api/settings 의 types 로 스크립트가 그린다. 등록 뒤 종류를
     # 바꾸는 유일한 자리라, 안 그려지면 잘못 넣은 종류(saas 로 들어간 쇼핑몰)에 영영 묶인다.
     (r'<select data-ptype[^>]*>(?:<option[^>]*>[^<]*</option>){2,}', "설정에 사이트 종류 고르개가 안 그려졌다"),
@@ -1497,14 +1501,14 @@ def print_all(browser: str, url: str, home: Path, views: int) -> None:
         f"인쇄하면 {pages_n}쪽뿐이다 — 화면이 {views}개인데 숨은 것이 안 펴졌다")
 
 
-# 화면 안 두 탭([처리]·[관리]) 틀 — 본 화면에는 아직 안 쓰이므로 **가짜 view-def** 로 증명한다.
+# 화면 안 두 탭([할 것]·[전체]) 틀 — 본 화면에는 아직 안 쓰이므로 **가짜 view-def** 로 증명한다.
 # 조립된 페이지의 매니페스트(window.__VIEWS__)에 modes 를 얹고(첫 두 섹션 이상인 화면), 섹션에
 # data-mode 를 달고, 눌러 보고, 결과를 DOM(#__modes__)에 옮겨 적는다.
 MODES_PATCH = """<script>
 (function () {
   var v = (window.__VIEWS__ || []).filter(function (x) { return (x.sections || []).length >= 2; })[0];
   window.__MODES_VIEW__ = v ? v.id : "";
-  if (v) v.modes = [{id: "work", label: "처리", count: "zz_modes.n"}, {id: "manage", label: "관리"}];
+  if (v) v.modes = [{id: "work", label: "할 것", count: "zz_modes.n"}, {id: "manage", label: "전체"}];
 })();
 </script>"""
 MODES_RUN = """<script>
@@ -1533,7 +1537,7 @@ setTimeout(function () {
     out.labelled = !!secs[0].getAttribute("aria-labelledby") &&
       !!document.getElementById(secs[0].getAttribute("aria-labelledby"));
     SM.mode = {}; SM.modeSite = {};
-    SM.modeCountsFrom({zz_modes: {n: 0}, project: {name: "b"}});     // 할 일 0 → [관리]가 먼저
+    SM.modeCountsFrom({zz_modes: {n: 0}, project: {name: "b"}});     // 할 일 0 → [전체]가 먼저
     SM.modeApply(V);
     out.selZero = tabs.map(function (t) { return t.getAttribute("aria-selected"); });
     SM.modeCountsFrom({zz_modes: {n: 7}});
@@ -1550,7 +1554,7 @@ setTimeout(function () {
     out.v3 = [vis(secs[0]), vis(secs[1])];
     out.focus = document.activeElement === tabs[1]; out.actDbg = document.activeElement && (document.activeElement.id || document.activeElement.tagName);
     var other = SM.views.filter(function (x) { return x.id !== V; })[0].id;
-    // 새로고침을 흉내 낸다: 화면은 [처리]에 서 있고, 메모리 상태는 비었고, 저장소만 [관리]를 기억한다.
+    // 새로고침을 흉내 낸다: 화면은 [할 것]에 서 있고, 메모리 상태는 비었고, 저장소만 [전체]를 기억한다.
     tabs[0].click();
     try { sessionStorage.setItem("sm:mode:" + V, "manage"); } catch (e) {}
     SM.mode = {};
@@ -1586,14 +1590,14 @@ def modes_frame(browser: str, shell: bytes, home: Path) -> None:
     o = json.loads(htmlmod.unescape(m.group(1)))
     assert not o.get("err"), f"탭 검사 스크립트가 터졌다: {o.get('err')}"
     assert o["bar"] and o["role"] == "tablist", f"modes 를 선언했는데 탭 줄(tablist)이 안 섰다: {o}"
-    assert o["tabs"][:2] and o["tabs"][0].startswith("처리") and o["tabs"][1].startswith("관리"), o["tabs"]
+    assert o["tabs"][:2] and o["tabs"][0].startswith("할 것") and o["tabs"][1].startswith("전체"), o["tabs"]
     assert o["sel0"] == ["true", "false"], f"처음 탭은 선언 첫째여야 한다: {o['sel0']}"
-    assert o["selZero"] == ["false", "true"], f"배지가 0 인데도 빈 [처리]가 먼저 선다: {o['selZero']}"
-    assert o["v0"] == [True, False], f"처음에는 [처리] 섹션만 서야 한다: {o['v0']}"
+    assert o["selZero"] == ["false", "true"], f"배지가 0 인데도 빈 [할 것]가 먼저 선다: {o['selZero']}"
+    assert o["v0"] == [True, False], f"처음에는 [할 것] 섹션만 서야 한다: {o['v0']}"
     assert o['hid'] is True, '접힌 섹션에 hidden 이 안 섰다'
     assert o["panel"] == "tabpanel" and o["labelled"], "섹션이 tabpanel + aria-labelledby 가 아니다"
     assert o["badge"] == "7" and o["badge0"] is False, f"건수 배지(count 경로)가 안 따라온다: {o['badge']!r}/{o['badge0']}"
-    assert o["v1"] == [False, True] and o["sel1"] == ["false", "true"], f"[관리]를 눌렀는데 안 바뀐다: {o['v1']}"
+    assert o["v1"] == [False, True] and o["sel1"] == ["false", "true"], f"[전체]를 눌렀는데 안 바뀐다: {o['v1']}"
     assert o["stored"] == "manage", f"고른 탭을 sessionStorage 에 못 적었다: {o['stored']!r}"
     assert o["v2"] == [True, False], f"← 키가 앞 탭으로 안 간다: {o['v2']}"
     assert o["v3"] == [False, True] and o["focus"], f"→ 키가 다음 탭으로(초점 포함) 안 간다: {o['v3']} {o['focus']} {o.get('actDbg')}"

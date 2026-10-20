@@ -146,6 +146,9 @@ function render(d) {
   // 하면 열한 곳이 각자 기억해야 하고, 그중 몇은 언젠가 잊는다(실제로 잊었다).
   deadSweep($("content"));
   tableFade($("content"));      // 방금 생긴 표가 넘치는지는 그린 다음에야 안다
+  for (const v of SM.views) nxDedupe(v.id);   // 본문이 다 선 뒤에야 "같은 버튼이 본문에 있나"를 안다
+  nxPad();
+  banSync();                    // 데이터가 생겼으면 진단 배너를 한 줄로 줄인다
 }
 
 // 서버 재요청 없이 다시 그린다 — 화면 렌더는 늘 페이로드 하나의 함수다. 호스팅

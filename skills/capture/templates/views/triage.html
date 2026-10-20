@@ -32,6 +32,8 @@
 @media (max-width:640px) { #tr-grid > .trside { grid-template-columns:minmax(0,1fr); } }
 
 /* 카드 머리 한 벌 — 제목(16px 650)·보조 한 줄(12px 이상)·우측 도구. */
+/* 머리 바로 밑 — 부제와 첫 카드 사이를 일반 섹션 간격(48px)·머리 간격(32px)으로 벌리지 않는다 */
+#view-triage > #triage-sec { margin-top:var(--sp-5); }
 #triage-sec .trh { display:flex; align-items:flex-start; justify-content:space-between;
   gap:var(--sp-3) var(--sp-4); flex-wrap:wrap; margin:0 0 var(--sp-4); }
 #triage-sec .trh > div:first-child { min-width:0; flex:1 1 220px; }
@@ -40,6 +42,10 @@
 #triage-sec .trsub b { color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
 #triage-sec .trh .tools { margin:0; flex:0 1 auto; }
 #tr-counts b { color:var(--ink); font-weight:600; }
+/* 머리의 큰 숫자 — 레일 [심사] 알약과 같은 값(SM.triageLeft). 내역은 그 밑 한 줄. */
+#tr-counts .trbig { display:block; font:400 var(--fs-3)/1.3 var(--sans); color:var(--ink); }
+#tr-counts .trbig b { font:700 var(--fs-5)/1.2 var(--sans); font-variant-numeric:tabular-nums; margin-right:2px; }
+#tr-counts .trbrk { display:block; margin-top:2px; }
 
 /* 묶음 탭 — 검색어 / 주제 / 링크 도메인. 묶음이 둘 이상일 때만 선다. 누르면 그 묶음의
    현황·표만 본다(판정 네 칸은 그 묶음의 숫자다). */
@@ -79,6 +85,8 @@
 #triage-sec .trtab[data-v="work"] { --dot:var(--accent); }
 #triage-sec .trtab[data-v="hold"] { --dot:var(--info); }
 #triage-sec .trtab[data-v="irrelevant"] { --dot:var(--mute); }
+/* 0 인 칸은 위계를 낮춘다 — 할 일이 없는 칸이 숫자 크기로 다툴 이유가 없다. */
+#triage-sec .trtab.zero .v { font-size:var(--fs-4); font-weight:500; color:var(--mute); }
 #triage-sec .trtab[aria-pressed="true"] { background:var(--accent-wash); }
 #triage-sec .trtab[aria-pressed="true"] .l { color:var(--accent); }
 #triage-sec .trtab[aria-pressed="true"] .p::before { content:"보는 중 · "; color:var(--accent); font-weight:600; }
@@ -116,6 +124,7 @@
   text-align:left; cursor:pointer; text-decoration:underline; text-decoration-color:transparent;
   text-underline-offset:3px; overflow-wrap:anywhere; }
 #triage .trkw:hover { text-decoration-color:currentColor; }
+#triage-sec .trqsub-lnk { font:inherit; font-weight:600; }
 /* 오른쪽 서랍(SM.drawer) 본문 — 서랍은 body 끝에 서므로 .trdr 로 스코프한다. */
 .trdr-tiles { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--sp-3); margin:0 0 var(--sp-5); }
 .trdr-tile { background:var(--sunk); border-radius:var(--r-in); padding:12px 14px; }
@@ -147,6 +156,10 @@
 #triage .trbar label { display:inline-flex; align-items:center; gap:6px; font-size:var(--fs-2);
   min-height:var(--btn-h); margin:0; color:var(--ink); }   /* 「전부」 체크는 줄이 아니라 이 라벨로 누른다 — 버튼과 같은 높이 */
 #triage .trbar input[type=checkbox], #triage .trtable input[type=checkbox] { width:auto; margin:0; }
+/* 판정 버튼 위계 — 작업(채움, 주 행동) > 보류(윤곽) > 무관(면 없이 글자만). 순서·단축키는 그대로. */
+#triage .trbar .go:not(.sec):not(.ghost), #triage .trdock .go:not(.sec):not(.ghost) { padding:0 22px; font-size:var(--fs-2); }
+#triage .go.weak { background:transparent; box-shadow:none; color:var(--sub); }
+#triage .go.weak:not([disabled]):hover { color:var(--ink); background:var(--sunk); }
 #triage kbd { font:600 var(--fs-1)/1 var(--sans); color:var(--sub); background:var(--sunk);
   border-radius:6px; padding:4px 7px; margin:0 1px; }
 #triage .go kbd { color:inherit; background:transparent; font-weight:500; }
@@ -332,6 +345,8 @@ async function TR_fetch() {
   TR_LOADED_FOR = TR_PROJECT;
   TR_ROWS = t.rows || [];
   TR_UNITS = t.units || [{id: "keyword", label: "검색어", counts: t.counts || {}}];   // 옛 서버 폴백
+  TR_ALL = t.counts || {};
+  SM.setCount("triage", SM.triageLeft(t));   // 판정을 저장한 뒤에도 레일 알약이 머리와 같이 줄어든다
   TR_SITE_LANG = t.site_lang || ""; TR_LANG_LABELS = t.lang_labels || {};
   if (TR_UNIT_FOR !== TR_PROJECT) {
     TR_UNIT_FOR = TR_PROJECT;
@@ -382,17 +397,19 @@ function TR_setUnit(u) {
 // [심사 시작]이 그 걸음이다. 예전 띠가 남아 있으면 지운다.
 function TR_nextStep() { if (window.nextStep) nextStep("triage", ""); }
 
-let TR_COUNTS = {};
+let TR_COUNTS = {}, TR_ALL = {};   // 지금 묶음의 판정별 수 / 모든 묶음의 합(서버 counts — 레일 알약과 같은 값)
 function TR_counts(c) { TR_COUNTS = c; TR_renderCounts(); TR_stat(); }
 // 판정별 전체 수는 거르기와 무관하게 그대로 둔다(요약이 거짓말하면 안 된다) — 검색·종류
 // 필터가 걸려 있을 때만 뒤에 보이는 줄 수를 덧붙인다.
 function TR_renderCounts() {
-  const c = TR_COUNTS;
   const narrowed = TR_Q.trim() || TR_KIND || TR_LANG;
-  // 「작업 178」은 [개요]의 기회 수(묶은 줄)와 다른 단위다 — 무엇을 셌는지 말한다.
-  $("tr-counts").innerHTML = `미판정 <b>${c.none || 0}</b> · 작업으로 보낸 ${esc(TR_label())} <b>${c.work || 0}</b>` +
-    ` · 보류 <b>${c.hold || 0}</b> · 무관 <b>${c.irrelevant || 0}</b>` +
-    (narrowed ? ` · 보이는 줄 <b>${TR_filtered().length}</b>` : "");
+  // 머리는 레일 알약과 같은 값(모든 묶음의 남은 수)을 한 번만 크게 말한다 — 판정별 수는 아래 네 칸의 몫이다.
+  const left = SM.triageLeft({counts: TR_ALL});
+  const brk = TR_UNITS.filter(u => ((u.counts || {}).none || 0) > 0)
+    .map(u => `${esc(u.label)} <b>${num(u.counts.none)}</b>`).join(" · ");
+  $("tr-counts").innerHTML = (left ? `<span class="trbig"><b>${num(left)}</b>건 남음</span>` : `<span class="trbig">다 가렸습니다</span>`) +
+    (brk && TR_UNITS.length > 1 ? `<span class="trbrk">${brk}</span>` : "") +
+    (narrowed ? `<span class="trbrk">지금 보이는 줄 <b>${TR_filtered().length}</b></span>` : "");
 }
 
 // 현황 카드 — 링(가린 비율) + 판정 네 칸. 숫자가 바뀔 때만 다시 그린다(링은 캔버스라 비싸다).
@@ -408,16 +425,16 @@ function TR_stat() {
   const pct = n => total ? Math.round(n / total * 100) + "%" : "0%";
   $("tr-statbody").innerHTML = `
     <div class="trring">${ring}
-      <p><b>${none ? `${num(none)}건 남음` : "다 가렸습니다"}</b>전체 ${num(total)}건 중 ${num(done)}건(${pct(done)})을<br>가렸습니다</p></div>
+      <p><b>${pct(done)} 가림</b>${esc(TR_label())} ${num(total)}건 중 ${num(done)}건</p></div>
     <div class="trtabs" role="group" aria-label="판정별 ${esc(TR_label())} 수, 누르면 그 판정만 봅니다">${TR_FILTER_OPT.map(([v, l]) => {
       const n = v === "" ? none : (c[v] || 0);
-      return `<button type="button" class="trtab" data-v="${v}" aria-pressed="${v === TR_FILTER}" onclick="TR_setFilter('${v}')">
+      return `<button type="button" class="trtab${n ? "" : " zero"}" data-v="${v}" aria-pressed="${v === TR_FILTER}" onclick="TR_setFilter('${v}')">
         <span class="l">${l}</span><span class="v${v === "" && n ? " left" : ""}">${num(n)}</span>
         <span class="p">전체의 ${pct(n)}</span></button>`;
     }).join("")}</div>`;
   // 주 버튼 — 남은 게 있을 때만. 누르면 첫 미판정 줄로 커서를 옮긴다.
   $("tr-start").innerHTML = none && !READONLY
-    ? `<button type="button" class="go" onclick="TR_start()">남은 ${num(none)}건 심사 시작</button>` : "";
+    ? `<button type="button" class="go" onclick="TR_start()">심사 시작</button>` : "";
 }
 function TR_tabs() {
   document.querySelectorAll("#tr-statbody .trtab").forEach(b =>
@@ -569,7 +586,7 @@ function TR_draw() {
   const lb = esc(TR_label());
   $("tr-qh").textContent = `${TR_label()} 심사`;
   $("tr-qsub").innerHTML = `${TR_FILTER_LABEL(TR_FILTER)} ${lb} <b>${num(list.length)}</b>줄을 보고 있습니다.` +
-    (kw ? ` ${esc(TR_langName(TR_LANG))}만 봅니다${hid ? `(다른 언어 ${num(hid)}줄은 위 언어 거르개에서)` : ""}.` : "");
+    (kw ? ` ${esc(TR_langName(TR_LANG))}만 봅니다.${hid ? ` 다른 언어 ${num(hid)}줄은 숨김 — <button type="button" class="lnk trqsub-lnk" onclick="TR_setLang('')">모든 언어 보기</button>` : ""}` : "");
   TR_fix();
   if (!TR_ROWS.length)
     return $("triage").innerHTML = `<div class="empty"><b>심사할 항목이 없습니다</b>
@@ -658,7 +675,7 @@ async function TR_drSet(v) {
 
 // 판정 버튼 셋 — 위 판정 바와 좁은 화면의 아래 막대가 같은 것을 쓴다.
 const TR_btns = n => `
-  <button class="go sm sec"${n ? "" : " disabled"} onclick="TR_setSel('irrelevant')"
+  <button class="go sm sec weak"${n ? "" : " disabled"} onclick="TR_setSel('irrelevant')"
     title="${esc(TR_help("irrelevant"))}">무관<kbd>1</kbd></button>
   <button class="go sm sec"${n ? "" : " disabled"} onclick="TR_setSel('hold')"
     title="${esc(TR_help("hold"))}">보류<kbd>2</kbd></button>

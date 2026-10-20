@@ -50,7 +50,7 @@ function groupHead(d) {
       const scope = `${GRP_LABEL}(${g.name}): ${(g.stages || []).map(stageName).join(" · ")}`;
       html = `<b class="gname">${esc(g.name)}</b><span class="k">마지막으로 잰 날</span>${ax}` +
         (READONLY || !(g.stages && g.stages.length) ? "" :
-        `<button class="go sm sec" data-grp="${esc(g.id)}" title="${esc(scope)}"
+        `<button class="go sm sec quiet" data-grp="${esc(g.id)}" title="${esc(scope)}"
            aria-label="${esc(scope)}" onclick="groupRun(this)">${GRP_LABEL}</button><span class="gst"></span>`);
     } else if (v.id === "guide" && !READONLY && gs.some(x => x.stages && x.stages.length)) {
       // 전체 재기는 여기 하나다 — 이름은 페이로드의 묶음에서 읽는다(사본을 안 둔다).
@@ -92,6 +92,13 @@ function grpPaint() {
          queued: false};
     const busy = !!(s.running || s.queued);
     if (b.dataset.wait !== "1") b.disabled = busy;
+    // 눈에 띄는 알약은 다시 잴 때가 된 묶음 하나뿐이다 — 메뉴 묶음 제목의 빨간 점과 같은
+    // 값(SM.groupOf → grpDue)을 읽는다. 아니면 [단계별로 다시]와 같은 조용한 글자 링크다.
+    if (gid) {
+      const due = !!((SM.groupOf(gid) || {}).due);
+      b.classList.toggle("quiet", !due);
+      b.classList.toggle("sec", !due);
+    }
     if (st) st.textContent = s.running ? "재는 중입니다" : s.queued ? "지금 도는 재기가 끝나면 잽니다" : "";
   });
 }
@@ -212,7 +219,7 @@ async function checkTriageLand() {
   const res = await fetch("/api/triage?project=" + encodeURIComponent($("proj").value));
   if (!res.ok) return;
   const t = await res.json();
-  const none = (t.counts || {}).none || 0;
+  const none = SM.triageLeft(t);
   SM.setCount("triage", none);          // 레일의 [심사] 건수 알약
   if (!SM.restored && none) SM.land("triage", 1);
 }
@@ -279,6 +286,10 @@ function banSync() {
   // 눈이 지표보다 배너를 먼저 읽는다.
   const heavy = !!b.querySelector("ul.must");
   b.classList.toggle("thin", !heavy);
+  // 이미 잰 데이터가 있는 사이트의 막는 항목은 한 줄 띠(.slim)다 — 문구 + 버튼 하나, [자세히]·
+  // [더 켤 수 있는 기능]은 그 줄 안의 작은 링크. 데이터가 아예 없는 첫 상태만 큰 상자로 선다.
+  const seen = !!(LAST_D && ((LAST_D.runs || []).length || LAST_D.gsc_date || (LAST_D.gsc_dates || []).length));
+  b.classList.toggle("slim", heavy && seen);
   // 막는 항목이 없으면(=준비 끝) 안내 줄은 서지 않는다 — "필수 준비는 끝났습니다 · 한 바퀴
   // 완주"가 지표 위에서 화면 머리와 같은 말을 되풀이했다. 무엇을 눌러야 하는지는 띠와 레일이 말한다.
   b.hidden = !(heavy || b.querySelector("details") || b.classList.contains("bad"));

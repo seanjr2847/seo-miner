@@ -234,6 +234,7 @@ SM.queue = (() => {
         this.root.toggleAttribute("data-board", false);
         this.kindsHide(); this.ksig = "";
         this.el("spot").hidden = true;
+        this.hero = null;
         this.el("hold").innerHTML = "";
         // 칩은 놓지 않는다 — 이 상태에서는 [개요]의 띠가 [기회 분석]을 주요 행동으로 들고 있고,
         // 화면 머리에도 같은 명령이 있다(D14: 한 화면에 같은 칩 세 번).
@@ -275,23 +276,30 @@ SM.queue = (() => {
     }
 
     list() {
+      // 거르개·상태가 바뀔 때마다 알린다 — 같은 화면의 띠가 지금 보이는 목록을 따라가게.
+      document.dispatchEvent(new CustomEvent("sm:queue", {detail: {view: this.view}}));
       this.drawerSync();
       this.chips();
       this.holdLine();
       this.spot();
-      const list = this.filtered();
+      const full = this.filtered();
+      // 스포트라이트에 올린 기회는 목록에서 뺀다 — 같은 기회를 위아래로 두 번 읽지 않게. 목록은 2번째부터다.
+      // 박제본·인쇄는 서랍이 없어 제자리 펼침이 유일한 길이라 그대로 둔다.
+      const list = this.hero ? full.filter(o => o !== this.hero) : full;
       // 개수를 두 번 적지 않는다 — 상태 거르개가 이미 "아직 안 함 (2)" 로 말한다. 그 위에 무엇이 더
       // 걸렸을 때(찾는 말·종류 칩)만 몇 건이 남았는지 적는다. 박제본에는 거르개가 없다 — 거기서는
       // 이 자리가 개수를 말하는 유일한 곳이다.
-      const narrowed = list.length !== this.byStatus().length;
+      const narrowed = full.length !== this.byStatus().length;
       const nEl = this.el("n");
-      if (nEl) nEl.textContent = narrowed ? `${list.length}건 / 전체 ${this.opps.length}건`
+      if (nEl) nEl.textContent = narrowed ? `${full.length}건 / 전체 ${this.opps.length}건`
         : RO() ? `${this.opps.length}건` : "";
       const out = this.el("list");
       // 보드는 비어도 칸을 세운다 — 칸이 곧 끌어 놓을 자리다.
       if (this.isBoard()) return this.board(list);
       // 기본 상태(아직 안 함)만 걸린 채로 비었으면 그건 거른 탓이 아니라 다 처리한 것이다 — 여기서
       // "조건을 풀라"고 하면 안 건 조건을 풀라는 말이 된다.
+      // 스포트라이트가 유일한 기회를 들고 있으면 목록이 비는 게 맞다 — 「모두 처리했습니다」가 아니다.
+      if (!list.length && this.hero) return out.innerHTML = "";
       if (!list.length)
         return out.innerHTML = this.isFiltered()
           ? `<div class="empty"><b>거른 조건에 맞는 기회가 없습니다</b>
@@ -623,6 +631,8 @@ SM.queue = (() => {
         const top = this.top();
         return top && this.boardOpen(top.id);
       }
+      // 1순위는 목록에서 빠져 스포트라이트에만 있다 — 서랍으로 연다. 박제본에는 이 버튼이 없다.
+      if (this.hero) return this.drawerOpen(this.hero.id, this.el("spot").querySelector(".go"));
       const card = this.root.querySelector(".qlist details.opp");
       if (!card) return;
       card.open = true;
@@ -634,6 +644,10 @@ SM.queue = (() => {
       const box = this.root.querySelector("input[type=search]");
       if (box && target) { box.value = target; this.find(target); }
       const card = this.root.querySelector(`.qlist [data-ids~="${+id}"]`);
+      if (!card && this.hero && (this.hero.group ? this.hero.group.ids : [this.hero.id]).includes(+id)) {
+        this.drawerOpen(this.hero.id);
+        return true;
+      }
       if (!card) return false;
       card.open = true;
       card.scrollIntoView({behavior: "smooth", block: "center"});
@@ -656,9 +670,11 @@ SM.queue = (() => {
        상태(전체·완료 보기)에서는 "먼저 손댈 것"이 아니므로 세우지 않는다. 모든 종류를 받는 큐만 둔다. */
     spot() {
       const el = this.el("spot");
+      this.hero = null;
       if (!el) return;
       const top = this.all && this.opps.length ? this.top() : null;
       if (!top || !window.oppStMatch(top, "open")) { el.hidden = true; el.innerHTML = ""; return; }
+      if (!RO() && !this.isBoard()) this.hero = top;
       const sc = Number.isFinite(top.score) ? Math.round(top.score) : null;
       const C = 2 * Math.PI * 26, n = targetsOf(top).length;
       el.classList.toggle("def", !!isDefensive(top));
@@ -670,7 +686,7 @@ SM.queue = (() => {
               stroke-dasharray="${(sc == null ? 0 : Math.min(100, sc) / 100 * C).toFixed(1)} ${C.toFixed(1)}"/></svg>
           <b>${sc == null ? "-" : sc}<i>점</i></b></div>
         <div class="ovs-b">
-          <div class="ovs-k">지금 가장 먼저 손댈 기회</div>
+          <div class="ovs-k">점수 1위 기회</div>
           <div class="ovs-t">${esc(targetLabel(top.target))}</div>
           <div class="ovs-m">${kindsOf(top).map(kl => kindPill(top, kl)).join("")}${n > 1
             ? `<span class="badge" title="같은 지면이라 한 줄로 묶었습니다.">검색어 ${n}개</span>` : ""}${directBadge(top, this.D)}</div>

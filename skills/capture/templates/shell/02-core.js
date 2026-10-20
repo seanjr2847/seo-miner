@@ -179,6 +179,9 @@ const SM = {
   // 화면별 건수 — 그 화면에서 사람이 할 일이 몇 건인가. 값은 화면이 이미 받은 것을 넘긴다
   // (심사: /api/triage 의 counts.none). 새로 묻지 않는다. 0 이면 알약을 뗀다.
   counts: {},
+  // 심사에 남은 건수 — /api/triage 응답(t)에서 센다. 레일 알약(checkTriageLand)과 [심사] 화면 머리가
+  // 같은 값을 쓰도록 이 함수 한 벌만 센다: 모든 묶음(검색어·주제·링크 도메인)의 미판정 합이다.
+  triageLeft(t) { return Math.max(0, +((t && t.counts) || {}).none || 0); },
   setCount(id, n) {
     n = n > 0 ? n : 0;
     if ((this.counts[id] || 0) === n) return;

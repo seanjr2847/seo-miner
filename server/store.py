@@ -225,6 +225,52 @@ def sites(conn: sqlite3.Connection, user_id: int) -> list[sqlite3.Row]:
                         (user_id,)).fetchall()
 
 
+def glance(brain: sqlite3.Connection, project: str) -> dict | None:
+    """사이트 목록 카드가 올리는 숫자 — 들어갈 이유가 되는 것만, 읽기만 한다.
+
+    todo   심사 대기(미판정) 묶음 수 — 판정 키(scoring.verdict_key)로 센다. 대시보드
+           심사 화면의 한 줄이 한 키다(dashboard._triage).
+    opps   할 일로 선 열린 기회 수 — 개요 목록과 같은 문(db.gate_sql).
+    clicks 최신 수집 창의 클릭, prev 는 겹치지 않는 직전 같은 길이 창의 클릭
+           (dashboard._gsc_prev_period 가 정본). 서치콘솔 수집 전이면 둘 다 없다.
+
+    카드 하나가 막혀도 목록이 막히면 안 된다 — 어떤 이유로든 못 읽으면 None 이고,
+    화면은 그 카드의 숫자 줄만 생략한다(빈칸을 그리지 않는다)."""
+    try:
+        import dashboard
+        import db
+        import scoring
+        p = brain.execute("SELECT id FROM projects WHERE name=?", (project,)).fetchone()
+        if not p:
+            return None
+        pid = p["id"]
+        vm = db.verdict_map(brain, pid)
+        ph = ",".join("?" * len(scoring.TRIAGE_KINDS))
+        keys = {scoring.verdict_key(r["kind"], r["target"]) for r in brain.execute(
+            f"SELECT kind, target FROM opportunities WHERE project_id=?"
+            f" AND status IN ('new','acked') AND kind IN ({ph})",
+            (pid, *scoring.TRIAGE_KINDS))}
+        out = {"todo": sum(1 for k in keys if not vm.get(k))}
+        out["opps"] = brain.execute(
+            "SELECT COUNT(*) FROM opportunities WHERE project_id=?"
+            " AND status IN ('new','acked') AND " + db.gate_sql(brain),
+            (pid, *scoring.TRIAGE_KINDS)).fetchone()[0]
+        cur, _prev, period, _mis = scoring.snapshot_pair(brain, pid)
+        if cur and period:
+            c = brain.execute(
+                "SELECT SUM(clicks) FROM gsc_snapshots"
+                " WHERE project_id=? AND snapshot_date=? AND period_days=?",
+                (pid, cur, period)).fetchone()[0]
+            out["clicks"] = int(c or 0)
+            out["period"] = int(period)
+            before = dashboard._gsc_prev_period(brain, pid, cur, period)
+            if before:
+                out["prev"] = before["clicks"]
+        return out
+    except Exception:
+        return None
+
+
 def _groups():
     """묶음 표의 정본 — run_all.GROUPS. 늦게 읽는다: capture 스크립트 경로는 부르는 쪽
     (app.py/worker.py)이 세우고, 이 모듈은 그 전에도 import 된다. 혼자 불리는 자리

@@ -5603,6 +5603,29 @@ def test_seam_201_home_is_opened_in_one_form_and_found_in_both():
     c.close()
 
 
+def test_seam_75_keywords_toast_reads_the_list_the_user_sees():
+    """75) [순위 상승 기회] 띠의 "이 화면의 1순위"와 개수는 지금 보는 목록(KW_filtered)에서 온다.
+
+    띠를 렌더 때 한 번만 쓰고 서버 합계(striking_page2)를 세면, 「아직 안 함」으로 한 줄만 남긴
+    목록 위에서 띠가 "문턱에 3개, 1순위는 다른 검색어"라고 말한다. 한 벌이어야 할 것은 둘이다:
+    띠가 KW_filtered 에서만 개수·1순위를 읽는 것, 목록을 다시 그릴 때(KW_drawLog) 띠도 다시 그리는 것.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    src = (ctx["views"] / "keywords.html").read_text("utf-8")
+    m = re.search(r"function KW_bar\(\) \{(.*?)\n\}\n", src, re.S)
+    assert m, "KW_bar(띠를 그리는 한 자리)가 없다"
+    bar = m.group(1)
+    assert "KW_filtered()" in bar, "띠가 지금 보는 목록(KW_filtered)에서 1순위를 안 읽는다"
+    assert "striking_page2" not in bar and "KW_ROWS" not in bar, \
+        "띠가 전체 행(KW_ROWS·서버 합계)을 세면 필터를 건 목록과 개수가 갈린다"
+    d = re.search(r"function KW_drawLog\(\) \{(.*?)\n\}\n", src, re.S)
+    assert d and "KW_bar()" in d.group(1), "목록을 다시 그릴 때 띠를 안 다시 그리면 필터를 바꾼 뒤 띠가 낡는다"
+    render = src[src.index("const p2 = d.striking_page2"):]
+    assert "1순위는" not in render, "렌더에서 띠 문장을 따로 쓰면 KW_bar 와 두 벌이 된다"
+
+
 def inspect_src(fn) -> str:
     import inspect
     return inspect.getsource(fn)

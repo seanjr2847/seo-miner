@@ -3,8 +3,8 @@
 <script type="application/json" class="view-def">
 {"id": "keywords", "group": "search", "title": "순위 상승 기회",
  "sections": ["log", "kw-cannibal", "movers"], "stages": ["gsc", "keywords", "gaps"],
- "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.keywords"},
-           {"id": "manage", "label": "관리"}],
+ "modes": [{"id": "work", "label": "할 것", "count": "queue_open_by_view.keywords"},
+           {"id": "manage", "label": "전체"}],
  "queue": {"mode": "work"}}
 </script>
 
@@ -322,7 +322,12 @@ const KW_open = tr => {
   tr.scrollIntoView({behavior: "smooth", block: "nearest"});
   KW_drawer(tr);
 };
-function KW_openTop() { KW_open(KW_logRow(KW_TOP) || KW_logRows()[0]); }
+function KW_openTop() {
+  // 띠가 부른 검색어(KW_TOP)가 표의 거르개에 가려져 있으면 거르개를 풀고 연다 — 안 그러면 표의
+  // 첫 줄이 열려 띠가 말한 것과 다른 검색어가 펼쳐진다.
+  if (KW_TOP && !KW_logRow(KW_TOP)) { KW_BAND = ""; KW_ST = "all"; KW_tools(); KW_drawLog(); }
+  KW_open(KW_logRow(KW_TOP) || KW_logRows()[0]);
+}
 
 const KW_band = r => r.band || (Number.isFinite(r.pos) && r.pos <= (RULES.page1 || 10) ? "page1" : "page2");
 const KW_gap = r => Number.isFinite(r.gap) ? r.gap : Math.max(0, r.pos - RULES.page1);
@@ -461,10 +466,62 @@ function KW_filtered() {
                pos: r => r.pos, clk: r => -(r.clk || 0)}[KW_SORT];
   return rows.sort((a, b) => key(a) - key(b));
 }
+/* 띠가 말하는 "이 화면의 1순위"와 개수의 정본은 지금 보는 목록(KW_filtered) 한 벌이다.
+   띠를 렌더 때 한 번만 쓰면 필터·정렬을 바꾼 뒤 목록은 한 줄인데 띠는 전체 개수를 말한다.
+   그래서 KW_drawLog 가 목록을 그릴 때마다 KW_bar 를 다시 부른다. 이미 닫힌 기회(완료·제외·
+   자동 종료)가 걸린 줄은 1순위로 세우지 않는다 — 끝난 일을 다시 하라는 말이 된다. */
+const KW_shut = r => { const o = oppOf(r.query); return !!o && !window.oppStMatch(o, "open"); };
+/* [할 것] 탭에서 눈에 보이는 목록은 처리 큐(SM.queue)다 — 큐의 거르개(「아직 안 함」·종류·찾기)를 건
+   뒤 줄들이 이 화면의 검색어 중 무엇인지로 되짚는다. [전체] 탭이면 null 이고 KW_filtered 가 맞다.
+   큐가 아직 없거나 줄이 이 화면 행과 하나도 안 맞으면 역시 null — 표 기준으로 말한다. */
+function KW_work() {
+  const q = window.SM && SM.queue && SM.queue.of("keywords");
+  if (!q || SM.modeNow("keywords") === "manage" || !Array.isArray(q.opps) || q.st == null) return null;
+  const rows = [];
+  q.filtered().forEach(o => SM.queue.targetsOf(o).forEach(t => {
+    const r = KW_ROWS.find(x => x.query === t);
+    if (r && !rows.includes(r)) rows.push(r);
+  }));
+  return rows;
+}
+function KW_lead(rows) {
+  const top = (rows || KW_filtered()).find(r => !KW_shut(r)) || null;
+  KW_TOP = top ? top.query : "";
+  return top;
+}
+function KW_bar() {
+  const rows = KW_work() || KW_filtered(), top = KW_lead(rows);
+  const live = s => `<span class="live">${s}</span>`;
+  if (!rows.length) {
+    KW_next("거른 조건에 맞는 검색어가 없습니다. " + live("조건을 풀면 1순위가 다시 섭니다."),
+      `<button class="go" onclick="KW_reset()">전체 보기</button>`);
+  } else if (!top) {
+    KW_next("이 목록의 검색어는 모두 처리했습니다. " +
+      live("다음 수집에서 새로 걸린 검색어가 여기 섭니다."));
+  } else {
+    // 검색어 이름은 <b> 한 벌이다 — 따옴표로 감싸면 화면마다 강조가 달라진다.
+    // "무엇부터 할지"는 [개요] 한 곳이 말한다 — 여기는 이 화면의 1순위만 짚는다.
+    const p2 = rows.filter(r => KW_band(r) === "page2").length;
+    const lead = `<b>${esc(top.query)}</b>`;
+    KW_next(p2
+      ? `이 목록에 1페이지 문턱 검색어가 ${p2}개 있습니다. 이 화면의 1순위는 ${lead}입니다.`
+      : `이 목록에 문턱에 걸린 검색어가 없어 남은 문제는 순위가 아니라 클릭입니다. ` +
+        `이 화면의 1순위는 ${lead}입니다.`,
+      `<button class="go" onclick="KW_openTop()">검색어 열기</button>`);
+  }
+}
+// 띠는 눈에 보이는 목록을 따라간다 — 큐의 거르개를 바꿀 때(sm:queue)와 탭을 옮길 때(sm:mode).
+["sm:queue", "sm:mode"].forEach(ev => document.addEventListener(ev, e => {
+  if (e.detail && e.detail.view === "keywords" && KW_ROWS.length) KW_bar();
+}));
 function KW_setSort(v) { KW_SORT = v; KW_drawLog(); }
 function KW_setBand(v) { KW_BAND = v; KW_pressed("#log-tools .kwchips .chip", v); KW_drawLog(); }
 function KW_setSt(v) { KW_ST = v; KW_drawLog(); }
-function KW_reset() { KW_BAND = ""; KW_ST = ""; KW_tools(); KW_drawLog(); }
+function KW_reset() {
+  KW_BAND = ""; KW_ST = ""; KW_tools(); KW_drawLog();
+  const q = window.SM && SM.queue && SM.queue.of("keywords");
+  if (q && SM.modeNow("keywords") !== "manage") q.reset();     // [할 것] 탭이면 큐의 거르개도 푼다
+}
 function KW_stAll() { KW_ST = "all"; KW_tools(); KW_drawLog(); }
 
 // 도구줄은 데이터가 바뀔 때만 그린다 — 거르기는 아래 그림·표만 다시 그린다(KW_drawLog).
@@ -514,6 +571,7 @@ function KW_drawLog() {
         <p>조건을 풀면 ${KW_ROWS.length}개가 있습니다.</p>
         <div class="acts"><button onclick="KW_reset()">전체 보기</button></div></div>`;
   KW_mark();
+  KW_bar();
 }
 // 카드 폭이 달라지면 그림을 다시 잰다. 숨은 화면(폭 0)에서 보이는 순간도 여기서 잡힌다.
 function KW_watchFig() {
@@ -1079,10 +1137,7 @@ VIEW("keywords", function (d) {
   // 1페이지 검색어 이름을 부르면 문장과 목록이 서로 다른 것을 가리킨다.
   // 이미 닫힌 기회(완료·제외·자동 종료)가 걸린 줄은 부르지 않는다 — 풀린 검색어를
   // 이 화면의 1순위로 세우면 끝난 일을 다시 하라는 말이 된다. 기회가 없는 줄은 남긴다.
-  const shut = r => { const o = oppOf(r.query); return !!o && !window.oppStMatch(o, "open"); };
-  const sorted = KW_ROWS.length ? KW_filtered().filter(r => !shut(r)) : [];
-  const top = (p2 ? sorted.find(r => r.band === "page2") : null) || sorted[0] || null;
-  KW_TOP = top ? top.query : "";
+  const top = KW_lead();
   KW_topCard(p2, top);
   KW_donutCard();
   /* 띠 문장은 [지금 상태] + [누르면 무엇이 되나] 두 토막이다. 뒤 토막은 누를 것이
@@ -1099,19 +1154,8 @@ VIEW("keywords", function (d) {
       : "실적을 아직 수집하지 않았습니다. " +
         live("수집하면 1페이지 문턱에 걸린 검색어부터 나옵니다."),
       SM.ui.act(d.gsc_date ? "keywords" : "gsc"));
-  } else if (!top) {
-    KW_next("이 목록의 검색어는 모두 처리했습니다. " +
-      live("다음 수집에서 새로 걸린 검색어가 여기 섭니다."));
-  } else {
-    // 검색어 이름은 <b> 한 벌이다 — 따옴표로 감싸면 화면마다 강조가 달라진다.
-    // "무엇부터 할지"는 [개요] 한 곳이 말한다 — 여기는 이 화면의 1순위만 짚는다.
-    const lead = `<b>${esc(top.query)}</b>`;
-    KW_next(p2
-      ? `1페이지 문턱에 ${p2}개가 있습니다. 이 화면의 1순위는 ${lead}입니다.`
-      : `문턱에 걸린 검색어가 없어 남은 문제는 순위가 아니라 클릭입니다. ` +
-        `이 화면의 1순위는 ${lead}입니다.`,
-      `<button class="go" onclick="KW_openTop()">검색어 열기</button>`);
   }
+  // 비어 있지 않을 때의 띠는 KW_drawLog 가 목록과 함께 그린다(KW_bar).
 
   // 비교 짝은 서버가 고른다 — 같은 기간(period_days)끼리만. 28일치와 90일치를 빼면
   // Δ가 전부 거짓이라, 짝을 못 찾으면 비교를 접고 그 이유를 여기에 적는다.
@@ -1140,7 +1184,7 @@ VIEW("keywords", function (d) {
     : d.gsc_prev
     ? `<div class="empty ok"><b>움직인 검색어가 없습니다</b>
         <p>직전 기록과 견줬고, 변동이 전부 노이즈 범위 안입니다.</p></div>`
-    : `<div class="empty"><b>견줄 직전 기록이 없습니다</b>
+    : `<div class="empty"><b>비교할 직전 기록이 없습니다</b>
         <p><span class="live">한 번 더 수집하면 그때부터 오른 검색어와 내린 검색어가
           갈립니다.</span></p>
         ${KW_cmd("gsc", KW_run("gsc"))}</div>`;

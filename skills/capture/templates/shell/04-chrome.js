@@ -206,12 +206,51 @@ document.addEventListener("click", ev => {
   window.nextStep(id, el._html);
 });
 
+/* 카드의 행동이 본문에 이미 있으면 카드는 문장만 남긴다. 같은 일을 하는 버튼이 한 화면에
+   두 벌 서면(예: 카드의 [검색어 열기]와 표 위의 같은 CTA) 눈이 어느 쪽을 누를지 고른다.
+   판정은 렌더된 글자가 아니라 버튼이 가진 행동 표식이다 — 단계(data-run) · 이동(href) ·
+   onclick. 카드를 만든 쪽(뷰)이 단 표식이라 문구가 바뀌어도 그대로 맞는다.
+   본문이 다 선 뒤에 불러야 맞다 — 뷰의 render 가 nextStep 보다 늦게 본문을 채운다. */
+const nxKeyOf = b => b.dataset.run ? "run:" + b.dataset.run
+  : b.getAttribute("onclick") ? "on:" + b.getAttribute("onclick").trim()
+  : b.getAttribute("href") ? "to:" + b.getAttribute("href") : "";
+function nxDedupe(viewId) {
+  const box = $("view-" + viewId), el = box && box.querySelector(":scope > .next");
+  if (!el || viewId === "guide") return;
+  const acts = el.querySelector(".acts");
+  if (!acts) return;
+  const mine = [...acts.querySelectorAll("button, a")];
+  if (!mine.length) return;
+  // 본문에서 보이는 버튼 — 닫힌 <details>·hidden 안의 것은 안 보이니 세지 않는다.
+  const seen = new Set();
+  box.querySelectorAll("button, a").forEach(b => {
+    if (b.closest(".next, .vh, .vban, .odr, .odr-bg, #docban")) return;
+    const sm = b.closest("summary");
+    for (let n = b.parentElement; n && n !== box; n = n.parentElement)
+      if (n.hidden || (n.tagName === "DETAILS" && !n.open && !(sm && sm.parentElement === n))) return;
+    const k = nxKeyOf(b);
+    if (k) seen.add(k);
+  });
+  if (mine.every(b => { const k = nxKeyOf(b); return k && seen.has(k); })) acts.remove();
+}
+SM.api.nxDedupe = nxDedupe;
+
+/* 알림 카드는 화면 위에 떠 있어 본문 끝을 덮는다 — 떠 있는 동안 본문 아래를 카드 높이만큼
+   비운다(CSS 의 --nx-pad). 높이는 문장 길이·좁은 폭에서 달라지니 재서 넣는다. */
+function nxPad() {
+  const nx = document.querySelector(".view:not([hidden]):not(#view-guide) > .next");
+  const h = nx && nx.offsetHeight ? nx.offsetHeight : 0;
+  document.documentElement.style.setProperty("--nx-pad", h ? `${h + 48}px` : "");
+}
+addEventListener("resize", nxPad);
+document.addEventListener("sm:view", nxPad);
+
 SM.api.nextStep = (viewId, html) => {
   const box = $("view-" + viewId);
   if (!box) return;
   let el = box.querySelector(":scope > .next");
   if (viewId !== "guide" && nxGone(viewId, html)) html = "";
-  if (!html) { if (el) el.remove(); dimHead(viewId); return banSync(); }
+  if (!html) { if (el) el.remove(); dimHead(viewId); nxPad(); return banSync(); }
   if (!el) {
     el = document.createElement("div");
     el.className = "next";
@@ -231,6 +270,8 @@ SM.api.nextStep = (viewId, html) => {
   deadSweep(el);
   applyWording(el);
   dimHead(viewId);
+  nxDedupe(viewId);
+  nxPad();
   banSync();     // 이 화면에 띠가 섰으니 배너의 "지금 할 것" 줄은 물러난다
 };
 

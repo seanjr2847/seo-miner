@@ -5,14 +5,14 @@
 
   1. 처리 큐가 맡는 종류는 클릭률·의도·주제·패턴 넷(scoring.KINDS 의 see 가 정본)인데 화면 부제와 큐
      제목은 「클릭이 왜 늘고 줄었는지」 하나뿐이었다. 큐 제목은 view-def queue 의 `title`(셸이 읽는다)로,
-     부제는 [처리]·[관리] 둘을 아울러 적는다. 둘 다 **종류 이름(kind_label·kind id)을 적지 않는다** —
+     부제는 [할 것]·[전체] 둘을 아울러 적는다. 둘 다 **종류 이름(kind_label·kind id)을 적지 않는다** —
      적으면 scoring.KINDS 의 사본이 된다. 업무 이름으로만 부른다.
   2. 기회 pseo_pattern 의 `see` 는 (analysis, an-cluster) 인데 그 섹션은 패턴 무리를 안 그렸다. 페이로드에
      이미 실려 있는 `pseo_groups`(scoring.pseo_groups 가 묶은 그대로 — dashboard._axis_query_pages) 를
      [반복 패턴] 소카드(#an-pseo)로 an-cluster 섹션 안에 그린다. 무리가 없으면 소카드는 접힌다.
 
 실제로 열어서: 무리가 있으면 소카드가 서고(틀·바뀌는 칸·묶인 검색어 수·노출 합·걸린 페이지), 없으면
-접히고, [개요]의 「자세히 보기」(SM.queue.goSee) 가 [관리] 탭의 이 소카드 앞으로 온다.
+접히고, [개요]의 「자세히 보기」(SM.queue.goSee) 가 [전체] 탭의 이 소카드 앞으로 온다.
 로컬(stdlib)과 호스팅(serve_hosted, 실제 FastAPI 앱) 둘 다.
 
 CLAUDE.md 의 규율: 검사를 추가했으면 일부러 깨서 FAIL 이 나는 것까지 확인한다.
@@ -68,15 +68,15 @@ def test_queue_title_and_sub_do_not_copy_kind_names():
     for what, text in (("queue.title", title), ("sub", d.get("sub") or "")):
         for n in names:
             assert n not in text, f"analysis {what} 가 종류 이름 '{n}' 을 그대로 적었다(scoring.KINDS 사본): {text}"
-    # 큐 제목은 [처리] 탭 이름과 겹쳐 읽히면 안 되고(탭이 이미 '처리'다), 기본 제목이어도 안 된다.
+    # 큐 제목은 [할 것] 탭 이름과 겹쳐 읽히면 안 되고(탭이 이미 '처리'다), 기본 제목이어도 안 된다.
     assert title != "개선 기회" and title != "처리", f"analysis queue.title 이 일반적이다: {title}"
 
 
 def test_sub_speaks_both_tabs():
     d = _def(_src())
     sub = d.get("sub") or ""
-    assert "원인" in sub, f"sub 가 [관리](원인별로 가르기)를 안 말한다: {sub}"
-    assert "처리" in sub, f"sub 가 [처리](큐)를 안 말한다: {sub}"
+    assert "원인" in sub, f"sub 가 [전체](원인별로 가르기)를 안 말한다: {sub}"
+    assert "처리" in sub, f"sub 가 [할 것](큐)를 안 말한다: {sub}"
     assert sub != "클릭이 왜 늘고 줄었는지 원인별로 가릅니다.", "sub 가 옛 문구 그대로다"
 
 
@@ -98,7 +98,7 @@ def test_pseo_card_markup_and_rules():
     m = re.search(r'<section id="an-cluster"([^>]*)>(.*?)</section>', mk, re.S)
     assert m
     attrs, inner = m.group(1), m.group(2)
-    assert 'data-mode="manage"' in attrs, "an-cluster 가 [관리]에 안 있다"
+    assert 'data-mode="manage"' in attrs, "an-cluster 가 [전체]에 안 있다"
     card = re.search(r'<div id="an-pseo"([^>]*)>', inner)
     assert card, "#an-pseo 가 div 가 아니다"
     assert "data-an-off" in card.group(1), "#an-pseo 가 기본 접힘(data-an-off)이 아니다 — 무리가 없을 때 빈 카드가 샌다"
@@ -207,7 +207,7 @@ setTimeout(function () {
     window.anPseoApply(G);
     out.filled = card();
     SM.setMode("analysis", "work");
-    out.workTab = card();                           // [처리]에서는 섹션째 접힌다
+    out.workTab = card();                           // [할 것]에서는 섹션째 접힌다
     SM.show("overview");
     SM.queue.goSee("analysis", "an-cluster");       // [개요] 줄의 「자세히 보기」가 하는 일 그대로
     out.afterSee = card();
@@ -275,8 +275,8 @@ def _verify(label: str, html: str, groups: list) -> None:
     assert f"{len(g0['queries'])}" in t, f"{label}: 묶인 검색어 수({len(g0['queries'])})가 안 보인다: {t}"
     assert f"{g0['imp']:,}" in t, f"{label}: 노출 합({g0['imp']:,})이 안 보인다: {t}"
     assert any("tax.example/guide" in h for h in f["links"]), f"{label}: 걸린 페이지 링크가 없다: {f['links']}"
-    assert out["workTab"]["h"] == 0, f"{label}: [처리] 탭인데 소카드가 보인다(섹션째 접혀야 한다): {out['workTab']}"
-    assert out["modeAfterSee"] == "manage", f"{label}: 「자세히 보기」가 [관리] 탭을 안 연다: {out['modeAfterSee']}"
+    assert out["workTab"]["h"] == 0, f"{label}: [할 것] 탭인데 소카드가 보인다(섹션째 접혀야 한다): {out['workTab']}"
+    assert out["modeAfterSee"] == "manage", f"{label}: 「자세히 보기」가 [전체] 탭을 안 연다: {out['modeAfterSee']}"
     a = out["afterSee"]
     assert a["display"] != "none" and a["h"] > 0, f"{label}: 「자세히 보기」 뒤 소카드가 안 보인다: {a}"
     assert -2 <= a["top"] < a["vh"], f"{label}: 「자세히 보기」 뒤 소카드가 화면 밖이다(top {a['top']}, 창 {a['vh']})"

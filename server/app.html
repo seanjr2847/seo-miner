@@ -10,12 +10,12 @@
 <main class="wrap">
   <!-- 머리는 한 벌이다: 물음 하나 · 그 답이 어디 있는지 한 문장 · 주 행동 하나.
        새 사이트는 온보딩(/start)에서 넣는다 — 이 화면은 목록이다. 등록 폼을 여기 다시
-       두면 입구가 둘이 되고, 한쪽(서치콘솔 없이 시작)만 낡는다. 격자 끝의 추가 타일과
-       이 버튼은 같은 /start 입구를 가리킬 뿐 폼이 아니다. -->
+       두면 입구가 둘이 되고, 한쪽(서치콘솔 없이 시작)만 낡는다. 이 버튼은 같은 /start 입구를
+       가리킬 뿐 폼이 아니다. 격자 끝에 두 번째 입구를 두지 않는다. 카드 꼴은 entry.html 이 갖는다. -->
   <div class="shead">
     <div>
       <h1>어느 사이트를 열까요?</h1>
-      <p>마지막 분석 시각과 다시 잴 측정을 보고, 들어갈 사이트를 고르세요.</p>
+      <p>할 일이 많은 사이트부터 보세요. 측정이 낡았는지는 카드 아래에 나옵니다.</p>
     </div>
     <a class="go" href="/start">사이트 추가</a>
   </div>
@@ -59,7 +59,7 @@ const $ = id => document.getElementById(id);
 // 얹는다: 이름 해시 색의 이니셜, 마지막 분석의 상대 시간, 측정 신선도 막대, 실패 알약.
 // 이름·주소·상태·버튼 링크는 서버 마크업이 정본이다 — 여기서 다시 쓰지 않는다.
 const list = document.querySelector(".sites");
-const cards = () => [...document.querySelectorAll(".sites > li:not(.addtile)")];
+const cards = () => [...document.querySelectorAll(".sites > li")];
 
 // 색 지문: 이름 글자를 더해 다섯 색조 중 하나로. 같은 이름은 언제나 같은 색이다.
 function tone(name) {
@@ -105,9 +105,40 @@ function decorate(li) {
   last.append(mk("span", "lbl", "마지막 분석"), v);
   v.append(mk("span", "ago"));
   if (w) v.append(w);
+  const nums = paintNums(li);
+  if (nums) last.prepend(nums);
   li.append(last, mk("div", "fresh"));
   paintAgo(li);
 }
+// 카드 맨 위 숫자 — 들어갈 이유가 되는 것: 최근 클릭(직전 대비)과 할 일 수. 값은 서버가
+// data-* 로 싣는다(store.glance). 없으면 그 칸을 생략한다 — 0 이라고 거짓으로 말하지 않는다.
+function paintNums(li) {
+  const d = li.dataset;
+  const has = k => d[k] != null && d[k] !== "";
+  const box = mk("div", "nums");
+  const stat = (big, label, extra) => {
+    const el = mk("span", "st");
+    const b = mk("b", null, big);
+    if (extra) b.append(extra);
+    el.append(b, mk("small", null, label));
+    box.append(el);
+  };
+  if (has("clicks")) {
+    const c = +d.clicks, p = has("prev") ? +d.prev : 0;
+    let dl = null;
+    if (p > 0) {
+      const pct = Math.round(100 * (c - p) / p);
+      dl = mk("em", "dl " + (pct > 0 ? "up" : pct < 0 ? "dn" : ""), (pct > 0 ? "+" : "") + pct + "%");
+      dl.title = "직전 같은 기간 " + p.toLocaleString("ko-KR") + "회";
+    }
+    stat(c.toLocaleString("ko-KR"), "최근 " + (has("period") ? d.period : 28) + "일 클릭", dl);
+  }
+  if (has("todo")) stat(d.todo, "심사 대기");
+  if (has("opps")) stat(d.opps, "열린 기회");
+  return box.children.length ? box : null;
+}
+// 사이트의 할 일 수 — 「먼저 볼 곳」 순서가 읽는다.
+const work = li => (+li.dataset.todo || 0) + (+li.dataset.opps || 0);
 function paintAgo(li) {
   const w = li.querySelector(".when");
   const a = li.querySelector(".ago");
@@ -209,7 +240,7 @@ function paintFresh(li, s, scale) {
       // 보이는 글자: 묶음 이름이 있으면 이름, 없으면 지나지 않은 상태만("최신"은 대부분이라 생략).
       const vis = nm || (st[k] === "up" ? "" : state);
       if (vis) col.append(mk("span", "nmg", vis));
-      col.append(mk("span", "d", dayText(a)));
+      col.append(mk("span", "d", a == null || a < 1 ? dayText(a) : dayText(a) + " 전"));
       bars.append(col);
     });
     box.append(sum, bars);
@@ -282,14 +313,16 @@ function paintJump(st) {
     if (!s || !go) return;
     const due = Object.values(s.groups || {}).filter(g => g.due).length;
     const fail = s.last_ok != null && !s.last_ok;
-    if (due || fail) rows.push({ name: nm.textContent, href: go.getAttribute("href"), due, fail });
+    const todo = work(li);
+    if (due || fail || todo) rows.push({ name: nm.textContent, href: go.getAttribute("href"), due, fail, todo });
   });
   if (!rows.length) {
     if (cards().some(li => !li.classList.contains("waiting")))
-      box.append(mk("span", "ok", "다시 잴 측정이 있는 사이트가 없습니다."));
+      box.append(mk("span", "ok", "지금 손댈 사이트가 없습니다."));
     return;
   }
-  rows.sort((a, b) => (b.fail - a.fail) || (b.due - a.due));
+  // 할 일(심사 대기 + 열린 기회)이 많은 순. 같으면 실패 → 다시 잴 묶음이 많은 순.
+  rows.sort((a, b) => (b.todo - a.todo) || (b.fail - a.fail) || (b.due - a.due));
   box.append(mk("span", "jl", "먼저 볼 곳"));
   rows.forEach(r => {
     const a = mk("a");
@@ -298,7 +331,9 @@ function paintJump(st) {
     av.dataset.t = tone(r.name);
     av.setAttribute("aria-hidden", "true");
     a.append(av, mk("span", null, r.name),
-             mk("small", null, r.fail ? "실패한 단계" : "다시 잴 " + r.due + "개"));
+             mk("small", null, [r.todo ? "할 일 " + r.todo + "건" : "",
+                                r.fail ? "실패한 단계" : r.due ? "다시 잴 " + r.due + "개" : ""]
+                                .filter(Boolean).join(" · ")));
     box.append(a);
   });
 }
@@ -324,36 +359,12 @@ function paintRing(t) {
   });
 }
 
-// ── 격자 끝의 추가 타일 ──────────────────────────────────────
-// 마지막 줄이 꽉 차 있으면 한 줄 전체로, 빈 칸이 남으면 그 칸 하나로 선다. 한 줄에 몇 장이 들어가는지는
-// 창 폭이 정하므로 그려진 위치로 잰다.
-function addTile() {
-  if (!list) return;
-  list.dataset.n = cards().length;
-  const li = mk("li", "addtile");
-  const a = mk("a");
-  a.href = "/start";
-  const plus = mk("span", "plus", "+");
-  plus.setAttribute("aria-hidden", "true");
-  const t = mk("span", "t");
-  t.append(mk("b", null, "사이트 추가"), mk("span", null, "주소를 넣으면 분석을 시작합니다"));
-  a.append(plus, t);
-  li.append(a);
-  list.append(li);
-  const place = () => {
-    const cs = cards();
-    if (!cs.length) return;
-    const top = cs[0].offsetTop;
-    const perRow = cs.filter(c => c.offsetTop === top).length;
-    li.dataset.fit = cs.length % perRow === 0 ? "row" : "cell";
-  };
-  place();
-  if (window.ResizeObserver) new ResizeObserver(place).observe(list);
-  else addEventListener("resize", place);
-}
+// 사이트 수는 격자 폭(CSS 의 data-n)이 읽는다. 「사이트 추가」는 머리의 버튼 하나뿐이다 —
+// 격자 끝에 같은 입구를 한 번 더 두면 눌러야 할 곳이 둘이 된다. 이 화면은 사이트가 하나 이상일 때만 뜬다
+// (없으면 서버가 온보딩으로 보낸다).
+if (list) list.dataset.n = cards().length;
 
 cards().forEach(decorate);
-addTile();
 paintStrip(null);
 
 // ── 첫 분석은 몇 분 걸린다 — 지금 뭘 하는 중인지 여기서 말한다 ──────────

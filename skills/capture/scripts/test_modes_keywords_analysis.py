@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""[순위 상승 기회](keywords)·[클릭 변화](analysis) 두 화면의 [처리]·[관리] 탭.
+"""[순위 상승 기회](keywords)·[클릭 변화](analysis) 두 화면의 [할 것]·[전체] 탭.
 
 틀(view-def "modes"·섹션 data-mode·"queue")은 셸이 한 벌로 갖는다(test_seams 170·180). 여기서는
 **이 두 화면이 그 틀을 제대로 쓰는지**만 못 박는다:
 
-  · 선언: modes 둘([처리] 먼저 + 건수 경로, [관리]) · queue 는 [처리] 탭에 선다.
-  · 마크업: 화면 상자로 옮겨지는 섹션(<section>)은 전부 [관리]에 산다. 화면의 기존 내용이 [처리] 큐
+  · 선언: modes 둘([할 것] 먼저 + 건수 경로, [전체]) · queue 는 [할 것] 탭에 선다.
+  · 마크업: 화면 상자로 옮겨지는 섹션(<section>)은 전부 [전체]에 산다. 화면의 기존 내용이 [할 것] 큐
     뒤로 사라지거나 두 탭에 걸치면 안 된다.
   · 섹션이 **자기 hidden 을 쓰지 않는다** — 셸이 탭으로 접을 때도 hidden 을 쓰므로(modeApply), 같은
     속성을 뷰가 함께 쓰면 탭을 오갈 때 뷰가 숨긴 카드가 되살아난다(셸은 vmOff 표식으로 자기 것만 편다
     — 그러나 뷰가 그 사이에 hidden=false 를 쓰면 접힌 탭에서 새어 나온다). 뷰의 접기는 data-an-off.
   · 인쇄: 탭으로 접힌 섹션이 종이에서 사라지지 않는다.
-  · 같은 화면 안에서 [검색어 열기]가 접힌 [관리]에 열려 허공을 가리키지 않는다.
-  · 실제로 열어서: 두 탭이 서고, 처음은 [처리], [관리]를 누르면 섹션이 전부 보이고 뷰가 스스로 접은 것은
+  · 같은 화면 안에서 [검색어 열기]가 접힌 [전체]에 열려 허공을 가리키지 않는다.
+  · 실제로 열어서: 두 탭이 서고, 처음은 [할 것], [전체]를 누르면 섹션이 전부 보이고 뷰가 스스로 접은 것은
     여전히 접혀 있다. 로컬(stdlib)과 호스팅(serve_hosted, 실제 FastAPI 앱) 둘 다.
 
 CLAUDE.md 의 규율: 검사를 추가했으면 일부러 깨서 FAIL 이 나는 것까지 확인한다.
@@ -59,9 +59,9 @@ def test_declarations():
     for vid in SCREENS:
         d = _def(_read(vid))
         assert d.get("modes") == [
-            {"id": "work", "label": "처리", "count": f"queue_open_by_view.{vid}"},
-            {"id": "manage", "label": "관리"}], f"{vid}: modes 가 [처리](건수 경로)·[관리] 순이 아니다: {d.get('modes')}"
-        assert {k: v for k, v in (d.get("queue") or {}).items() if k != "title"} == {"mode": "work"}, f"{vid}: queue 는 {{\"mode\": \"work\"}}(+선택 title) — [처리] 탭에 선다: {d.get('queue')}"
+            {"id": "work", "label": "할 것", "count": f"queue_open_by_view.{vid}"},
+            {"id": "manage", "label": "전체"}], f"{vid}: modes 가 [할 것](건수 경로)·[전체] 순이 아니다: {d.get('modes')}"
+        assert {k: v for k, v in (d.get("queue") or {}).items() if k != "title"} == {"mode": "work"}, f"{vid}: queue 는 {{\"mode\": \"work\"}}(+선택 title) — [할 것] 탭에 선다: {d.get('queue')}"
 
 
 def test_every_section_lives_in_manage():
@@ -70,9 +70,9 @@ def test_every_section_lives_in_manage():
         assert secs, f"{vid}: 섹션을 하나도 못 읽었다"
         for attrs in secs:
             assert re.search(r'\bdata-mode="manage"', attrs), \
-                f"{vid}: [관리]에 안 든 섹션이 있다(처리 큐 말고는 전부 관리 몫): <section{attrs}>"
+                f"{vid}: [전체]에 안 든 섹션이 있다(처리 큐 말고는 전부 관리 몫): <section{attrs}>"
         # 처리 큐는 셸이 data-mode="work" 로 세운다 — 마크업에 work 섹션을 따로 두면 큐와 두 벌이다.
-        assert 'data-mode="work"' not in _markup(_read(vid)), f"{vid}: 마크업이 [처리] 섹션을 따로 둔다 — 큐는 셸 몫"
+        assert 'data-mode="work"' not in _markup(_read(vid)), f"{vid}: 마크업이 [할 것] 섹션을 따로 둔다 — 큐는 셸 몫"
 
 
 def test_views_do_not_toggle_hidden_on_their_own_sections():
@@ -102,18 +102,18 @@ def test_print_unfolds_tab_hidden_sections():
 
 
 def test_open_top_goes_through_the_manage_tab():
-    """[검색어 열기]는 [관리] 표의 줄을 연다 — [처리]에 서 있으면 그 탭부터 연다."""
+    """[검색어 열기]는 [전체] 표의 줄을 연다 — [할 것]에 서 있으면 그 탭부터 연다."""
     kw, an = _read("keywords"), _read("analysis")
     assert re.search(r'const KW_open = tr => \{[^}]*SM\.setMode\("keywords", "manage"\)', kw, re.S), \
-        "keywords: KW_open 이 [관리] 탭을 안 연다 — 접힌 표에 열려 아무 일도 안 일어난 것처럼 보인다"
+        "keywords: KW_open 이 [전체] 탭을 안 연다 — 접힌 표에 열려 아무 일도 안 일어난 것처럼 보인다"
     assert re.search(r'function anOpenTop\(\) \{[^}]*SM\.setMode\("analysis", "manage"\)', an, re.S), \
-        "analysis: anOpenTop 이 [관리] 탭을 안 연다"
+        "analysis: anOpenTop 이 [전체] 탭을 안 연다"
 
 
 def test_docs_describe_both_tabs():
     for vid in SCREENS:
         t = (DOCS / f"{vid}.md").read_text("utf-8")
-        assert "[처리]" in t and "[관리]" in t, f"docs/screens/{vid}.md 에 [처리]/[관리] 구성 설명이 없다"
+        assert "[할 것]" in t and "[전체]" in t, f"docs/screens/{vid}.md 에 [할 것]/[전체] 구성 설명이 없다"
 
 
 # ── 실제로 열어서 ───────────────────────────────────────────────────────────
@@ -203,33 +203,33 @@ def _verify(label: str, html: str) -> None:
     for V in SCREENS:
         o = out[V]
         f = o["first"]
-        assert f["tabs"] == ["처리", "관리"], f"{label} {V}: 탭 줄이 [처리]·[관리] 가 아니다: {f['tabs']}"
-        assert f["sel"] == ["true", "false"] and f["now"] == "work", f"{label} {V}: 처음 탭이 [처리]가 아니다: {f['sel']}"
-        assert f["q"] and f["q"]["mode"] == "work", f"{label} {V}: 처리 큐가 [처리] 탭에 안 섰다: {f['q']}"
-        assert f["q"]["display"] != "none", f"{label} {V}: [처리]에서 큐가 안 보인다"
-        assert f["manage"], f"{label} {V}: [관리] 섹션이 하나도 없다"
+        assert f["tabs"] == ["할 것", "전체"], f"{label} {V}: 탭 줄이 [할 것]·[전체] 가 아니다: {f['tabs']}"
+        assert f["sel"] == ["true", "false"] and f["now"] == "work", f"{label} {V}: 처음 탭이 [할 것]가 아니다: {f['sel']}"
+        assert f["q"] and f["q"]["mode"] == "work", f"{label} {V}: 처리 큐가 [할 것] 탭에 안 섰다: {f['q']}"
+        assert f["q"]["display"] != "none", f"{label} {V}: [할 것]에서 큐가 안 보인다"
+        assert f["manage"], f"{label} {V}: [전체] 섹션이 하나도 없다"
         assert all(s["display"] == "none" for s in f["manage"]), \
-            f"{label} {V}: [처리]인데 [관리] 섹션이 보인다: {[s for s in f['manage'] if s['display'] != 'none']}"
+            f"{label} {V}: [할 것]인데 [전체] 섹션이 보인다: {[s for s in f['manage'] if s['display'] != 'none']}"
         m1 = o["manage"]
-        assert m1["now"] == "manage" and m1["sel"] == ["false", "true"], f"{label} {V}: [관리]를 눌렀는데 안 바뀐다"
-        assert m1["q"]["display"] == "none", f"{label} {V}: [관리]인데 처리 큐가 남아 있다"
+        assert m1["now"] == "manage" and m1["sel"] == ["false", "true"], f"{label} {V}: [전체]를 눌렀는데 안 바뀐다"
+        assert m1["q"]["display"] == "none", f"{label} {V}: [전체]인데 처리 큐가 남아 있다"
         for s in m1["manage"]:
             if s["off"]:
-                assert s["display"] == "none", f"{label} {V}: 뷰가 접은 #{s['id']} 가 [관리]에서 보인다"
+                assert s["display"] == "none", f"{label} {V}: 뷰가 접은 #{s['id']} 가 [전체]에서 보인다"
             else:
-                assert s["display"] != "none", f"{label} {V}: [관리]인데 #{s['id']} 가 안 보인다"
-        assert any(not s["off"] and s["h"] > 0 for s in m1["manage"]), f"{label} {V}: [관리]에 보이는 섹션이 없다"
+                assert s["display"] != "none", f"{label} {V}: [전체]인데 #{s['id']} 가 안 보인다"
+        assert any(not s["off"] and s["h"] > 0 for s in m1["manage"]), f"{label} {V}: [전체]에 보이는 섹션이 없다"
         if V == "analysis":
             # 픽스처는 GA4 가 없고 실적은 있다 — 이 넷은 뷰가 스스로 접는 카드다. data-an-off 속성이 아니라
             # 결과(안 보임)로 본다: 접는 방법이 hidden 으로 되돌아가 셸 탭과 겹치면 여기서 보인다.
             shut = {s["id"]: s["display"] for s in m1["manage"]}
             for i in ("an-newret-sec", "an-funnel-sec", "an-channels-sec", "an-empty-fill"):
-                assert shut.get(i) == "none", f"{label} {V}: GA4 없는 사이트인데 #{i} 가 [관리]에서 보인다: {shut.get(i)}"
-        assert [s for s in o["work"]["manage"] if s["display"] != "none"] == [], f"{label} {V}: [처리]로 돌아왔는데 [관리]가 남았다"
+                assert shut.get(i) == "none", f"{label} {V}: GA4 없는 사이트인데 #{i} 가 [전체]에서 보인다: {shut.get(i)}"
+        assert [s for s in o["work"]["manage"] if s["display"] != "none"] == [], f"{label} {V}: [할 것]로 돌아왔는데 [전체]가 남았다"
         assert [(s["id"], s["display"] == "none") for s in o["manage2"]["manage"]] == \
                [(s["id"], s["off"]) for s in m1["manage"]], \
             f"{label} {V}: 탭을 오간 뒤 뷰가 접은 섹션이 되살아났다(셸 hidden 과 겹침)"
-        assert o["afterOpen"] == "manage", f"{label} {V}: [검색어 열기]가 [관리] 탭을 안 연다: {o['afterOpen']}"
+        assert o["afterOpen"] == "manage", f"{label} {V}: [검색어 열기]가 [전체] 탭을 안 연다: {o['afterOpen']}"
 
 
 def test_render_local_and_hosted():

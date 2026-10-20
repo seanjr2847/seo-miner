@@ -254,8 +254,9 @@ def perf(project: str, top: int = 25, days: int = 90) -> dict:
         prev = totals(pp["date"]) if pp else totals(prev_date) if prev_date else None
         if prev and pp:
             prev.update({"from": pp["from"], "to": pp["to"]})
+        # 지금 창의 날짜도 개요 띠와 같은 것(gsc_cur_period)을 싣는다 — 화면이 따로 추정하지 않는다.
         return {"snapshot": cur, "totals": totals(cur), "prev": prev, "period": period,
-                "period_mismatch": period_mismatch,
+                "cur_period": gsc["gsc_cur_period"], "period_mismatch": period_mismatch,
                 "daily": daily, "queries": dim("query"), "pages": dim("page"),
                 "devices": devices}
     finally:

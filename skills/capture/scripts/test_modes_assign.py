@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""기회 종류 ↔ 화면 배정 — 어느 종류도 [개요]에만 갇혀 있지 않고, 각 업무가 자기 화면의 [처리] 큐에 선다.
+"""기회 종류 ↔ 화면 배정 — 어느 종류도 [개요]에만 갇혀 있지 않고, 각 업무가 자기 화면의 [할 것] 큐에 선다.
 
 정본은 scoring.KINDS 의 see=(화면 id, 섹션 id) 한 벌이고 화면 큐 소속은 그 뒤집기(queue_kinds_by_view)다.
 여기에 종류↔화면 표를 또 적지 않는다 — 이 파일이 못 박는 것은 **배정이 빠짐없고 서로 맞물린다**는 것뿐이다:
 
   1. 빠짐 — see 가 없는 종류는 의도한 예외(NO_HOME) 밖에 없다. 새 종류를 만들고 see 를 잊으면
              그 종류는 [개요]에서만 처리되고 자기 업무 화면은 모른다.
-  2. 맞물림 — see 의 화면은 큐(view-def queue)를 선언하고, 섹션은 그 화면 마크업에 있으며 [관리] 탭 안에 있다
+  2. 맞물림 — see 의 화면은 큐(view-def queue)를 선언하고, 섹션은 그 화면 마크업에 있으며 [전체] 탭 안에 있다
              (개요 줄의 '자세히 보기'(goSee)가 탭을 열고 스크롤하려면 섹션이 탭 래퍼 안에 있어야 한다).
   3. 합집합 — 화면 큐들의 종류 합집합 + 예외 = 개요(모든 종류)의 종류. 한 종류가 두 화면 큐에 서지 않는다.
   4. 사본 금지 — 뷰 view-def 에 종류 이름을 적지 않는다.
-  5. 화면(브라우저) — 배정된 종류의 기회가 그 화면 [처리] 큐에 서고, 개요 줄의 '자세히 보기'가 그 화면·탭·섹션으로
+  5. 화면(브라우저) — 배정된 종류의 기회가 그 화면 [할 것] 큐에 서고, 개요 줄의 '자세히 보기'가 그 화면·탭·섹션으로
              가고, 상태를 바꾸면 서버 값과 탭 배지가 따라간다. 로컬·호스팅(serve_hosted) 둘 다.
 
 CLAUDE.md 의 규율: 검사를 추가했으면 일부러 깨서 FAIL 이 나는 것까지 확인한다.
@@ -124,7 +124,7 @@ def test_see_screen_declares_a_queue_and_section_sits_in_a_tab():
             tabs = [a.get("data-mode") for a in chain[sec] if a.get("data-mode")]
             assert len(tabs) == 1 and tabs[0] in [m["id"] for m in modes], \
                 f"{k.name}: #{sec} 가 {view} 의 탭 래퍼(data-mode) 안에 없다 — goSee 가 탭을 못 연다: {tabs}"
-            # 큐는 [처리] 탭에 서므로, 이 종류의 근거 섹션이 같은 탭이면 서랍과 섹션이 한 탭에 겹친다.
+            # 큐는 [할 것] 탭에 서므로, 이 종류의 근거 섹션이 같은 탭이면 서랍과 섹션이 한 탭에 겹친다.
             assert tabs[0] != (q or {}).get("mode"), \
                 f"{k.name}: #{sec} 가 큐와 같은 탭({tabs[0]})에 있다 — '자세히 보기'가 갈 데가 없다"
 
@@ -306,20 +306,20 @@ def _assert_site(label: str, o: dict, st: dict) -> None:
         assert not k.get("noSee"), f"{label}: {name} 이 화면의 KIND_VIEWS(= 페이로드 kind_views)에 없다"
         view, sec = o["see"][name]
         L = f"{label} {name}→{view}/{sec}"
-        assert k["kindRows"] > 0, f"{L}: 그 화면 [처리] 큐에 이 종류의 줄이 없다(줄 {k['rows']}개)"
+        assert k["kindRows"] > 0, f"{L}: 그 화면 [할 것] 큐에 이 종류의 줄이 없다(줄 {k['rows']}개)"
         g = k["goSee"]
         assert g["exists"] and g["visible"], f"{L}: 개요의 '자세히 보기'가 보이는 섹션에 닿지 못했다: {g}"
-        assert g["tab"] == "manage", f"{L}: '자세히 보기'가 [관리] 탭을 안 열었다: {g}"
+        assert g["tab"] == "manage", f"{L}: '자세히 보기'가 [전체] 탭을 안 열었다: {g}"
         assert -40 <= g["top"] <= 400, f"{L}: 섹션이 화면 위쪽에 서지 않았다(top={g['top']})"
     for view in {o["see"][n][0] for n in CHECK_KINDS}:
         assert o["badge0"].get(view, 0) >= sum(1 for n in CHECK_KINDS if o["see"][n][0] == view), \
             f"{label}: 탭 배지 queue_open_by_view[{view}]={o['badge0'].get(view)} 가 새 종류의 열린 기회를 안 센다"
-    assert st["hadRow"], f"{label}: 상태를 바꿀 줄이 [처리] 큐에 없다"
+    assert st["hadRow"], f"{label}: 상태를 바꿀 줄이 [할 것] 큐에 없다"
     assert set(st["before"]) <= {"new", "acked"} and st["after"] and set(st["after"]) == {"done"}, \
         f"{label}: 상태가 서버에 안 바뀌었다: {st}"
     assert st["badgeAfter"] == st["shellBadge"] and st["badgeAfter"] < st["badgeBefore"], \
         f"{label}: 탭 배지가 서버 값을 안 따라간다: {st}"
-    assert st["gone"], f"{label}: 끝낸 기회가 [처리] 큐에 남아 있다"
+    assert st["gone"], f"{label}: 끝낸 기회가 [할 것] 큐에 남아 있다"
 
 
 def run() -> None:

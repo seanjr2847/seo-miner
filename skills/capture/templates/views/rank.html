@@ -408,7 +408,7 @@ function RK_moves(d, c) {
   if (!RK_HAS_PREV)
     return `<div class="card c7"><div class="rkc-h"><div><h2>이번에 움직인 것</h2>
       <p>확인일이 1회뿐이라 아직 변화가 없습니다.</p></div></div>
-      <div class="empty"><b>견줄 직전 확인이 없습니다</b>
+      <div class="empty"><b>비교할 직전 확인이 없습니다</b>
       <p>한 번 더 확인하면 어떤 검색어가 오르고 내렸는지 여기에 나옵니다.</p>
       <div class="acts">${SM.ui.act("rank", RK_run("rank"), false)}</div></div></div>`;
   const mv = RK_ROWS.filter(r => RK_d(r) != null && !RK_flat(r) && r.pos != null && RK_prevPos(r) != null)
@@ -461,7 +461,7 @@ function RK_kpis(c) {
   const mv = (n, kind) => RK_HAS_PREV ? card(kind, kind === "k-up" ? "오른 것" : "내린 것", n,
     `${esc(c.prevDate)} 대비 ±${(RULES.rank_noise || 3) - 1}칸 밖으로 움직인 검색어`,
     n ? `<span class="gm ${kind === "k-up" ? "gm-up" : "gm-down"}">${SM.ui.sign(kind === "k-up" ? 1 : -1)}${n}</span>` : `<span class="gm">변화 없음</span>`)
-    : card(kind, kind === "k-up" ? "오른 것" : "내린 것", null, "견줄 직전 확인 없음");
+    : card(kind, kind === "k-up" ? "오른 것" : "내린 것", null, "비교할 직전 확인 없음");
   return `<div class="rk-kpis">
     ${card("", "1페이지 안", c.onP1, `${c.p1}위 안. 확인한 ${RK_ROWS.length}개의 ${pct(c.onP1)}`, "", bar(c.onP1, `확인한 ${RK_ROWS.length}개 중 ${c.onP1}개가 1페이지 안`))}
     ${card("", "1페이지 문턱", c.nEdge, `${c.p1 + 1}~${c.edge}위, 전체의 ${pct(c.nEdge)}. 한 걸음이면 1페이지`, "", bar(c.nEdge, `문턱 ${c.nEdge}개`))}

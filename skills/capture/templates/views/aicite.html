@@ -4,7 +4,7 @@
 {"id": "aicite", "group": "ai", "title": "AI 인용", "aliases": ["ai"],
  "sub": "AI 검색 엔진 답변에 우리 링크가 붙는지, 안 붙으면 누가 그 자리를 가져갔는지 확인합니다.",
  "sections": ["aicite", "ai-outranked", "ai-vs-search", "ai-visits"], "stages": ["ai", "gaps", "gsc"],
- "modes": [{"id": "work", "label": "처리", "count": "queue_open_by_view.aicite"}, {"id": "manage", "label": "관리"}],
+ "modes": [{"id": "work", "label": "할 것", "count": "queue_open_by_view.aicite"}, {"id": "manage", "label": "전체"}],
  "queue": {"mode": "work"}}
 </script>
 
@@ -201,7 +201,10 @@ td .ailogo { margin-right:6px; }
 .aisub3 + .ainote { margin:0 0 12px; }
 .aihm { display:grid; grid-template-columns:minmax(64px,1fr) repeat(var(--n,3),minmax(44px,72px));
   gap:6px; align-items:center; }
-.aihm .h { display:flex; justify-content:center; align-items:center; color:var(--sub); height:20px; }
+.aihm .h { display:flex; flex-direction:column; justify-content:center; align-items:center; gap:2px;
+  color:var(--sub); min-height:20px; }
+.aihm .h small { font:400 var(--fs-1)/1.2 var(--sans); max-width:100%; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
 .aihm .cat { font:400 var(--fs-1)/1.3 var(--sans); color:var(--sub); overflow:hidden;
   text-overflow:ellipsis; white-space:nowrap; }
 .aihm .c { height:32px; border-radius:var(--r-pill); display:flex; align-items:center;
@@ -760,7 +763,7 @@ function AI_heat(m) {
   const by = {};
   for (const r of m) by[r.engine + "\u0001" + r.category] = r;
   const head = `<span></span>` + engs.map(e =>
-    `<span class="h" title="${esc(AI_engName(e))}">${AI_logo(e) || esc(AI_engName(e))}</span>`).join("");
+    `<span class="h" title="${esc(AI_engName(e))}">${AI_logo(e) ? AI_logo(e) + `<small>${esc(AI_engName(e))}</small>` : esc(AI_engName(e))}</span>`).join("");
   const rowsH = cats.map(c => `<span class="cat" title="${esc(AI_catName(c))}">${
     esc(AI_catName(c)) || "기타"}</span>` + engs.map(e => {
     const r = by[e + "\u0001" + c];
@@ -1435,9 +1438,11 @@ function AI_health(h, has) {
     lines.push(`<b>오래됨 ${num(h.stale)}개.</b> 마지막으로 잰 지 ${num(h.stale_days)}일이
       지났습니다. 기회 점수는 그때 받은 답을 씁니다.${eg(h.stale_eg)}`);
   if (h.outdated)
-    lines.push(`<b>구버전 ${num(h.outdated)}개.</b> 지금보다 옛 생성기가 지은 질문입니다.
-      다시 만들면 새 질문으로 바꿉니다. 옛 질문은 지우지 않고 끄기만 해서 인용 기록은
-      남고, 새 질문은 다음 확인에서 먼저 잽니다.${eg(h.outdated_eg)}`);
+    lines.push(`<b>구버전 ${num(h.outdated)}개.</b> 질문 ${num(h.outdated)}개가 예전 방식으로
+      만들어졌습니다. 다시 만들어도 인용 기록은 남습니다.${SM.ui.hint(
+        "다시 만들면 새 질문으로 바뀝니다. 옛 질문은 지우지 않고 끄기만 해서 인용 기록이 남고, 새 질문은 다음 확인에서 먼저 잽니다."
+        + (h.outdated_eg && h.outdated_eg.length ? " 예: " + h.outdated_eg.join(" / ") : ""),
+        {title: false})}`);
   if (!lines.length) return "";
   const acts = [];
   if (!READONLY && window.act) {
@@ -1460,8 +1465,7 @@ function AI_markets(d) {
   const ms = d.ai_markets || [];
   if (ms.length < 2) return "";
   const make = m => READONLY ? "" : W(AI_makeCmd(m.locale, false),
-    `<button class="go sm sec" data-sm-act="make-prompts" data-sm-locale="${esc(m.locale)}">질문 만들기</button>`
-    + AI_makeCmd(m.locale, false));
+    `<button class="go sm sec" data-sm-act="make-prompts" data-sm-locale="${esc(m.locale)}">질문 만들기</button>`);
   const none = ms.filter(m => !m.active);
   const rows = ms.map(m => {
     const lab = `<td class="kwcell">${esc(m.label)}</td>`;

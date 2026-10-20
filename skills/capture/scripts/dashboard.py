@@ -668,6 +668,14 @@ def _gsc_prev_period(conn, pid: int, cur: str | None, period: int | None) -> dic
             "position": round(r["p"], 1) if r["p"] is not None else None}
 
 
+def _gsc_cur_period(cur: str | None, period: int | None) -> dict | None:
+    """지금 창의 from~to(양끝 포함). 수집 전이면 None."""
+    if not cur or not period:
+        return None
+    end = date.fromisoformat(cur) - timedelta(days=GSC_LAG_DAYS)
+    return {"from": str(end - timedelta(days=period - 1)), "to": str(end)}
+
+
 def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
     """검색(GSC) 축 — KPI·추이·움직인 검색어·아깝다·의도/클러스터/국가/기기/색인.
 
@@ -725,6 +733,9 @@ def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
     return {
         "gsc_date": cur, "gsc_prev": prev, "gsc_period": period,
         "gsc_prev_period": _gsc_prev_period(conn, pid, cur, period),
+        # 지금 창의 날짜 — 직전 창과 같은 규칙(수집일 - GSC_LAG_DAYS 에서 끝나고 period 일 거슬러)을
+        # 서버가 한 번만 센다. 화면이 따로 추정하지 않는다.
+        "gsc_cur_period": _gsc_cur_period(cur, period),
         # 고를 수 있는 날 = 실제로 수집한 날. 화면의 [기준 수집일]이 이걸 그린다.
         "gsc_dates": scoring.snapshot_dates(conn, pid),
         "gsc_pinned": bool(at),
