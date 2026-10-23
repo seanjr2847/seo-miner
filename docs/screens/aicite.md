@@ -211,7 +211,8 @@ flowchart TD
   ai_tally(대신 인용된 곳·엔진별·발췌), ai_health·AI_STALE_DAYS(30), third_party_platforms
 - skills/capture/scripts/stage.py — STAGE_LABELS(ai·gaps·gsc 라벨), GAIN_WEB(호스팅은
   키를 서버가 댄다)
-- skills/capture/scripts/collect_ai.py — DEFAULT_ENGINES(chatgpt·perplexity·gemini),
+- skills/capture/scripts/skill_config.py — ai_engines(엔진 id·모델·기본 여부·추정 단가의 정본)
+- skills/capture/scripts/collect_ai.py — engines()(사이트 surfaces_ai 나 표의 기본 엔진),
   ai_samples, OPENROUTER_API_KEY
 - skills/capture/scripts/brief.py — SHAPE_NAMES·SHAPES 라벨, shape_of(ai_citation_gap →
   fix_page·new_content·presence)

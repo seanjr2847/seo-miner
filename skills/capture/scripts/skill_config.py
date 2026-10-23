@@ -11,11 +11,6 @@ self-check:  python skill_config.py
 """
 
 CONFIG: dict = {
-    # 표면은 설계상 상수다 — 하나 더하려면 여기 한 줄 + 어댑터.
-    "surfaces_available": ["gsc", "chatgpt", "perplexity", "gemini", "claude",
-                           "google_serp", "naver"],
-    "default_ai_engines": ["chatgpt", "perplexity", "gemini"],
-
     # AI 크롤러 UA — robots.txt 로 막혔는지 본다 (scoring.ai_bot_status).
     # 벤더가 봇을 새로 내면 이 목록에 한 줄 더한다.
     #
@@ -91,13 +86,28 @@ CONFIG: dict = {
         "you.com", "poe.com", "chat.deepseek.com", "chat.mistral.ai",
     ],
 
-    # OpenRouter 모델 슬러그는 시간이 지나면 바뀐다 — 바꿀 때는 여기 한 곳.
-    # ':online' 은 OpenRouter 웹 플러그인 → 지원되는 곳은 제공자 자체 검색.
+    # AI 인용 확인 엔진 — 이 표 한 벌이 정본이다. 엔진 id 는 ai_checks.engine 에 남고
+    # 화면(aicite.html 의 AI_ENG_NAME)이 그 id 로 이름·로고를 찾는다(test_seam_202).
+    #   model    OpenRouter 슬러그. 시간이 지나면 바뀐다 — 바꿀 때는 여기 한 곳.
+    #   default  사이트가 surfaces_ai 로 고르지 않았을 때 묻는 엔진인가
+    #   usd      한 번 묻는 **추정** 단가($) — 잔액 카나리아만 쓴다. 실청구는 응답 usage.cost.
+    #   body     요청에 더 싣는 값(소비자 앱의 기본 모드를 흉내 내는 자리)
+    # 기준은 "사람이 그 앱을 그냥 열었을 때 받는 답"이다(2026-10-23 OpenRouter 목록):
+    #   chatgpt  chat-latest 는 OpenAI 가 ChatGPT 에 쓰는 Instant 모델을 따라가는 별칭이다.
+    #            gpt-4o-mini 는 앱에서 내려간 지 오래라 출처 고르는 방식이 앱과 달랐다.
+    #   gemini   앱 기본(빠른 모드)은 최신 Flash 에 생각을 짧게 하는 것이다. 생각 토큰도
+    #            max_tokens 에 들어가 길게 생각하면 답 뒤쪽 인용이 잘린다.
+    #   perplexity  무료 사용자의 기본 검색이 Sonar 다.
+    #   claude   claude.ai 기본 모델. 기본으로는 안 묻는다(비싸다) — 사이트 surfaces_ai 로 켠다.
+    # ':online' 은 OpenRouter 웹 플러그인이고, 네 제공자 모두 제공자 자체 검색(native)을 탄다
+    # (Gemini 는 구글 검색 그라운딩). sonar 는 검색이 모델에 들어 있다.
     "ai_engines": {
-        "chatgpt": "openai/gpt-4o-mini:online",
-        "perplexity": "perplexity/sonar",
-        "gemini": "google/gemini-2.5-flash:online",
-        "claude": "anthropic/claude-sonnet-4.5:online",   # 선택 4번째 엔진, 같은 키
+        "chatgpt":    {"model": "openai/gpt-chat-latest:online", "default": True, "usd": 0.08},
+        "perplexity": {"model": "perplexity/sonar", "default": True, "usd": 0.01},
+        "gemini":     {"model": "google/gemini-3.8-flash:online", "default": True, "usd": 0.03,
+                       "body": {"reasoning": {"effort": "low"}}},
+        "claude":     {"model": "anthropic/claude-sonnet-5.5:online", "default": False,
+                       "usd": 0.10},
     },
 
     # collector.settings() 가 읽는다: CLI > 사이트 설정 > 여기 > 코드 리터럴.
@@ -135,6 +145,9 @@ CONFIG: dict = {
 def _selfcheck() -> None:
     assert {"ai_bots", "third_party_platforms", "ai_referrers", "ai_engines",
             "defaults", "serp"} <= set(CONFIG)
+    for eid, e in CONFIG["ai_engines"].items():
+        assert {"model", "default", "usd"} <= set(e) <= {"model", "default", "usd", "body"}, eid
+    assert any(e["default"] for e in CONFIG["ai_engines"].values())
     for b in CONFIG["ai_bots"]:
         assert b["purpose"] in ("search", "user", "training"), b
     assert "chatgpt.com" in CONFIG["ai_referrers"]

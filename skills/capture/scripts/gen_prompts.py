@@ -34,7 +34,7 @@ import db  # noqa: E402
 import serp_adapter  # noqa: E402  (로케일 → 영어 언어·나라 이름)
 
 # 검색이 필요 없는 작업이다(:online 을 안 붙인다) — 질문을 짓는 것뿐이라 싸고 빠른
-# 모델로 충분하다. 인용 확인에 쓰는 엔진 표(collect_ai.DEFAULT_ENGINES)와는 별개다.
+# 모델로 충분하다. 인용 확인에 쓰는 엔진 표(skill_config.CONFIG["ai_engines"])와는 별개다.
 MODEL = "openai/gpt-4o-mini"
 # 질문 갈래는 여기 한 벌이고, 만드는 쪽(이 파일)·고르는 쪽(화면의 <select>)·받는
 # 쪽(server/app.py)이 전부 이걸 가리킨다. 셋으로 갈라져 있던 시절 실제로 어긋났다:

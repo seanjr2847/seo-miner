@@ -22,6 +22,7 @@ Usage:
 """
 import argparse
 import sys
+from datetime import date
 from pathlib import Path
 
 import requests
@@ -35,36 +36,36 @@ import serp_adapter  # noqa: E402
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Model slugs drift over time; override in skill_config.CONFIG['ai_engines'].
-DEFAULT_ENGINES = {
-    "chatgpt":    "openai/gpt-4o-mini:online",
-    "perplexity": "perplexity/sonar",            # search built-in
-    "gemini":     "google/gemini-2.5-flash:online",
-    # "claude":   "anthropic/claude-sonnet-4.5:online",   # optional, same key
-}
-
-# 로케일을 안 실으면 한국어 질문에도 미국 소스가 붙는다 — 소비자 앱이 보는 화면과
-# 어긋나서, 인용 갭 분석이 엉뚱한 경쟁 도메인을 세게 된다.
-SYSTEM = ("You are a helpful assistant. Answer the user's question the way you "
-          "normally would for a real user, citing web sources. "
-          "Answer in the language of the question, and prefer sources relevant "
-          "to a {lang}-speaking audience in {country} ({locale}).")
+# 소비자 앱이 system 자리에 싣는 것 중 답을 바꾸는 둘 — 사용자의 위치·언어와 오늘 날짜.
+# 로케일을 안 실으면 한국어 질문에도 미국 소스가 붙는다(소비자 앱은 위치를 안다). 날짜가
+# 없으면 "올해 추천"이 모델의 학습 시점 기준이 된다. "출처를 달아라" 같은 지시는 싣지 않는다
+# — 앱은 그런 지시 없이 답하고, 지시하면 인용이 앱보다 많아진다.
+SYSTEM = ("The user is in {country} and uses {lang} ({locale}). Current date: {today}. "
+          "Answer in the language of the question.")
+# 답 길이 상한. 앱에는 상한이 없다 — 1200 이면 긴 추천 목록 뒤쪽 인용이 잘렸고, 생각하는
+# 모델은 생각 토큰도 여기서 센다. 토큰 비용 상한이기도 하다.
+MAX_TOKENS = 2000
 
 
-# 호출 한 번의 **추정** 단가($) — 실청구는 응답 usage 가 말한다. ':online' 웹 검색은 요청마다
-# 검색 요금(결과 5건 ≈ $0.02)이 토큰 위에 붙고, sonar 도 요청 요금이 있다. 잔액 카나리아가
-# "이번 확인을 끝까지 할 돈이 있나"를 가늠하는 데만 쓴다 — 넉넉하게 잡는다.
-AI_CALL_USD = 0.02
+def engines(names: list[str] | None = None) -> dict[str, dict]:
+    """물을 엔진 {id: 표 한 줄}. 표의 정본은 skill_config.CONFIG['ai_engines'] 다.
+
+    names(사이트의 surfaces_ai 나 --engines)를 주면 그중 표에 있는 것만, 안 주면 표의
+    default 엔진. 표에 없는 이름은 버린다 — 모델을 모르는 엔진은 물을 수 없다.
+    """
+    table = collector.config()["ai_engines"]
+    if not names:
+        return {k: e for k, e in table.items() if e["default"]}
+    return {k: table[k] for k in names if k in table}
 
 
 def estimate_usd(project: str | None) -> float:
-    """이번 AI 인용 확인의 추정 비용 — 켠 질문 수(상한 안) × 엔진 × 표본 × AI_CALL_USD.
-    사이트를 못 읽으면 상한으로 잡는다(모르면 넉넉하게)."""
+    """이번 AI 인용 확인의 추정 비용 — 켠 질문 수(상한 안) × 표본 × 엔진 단가 합.
+    사이트를 못 읽으면 상한·기본 엔진으로 잡는다(모르면 넉넉하게)."""
     gcfg = collector.config()
-    engines = len(gcfg.get("default_ai_engines") or DEFAULT_ENGINES)
     samples = int((gcfg.get("defaults") or {}).get("ai_samples") or 2)
     cap = 30                              # _parser 의 --max-prompts 기본값과 같다(시장마다)
-    n = cap
+    n, chosen = cap, None
     if project:
         try:
             conn = db.connect()
@@ -72,11 +73,13 @@ def estimate_usd(project: str | None) -> float:
                 p = db.get_project(conn, project)
                 # 상한은 시장마다다(collect) — 시장마다 켠 질문 수를 상한으로 자른 합.
                 n = sum(min(m["active"], cap) for m in db.ai_prompt_markets(conn, p["id"]))
+                chosen = db.project_cfg(conn, p).get("surfaces_ai")
             finally:
                 conn.close()
         except Exception:
             n = cap
-    return round(n * engines * samples * AI_CALL_USD, 2)
+    usd = sum(e["usd"] for e in engines(chosen).values())
+    return round(n * samples * usd, 2)
 
 
 def _openrouter_state(key: str) -> tuple[bool, str, float | None]:
@@ -137,14 +140,19 @@ def openrouter_ok(need: float = 0.0) -> tuple[bool, str]:
     return True, (f"OpenRouter 키 유효 · 잔액 ${left:.2f}" if left is not None else msg)
 
 
-def ask(model: str, prompt: str, api_key: str, locale: str) -> dict:
+def ask(model: str, prompt: str, api_key: str, locale: str, body: dict | None = None) -> dict:
+    """한 번 묻는다. body 는 엔진 표의 그 줄이 더 싣는 값(생각 정도 등)."""
     locale = locale or db.DEFAULT_LOCALE
     lang, country = serp_adapter.describe(locale)
     body = {
+        **(body or {}),
         "model": model,
-        "max_tokens": 1200,  # 700이면 긴 답변 뒤쪽 인용이 잘린다 — 토큰 비용 최대 ~1.7배
+        "max_tokens": MAX_TOKENS,
+        # 응답이 실청구액(usage.cost)을 싣게 한다 — runs.cost_estimate_usd 가 추정이 아니게.
+        "usage": {"include": True},
         "messages": [
-            {"role": "system", "content": SYSTEM.format(locale=locale, lang=lang, country=country)},
+            {"role": "system", "content": SYSTEM.format(
+                locale=locale, lang=lang, country=country, today=date.today().isoformat())},
             {"role": "user", "content": prompt},
         ],
     }
@@ -210,17 +218,15 @@ def collect(project: str, *,
     ap = _parser()
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p, cfg = st.conn, st.project, st.cfg
-        gcfg = collector.config()
         s = st.settings(ap, argparse.Namespace(
             throttle=throttle, samples=samples, max_prompts=max_prompts))
         samples = s["ai_samples"]
         max_ai_prompts = s["limits.max_ai_prompts"]
 
-        engines_map = {**DEFAULT_ENGINES, **(gcfg.get("ai_engines") or {})}
-        engine_names = ([e.strip() for e in engines.split(",")] if engines
-                        else (cfg.get("surfaces_ai") or gcfg.get("default_ai_engines")
-                              or ["chatgpt", "perplexity", "gemini"]))
-        engines_d = {e: engines_map[e] for e in engine_names if e in engines_map}
+        # 인자 engines(쉼표 목록)가 모듈 함수 engines 를 가린다 — 함수는 모듈에서 꺼낸다.
+        pick_engines = globals()["engines"]
+        engines_d = (pick_engines([e.strip() for e in engines.split(",")]) if engines
+                     else pick_engines(cfg.get("surfaces_ai")))
 
         # 부분 실행. 이게 없으면 "새로 넣은 8개만 돌려보자"에도 is_active를 손으로
         # 토글해야 하고, 되돌릴 때 통째로 UPDATE 해서 큐레이션한 활성 집합을 날린다.
@@ -325,7 +331,8 @@ def collect(project: str, *,
                 row, engine, _ = item
                 # 그 질문의 시장으로 묻는다 — 예전엔 늘 사이트 기본(p.locale)이라 영어 질문도
                 # "한국 사용자에게 맞는 출처"를 달라고 했다.
-                return ask(engines_d[engine], row["prompt"], api_key, row["locale"])
+                e = engines_d[engine]
+                return ask(e["model"], row["prompt"], api_key, row["locale"], body=e.get("body"))
 
             def write_one(item, res) -> None:
                 """질문 하나 × 엔진 × 샘플 — 실패는 러너가 세고 다음으로 넘어간다."""
@@ -337,15 +344,20 @@ def collect(project: str, *,
                                    recommended=recommended,
                                    citations=scoring.citations_of(
                                        res.get("citations"), res["content"]))
-                # 도중에 Fatal 로 끊겨도 그때까지 부른 횟수가 runs 에 남게 여기서 센다
+                # 도중에 Fatal 로 끊겨도 그때까지 부른 횟수·청구액이 runs 에 남게 여기서 센다
                 r.api_calls += 1
+                r.cost += float((res.get("usage") or {}).get("cost") or 0)
                 if last_of.get(row["id"]) == item:
                     print(f"  prompt#{row['id']} [{row['category']}] done")
 
             fanout.each(st, flat, ask_one, write_one, workers=fanout.LIMITS["openrouter"],
                         label=lambda t: f"{t[1]} failed on prompt#{t[0]['id']}")
+            # 모델까지 적는다 — 표의 모델을 바꾼 회차부터 인용률이 달라질 수 있고,
+            # ai_checks 에는 엔진 id 만 남는다. 추세가 꺾인 자리를 여기서 찾는다.
             r.notes = (f"engines={list(engines_d)} samples={samples} "
+                       f"models={','.join(e['model'] for e in engines_d.values())} "
                        f"{st.err_note} skipped={skipped_calls}")
+            cost = r.cost
 
         # 실패는 카운트만 하고 계속 갔으니, 끝에서 한 번 크게 말한다 —
         # 아래 매트릭스의 분모가 그만큼 줄어든 것을 보이게.
@@ -364,7 +376,8 @@ def collect(project: str, *,
         print(f"\nrun_id={run_id} saved{st.skip_note(skipped_calls)}. "
               f"failures={st.errors}/{calls_to_make}. "
               f"Next: /capture gaps or /capture report")
-        return st.verdict(calls_to_make - st.errors, rows=calls_to_make - st.errors)
+        return st.verdict(calls_to_make - st.errors, rows=calls_to_make - st.errors,
+                          cost=round(cost, 4))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -420,7 +433,7 @@ def _selfcheck() -> None:
     asked_on: set[int] = set()
     orig_ask = globals()["ask"]
 
-    def fake_ask(model, prompt, api_key, locale):
+    def fake_ask(model, prompt, api_key, locale, body=None):
         with lock:
             live["now"] += 1
             live["peak"] = max(live["peak"], live["now"])
@@ -429,11 +442,11 @@ def _selfcheck() -> None:
         time.sleep(0.01 * (6 - n))
         with lock:
             live["now"] -= 1
-        if prompt == "질문2" and model == DEFAULT_ENGINES["gemini"]:
+        if prompt == "질문2" and model == engines()["gemini"]["model"]:
             # 429 는 그 항목 하나의 실패다 — 단계를 멈추지 않는다(serp_adapter.raise_for)
             raise requests.HTTPError("429 Client Error: Too Many Requests")
         return {"content": f"{prompt} 답 — ai.kr 추천", "citation_urls": ["https://ai.kr/x"],
-                "usage": {}}
+                "usage": {"cost": 0.001}}
 
     conn = fanout.MainThreadOnly(db.connect())
     globals()["ask"] = fake_ask
@@ -453,13 +466,15 @@ def _selfcheck() -> None:
     assert [tuple(r) for r in rows] == want, "적재 순서가 입력 순서가 아니다(끝난 순서로 적혔다)"
     assert 1 < live["peak"] <= fanout.LIMITS["openrouter"], f"동시 상한: peak={live['peak']}"
     assert main_id not in asked_on, "ask 가 메인 스레드에서 돌았다 — 동시에 안 묻는다"
-    run = conn.execute("SELECT api_calls, notes FROM runs WHERE kind='ai'").fetchone()
+    run = conn.execute("SELECT api_calls, notes, cost_estimate_usd FROM runs WHERE kind='ai'").fetchone()
     assert run["api_calls"] == 34 and "errors=2" in run["notes"], dict(run)
+    assert abs(run["cost_estimate_usd"] - 34 * 0.001) < 1e-9, "응답의 실청구액을 안 적었다"
+    assert engines()["gemini"]["model"] in run["notes"], "물은 모델을 노트에 안 적었다"
 
     # 402(Fatal) — 아직 안 보낸 질문은 보내지 않고 단계를 끝낸다
     sent: list[str] = []
 
-    def broke(model, prompt, api_key, locale):
+    def broke(model, prompt, api_key, locale, body=None):
         with lock:
             sent.append(prompt)
         raise collector.Fatal("OpenRouter 잔액 없음(402)")
@@ -534,7 +549,9 @@ def _canary_check() -> None:
         requests.get = down
         ok, msg = openrouter_ok(5.0)
         assert ok and "그대로 진행" in msg, "확인이 실패했는데 수집을 막았다"
-        assert estimate_usd(None) == round(30 * 3 * 2 * AI_CALL_USD, 2), estimate_usd(None)
+        per = sum(e["usd"] for e in engines().values())
+        assert estimate_usd(None) == round(30 * 2 * per, 2), estimate_usd(None)
+        assert "claude" not in engines() and set(engines(["claude", "없는엔진"])) == {"claude"}
     finally:
         requests.get = real_get
         serp_adapter._canary.clear()

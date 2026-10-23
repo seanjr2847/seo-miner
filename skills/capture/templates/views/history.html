@@ -290,6 +290,8 @@ const HS_kind = k => ((window.__STAGES__ || {})[k] || {}).t || HS_RUN_LABEL[k] |
 const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:"공급자",
   device:"기기", errors:"오류", skipped:"건너뜀", harvest_kw:"수확 키워드",
   harvest_comp:"수확 경쟁사", engines:"엔진", samples:"샘플", opps:"기회",
+  // AI 인용 확인이 물은 모델(collect_ai) — 엔진 표의 모델을 바꾼 회차를 찾는 단서다.
+  models:"모델",
   domains:"도메인", inserted:"신규", candidates:"후보", mode:"방식", urls:"주소",
   checked:"검사", striking:"밀면 오를 검색어", pseo:"pSEO",
   // 운영 기록에 실제로 남아 있던 키(2026-09-14 전수) — 없으면 영문 필드명이 그대로 보였다.
@@ -479,8 +481,8 @@ function HS_notes(n) {
                  `<b>${esc(HS_errMsg(val))}</b></span>`);
       return "";
     }
-    // 공급사 이름은 사람이 할 일을 바꾸지 않는다 — 화면에서는 빼고 CSV 에만 남긴다.
-    if (!HS_NOTE_LABEL[k] || k === "provider") return "";
+    // 공급사·모델 이름은 사람이 할 일을 바꾸지 않는다 — 화면에서는 빼고 CSV 에만 남긴다.
+    if (!HS_NOTE_LABEL[k] || k === "provider" || k === "models") return "";
     const bad = (k === "errors" || k === "skipped") && +v > 0;
     parts.push(`<span class="p${bad ? " bad" : ""}${HS_NOTE_VAL[val] ? " msg" : ""}">${esc(HS_NOTE_LABEL[k])} ` +
                `<b>${esc(HS_NOTE_VAL[val] || val)}</b></span>`);

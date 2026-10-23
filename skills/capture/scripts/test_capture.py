@@ -3462,7 +3462,7 @@ def test_ai_prompts_are_asked_per_market():
 
     # 묻기 — 상한은 시장마다고, 질문마다 그 시장으로 묻는다
     seen, real_ask = [], collect_ai.ask
-    collect_ai.ask = lambda model, prompt, key, locale: seen.append((prompt, locale)) or {
+    collect_ai.ask = lambda model, prompt, key, locale, body=None: seen.append((prompt, locale)) or {
         "content": "답", "citation_urls": [], "usage": {}}
     try:
         collect_ai.collect("mk_ai", engines="chatgpt", samples=1, max_prompts=1, throttle=0,

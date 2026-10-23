@@ -423,7 +423,6 @@ def create_project(f: dict, *, auto_gsc: bool = True) -> dict:
            "seed_keywords": items("seed_keywords"),
            "competitors_manual": items("competitors_manual"),
            "tools": items("tools"),
-           "surfaces_ai": ["chatgpt", "perplexity", "gemini"],
            "limits": {"max_keywords": db.RANK_KEYWORDS_CAP, "max_ai_prompts": 30}}
     conn = db.connect()
     try:

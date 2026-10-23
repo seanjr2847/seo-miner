@@ -5631,6 +5631,33 @@ def inspect_src(fn) -> str:
     return inspect.getsource(fn)
 
 
+def test_seam_202_ai_engine_table_single_source():
+    """202) AI 인용 확인 엔진(id·모델·기본 여부)은 skill_config.CONFIG['ai_engines'] 한 벌이다.
+
+    예전엔 collect_ai.DEFAULT_ENGINES 와 skill_config 의 ai_engines·default_ai_engines, 그리고
+    collect_ai 폴백·사이트 등록(dashboard) 리터럴까지 다섯 벌이었다. 표를 고쳐도 다른 벌이 옛
+    모델을 쥐고 있으면 무엇을 물었는지 모른다. 반대쪽 끝은 화면이다 — aicite.html 이 엔진 id 로
+    이름(AI_ENG_NAME)을 찾는다. 표에 엔진을 더하고 화면에 안 더하면 id 가 맨글자로 찍힌다.
+    """
+    import collect_ai
+    import skill_config
+    table = skill_config.CONFIG["ai_engines"]
+    assert set(collect_ai.engines()) == {k for k, e in table.items() if e["default"]}
+    view = ROOT / "skills" / "capture" / "templates" / "views" / "aicite.html"
+    if view.exists():
+        m = re.search(r"const AI_ENG_NAME = \{([^}]*)\}", view.read_text("utf-8"))
+        assert m, "aicite.html 에 AI_ENG_NAME 이 없다"
+        named = set(re.findall(r"(\w+)\s*:", m.group(1)))
+        assert set(table) <= named, f"화면에 이름이 없는 엔진: {sorted(set(table) - named)}"
+    # 다른 파일이 엔진 표의 사본을 다시 갖지 않는다 — 옛 이름과, 엔진 id 가 모델 슬러그를 가리키는 꼴.
+    copy = re.compile(r"DEFAULT_ENGINES|default_ai_engines|"
+                      r"[\"'](?:chatgpt|perplexity|gemini|claude)[\"']\s*:\s*[\"'][\w.-]+/")
+    hits = [f.name for f in SCRIPTS.glob("*.py")
+            if f.name not in ("skill_config.py", "test_seams.py")
+            and copy.search(f.read_text("utf-8"))]
+    assert not hits, f"엔진 표 사본: {hits}"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
