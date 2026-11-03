@@ -405,3 +405,28 @@ SM.api.go = (id, label) => {
     : esc(t);          // 이 배포에 없는 화면(호스팅의 설정, 박제본의 안내)은 글자로 물러선다
 };
 
+// [페이지별]로 가는 길 — 다른 화면이 보여 주는 내 페이지 주소를 누르면 그 글이 열린다.
+// 화면 사이에 넘기는 것은 주소 하나다. hash 는 사이트 이름 한 칸이라(이음매 5) 거기 싣지
+// 않고, 이 탭의 sessionStorage 에 둔다 — 새로고침해도 보던 글이 남는다. [페이지별]은
+// sm:page 신호를 받아 그 주소를 불러온다. 그 배포에 화면이 없으면(박제본) 길도 없다.
+SM.api.canPage = () => !READONLY && SM.at("page") >= 0;
+SM.api.openPage = url => {
+  if (!url || !SM.api.canPage()) return;
+  try { sessionStorage.setItem("sm:page", url); } catch (e) {}
+  SM.touched = true;
+  SM.show("page");
+  document.dispatchEvent(new CustomEvent("sm:page", {detail: {url}}));
+};
+// 주소 글자 자체를 [페이지별] 손잡이로 — 바깥(실제 페이지)은 옆의 ↗ 가 연다.
+// 화면이 없으면 예전처럼 바깥 링크 하나로 물러선다(ext=false 면 글자만).
+SM.api.pageLink = (url, text, ext = true) => {
+  const u = String(url || ""), t = text == null ? u : text;
+  const out = ext && /^https?:\/\//i.test(u) ? SM.api.extLink(u) : "";
+  if (!u || !SM.api.canPage())
+    return ext && out ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
+  return `<button type="button" class="gov pgo" data-u="${esc(u)}"
+    onclick="SM.api.openPage(this.dataset.u)" title="[페이지별]에서 이 글만 모아 보기">${esc(t)}</button>${out}`;
+};
+SM.api.extLink = url => `<a class="pgx" href="${esc(url)}" target="_blank" rel="noopener"
+  title="새 탭에서 페이지 열기" aria-label="새 탭에서 페이지 열기">↗</a>`;
+

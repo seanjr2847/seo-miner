@@ -11,6 +11,30 @@ const rankDelta = rd => {
            `${Math.abs(d)}칸. ±${(RULES.rank_noise || 3) - 1}칸까지는 흔들림으로 봅니다.">보합</span>`;
   return delta(d);
 };
+// 내 페이지 주소 칸 — 이니셜 아바타 + 경로(본문) + 호스트(보조). 전체 주소는 title 이 든다.
+// 아바타는 경로의 마지막 조각(없으면 호스트)의 첫 글자다 — 같은 사이트 안에서 줄을 구별하는 표식.
+// [사이트 점검]의 표 칸(stUrl)이었다 — [페이지별]·기회 서랍도 같은 칸을 쓰려고 셸로 올렸다.
+//   opt.page  경로를 누르면 [페이지별]이 그 글로 열린다(바깥은 옆 ↗). 화면이 없는 배포면 opt.link 로 물러선다
+//   opt.link  경로가 바깥 링크(새 탭)
+//   opt.after 칸 끝에 붙일 마크업
+SM.api.urlCell = (u, opt) => {
+  const s = String(u || ""), o = opt || {};
+  let host = "", path = s;
+  try {
+    const x = new URL(s);
+    host = x.host.replace(/^www\./, "");
+    path = (x.pathname || "/") + x.search;
+  } catch (e) { /* URL 이 아닌 문자열은 그대로 보인다 */ }
+  const seg = path.split("/").filter(Boolean).pop() || host || "/";
+  const ch = (seg.replace(/[^0-9A-Za-z가-힣]/g, "")[0] || "/").toUpperCase();
+  const tone = ["a", "i", "n"][(s.length + ch.charCodeAt(0)) % 3];
+  const p = o.page && s && SM.api.canPage() ? SM.api.pageLink(s, path)
+    : o.link || o.page ? `<a href="${esc(s)}" target="_blank" rel="noopener">${esc(path)}</a>` : esc(path);
+  return `<span class="stu" title="${esc(s)}">${SM.ui.avatar(ch, {tone, cls: "stav"})}`
+    + `<span class="stt"><span class="stp">${p}</span>`
+    + (host ? `<span class="sth">${esc(host)}</span>` : "") + `</span>${o.after || ""}</span>`;
+};
+
 // 머리글 표기: ">"로 시작하면 숫자 열(우측 정렬), "?"뒤는 그 열의 근거 설명.
 //   ">순위?구글이 보고한 평균 게재순위"
 // 줄이 SORT_MIN 을 넘으면 머리글이 정렬 손잡이가 되고 머리글 자체가 붙박인다.

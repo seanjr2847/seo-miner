@@ -37,6 +37,12 @@ import scoring  # noqa: E402
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly",
          "https://www.googleapis.com/auth/analytics.readonly"]
 PAGE = 25000   # Search Analytics API가 요청 한 번에 주는 최대 행 수 (그 이상은 startRow)
+# 페이지별 일별(date×page) — [페이지별] 화면의 추이. 처음 한 번은 서치콘솔이 보관하는
+# 16개월(≈486일) 안쪽을 되받아 그래프가 첫날부터 비지 않게 하고, 그 뒤로는 창(--days)만
+# 다시 받아 덮는다(최근 며칠은 서치콘솔이 나중에 보정한다). 행 수는 페이지 × 날짜라 큰
+# 사이트의 되받기는 상한에서 끊는다 — 끊겼으면 끊겼다고 말한다.
+PAGE_DAILY_BACKFILL_DAYS = 480
+PAGE_DAILY_MAX = 4 * PAGE
 
 
 def _can_open_browser() -> bool:
@@ -250,6 +256,10 @@ def collect(project: str, *,
 
         end = date.today() - timedelta(days=3)     # GSC delay buffer
         start = end - timedelta(days=days)
+        # 페이지별 일별은 처음 한 번만 보관 기간만큼 되받는다 — 그 뒤로는 창만.
+        backfill = not db.has_gsc_page_daily(conn, p["id"])
+        pd_start = end - timedelta(days=PAGE_DAILY_BACKFILL_DAYS) if backfill else start
+        pd_max = -(-PAGE_DAILY_MAX // PAGE)
         if flt:
             print(f"[gsc] 분석 범위: {flt['dimensionFilterGroups'][0]['filters'][0]['expression']}")
         print(f"[gsc] {prop}  window {start} ~ {end} (period={days}d) "
@@ -258,7 +268,9 @@ def collect(project: str, *,
         # query×page 만 "최대"다: 마지막 장이 덜 차면 거기서 멈추므로 실제로는 더 적을 수 있다.
         qp_max = max(1, -(-row_limit // PAGE))
         print(f"[gsc] API 호출 계획: query×page 최대 {qp_max}회 + 일별 1회 + "
-              f"분해 {len(dims)}회({', '.join(dims) or '없음'}) = 최대 {qp_max + 1 + len(dims)}회")
+              f"페이지별 일별 최대 {pd_max}회({'처음이라 ' + str(pd_start) + '부터 되받기' if backfill else '창만'}) + "
+              f"분해 {len(dims)}회({', '.join(dims) or '없음'}) = "
+              f"최대 {qp_max + 1 + pd_max + len(dims)}회")
         if st.dry_run:
             return st.noop(rows=0)
 
@@ -319,6 +331,29 @@ def collect(project: str, *,
         if drows is not None:
             print(f"[gsc] fetched {len(drows)} daily rows")
 
+        # 페이지별 일별 — 위 query×page 에 date 를 끼우지 않고 따로 부르는 이유는 일별과
+        # 같다(query 까지 끼우면 행이 터진다). page 만이면 페이지 × 날짜라 감당이 된다.
+        # 부수 호출이다: 한 장이라도 실패하면 이번 회차는 통째로 안 쓴다(반쪽 추이를 남기지 않는다).
+        pdrows: list | None = []
+        while len(pdrows) < PAGE_DAILY_MAX:
+            want = min(PAGE, PAGE_DAILY_MAX - len(pdrows))
+            batch = _optional("페이지별 일별", {
+                "startDate": str(pd_start), "endDate": str(end),
+                "dimensions": ["date", "page"], "rowLimit": want,
+                "startRow": len(pdrows), "dataState": "final", **flt})
+            if batch is None:
+                pdrows = None
+                break
+            pdrows += batch
+            if len(batch) < want:
+                break
+        if pdrows is not None:
+            print(f"[gsc] fetched {len(pdrows)} date x page rows"
+                  + (f" ({pd_start}부터 되받기)" if backfill else ""))
+            if len(pdrows) >= PAGE_DAILY_MAX:
+                print(f"[주의] 페이지별 일별이 {PAGE_DAILY_MAX:,}행에서 끊겼습니다 — "
+                      "클릭이 적은 페이지·날짜가 빠졌을 수 있습니다.")
+
         # device/country 분해. 응답 행의 keys 순서는 요청한 dimensions 순서와 같다 →
         # keys[0]=dim_value, keys[1]=query.
         # startRow 페이지네이션은 하지 않는다 — 분해는 "모바일이 어디서 밀리나" 같은
@@ -349,6 +384,11 @@ def collect(project: str, *,
                                    ((x["keys"][0], x.get("clicks"), x.get("impressions"),
                                      x.get("ctr"), x.get("position"))
                                     for x in drows))
+            if pdrows:
+                db.write_gsc_page_daily(conn, p["id"],
+                                        ((x["keys"][0], x["keys"][1], x.get("clicks"),
+                                          x.get("impressions"), x.get("ctr"), x.get("position"))
+                                         for x in pdrows))
             for dim, brows in bd:
                 db.write_gsc_breakdown(conn, p["id"], snap, days, dim,
                                        ((x["keys"][0], x["keys"][1], x.get("clicks"),
@@ -360,6 +400,7 @@ def collect(project: str, *,
             # 나중에 "그날 왜 추이가 비었나"를 여기서 답할 수 있어야 한다.
             r.notes = (f"rows={len(rows)} pages={qp_calls} "
                        f"daily={'skip' if drows is None else len(drows)} "
+                       f"page_daily={'skip' if pdrows is None else len(pdrows)} "
                        + "".join(f"{d}={len(br)} " for d, br in bd)
                        + "".join(f"{d}=skip " for d in dims if d not in dict(bd))
                        + f"calls={calls} window={start}~{end} {st.err_note}")

@@ -58,7 +58,9 @@ TPL = Path(__file__).parent.parent / "templates"
 # 화면이 흩어지면 같은 이름이 두 번 선다(_selfcheck 가 막는다).
 # [키워드 관리](kwmanage)는 [순위 상승 기회] 바로 뒤다 — 2026-10-16 그 화면 맨 아래의 추적 편집기를
 # 떼어 세웠다(views/kwmanage.html 머리말). 같은 묶음(검색 성과) 안이라 메뉴가 안 흩어진다.
-VIEW_ORDER = ["triage", "overview", "hold", "analysis", "keywords", "kwmanage", "rank", "aicite", "aisum", "site",
+# [페이지별](page)은 검색 성과 묶음 끝이다 — 글 하나를 고르면 그 글의 언어판·추이·검색어·AI 인용이
+# 함께 선다(views/page.html 머리말). 숫자의 출처가 검색 실적(gsc)이라 그 묶음에 든다.
+VIEW_ORDER = ["triage", "overview", "hold", "analysis", "keywords", "kwmanage", "rank", "page", "aicite", "aisum", "site",
               "competitors", "backlinks", "history", "guide", "settings"]
 _VIEW_DEF = re.compile(
     r'<script type="application/json" class="view-def">\s*(\{.*?\})\s*</script>', re.S)
@@ -2794,6 +2796,18 @@ def ai_answers_route(project: str, prompt: str) -> dict:
     return _with_conn(read)
 
 
+def pages_route(project: str) -> dict:
+    """GET /api/pages 본체 — [페이지별] 고르는 칸의 글 목록(언어판을 묶은 것, 클릭 순)."""
+    import page_view
+    return _with_conn(lambda c: page_view.page_index(c, db.get_project(c, project)["id"]))
+
+
+def page_route(project: str, url: str) -> dict:
+    """GET /api/page 본체 — 주소 하나가 든 글(언어판 묶음)의 숫자·추이·검색어·AI 인용."""
+    import page_view
+    return _with_conn(lambda c: page_view.page_detail(c, db.get_project(c, project)["id"], url))
+
+
 def run_status(project: str) -> dict:
     """GET /api/run/status 본체(로컬) — 물은 사이트 하나만 답한다(호스팅은 유저의 전부)."""
     return LOCAL_RUNS.status(project) if project else {}
@@ -2847,6 +2861,11 @@ ROUTES = {
     # 질문 하나의 답변 전문 + 인용 URL — [AI 인용] 서랍이 부른다(목록 줄은 280자 발췌만).
     ("GET", "/api/ai/answers"):
         lambda project, query, body: ai_answers_route(project, query.get("prompt") or ""),
+    # [페이지별] — 글 목록과 글 하나. 화면이 고를 때마다 부른다(목록이 페이로드보다 커서).
+    ("GET", "/api/pages"):
+        lambda project, query, body: pages_route(project),
+    ("GET", "/api/page"):
+        lambda project, query, body: page_route(project, query.get("url") or ""),
     ("GET", "/api/settings"):
         lambda project, query, body: settings_read_route(project),
     ("POST", "/api/settings"):

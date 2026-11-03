@@ -39,8 +39,7 @@ SM.api.relCountries = q => {
 SM.api.relPages = (pages, cur) => !pages || !pages.length ? "" :
   `<div class="detw"><b>연관 페이지 ${pages.length}</b>
    <span class="detn">이 검색어로 순위에 걸린 내 지면입니다. 순위는 서치콘솔 평균이라 나라·기기마다 섞인 값이고, 직접 검색한 순위와 다를 수 있습니다.</span>
-   <ul class="detl">${pages.map(r => `<li><a href="${esc(r.page)}" target="_blank"
-     rel="noopener">${esc(r.page)}</a> <span class="num">${num(r.impressions)}</span> 노출
+   <ul class="detl">${pages.map(r => `<li>${SM.api.pageLink(r.page)} <span class="num">${num(r.impressions)}</span> 노출
      · 평균 <span class="num">${r.position ?? "-"}</span>위${r.page === cur
        ? ` <span class="micro lat">·</span> 고칠 페이지` : ""}</li>`).join("")}</ul></div>`;
 

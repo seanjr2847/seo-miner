@@ -87,7 +87,7 @@ CONFIG: dict = {
     ],
 
     # AI 인용 확인 엔진 — 이 표 한 벌이 정본이다. 엔진 id 는 ai_checks.engine 에 남고
-    # 화면(aicite.html 의 AI_ENG_NAME)이 그 id 로 이름·로고를 찾는다(test_seam_202).
+    # 화면(shell/03-parts.js 의 ENG_NAME)이 그 id 로 이름·로고를 찾는다(test_seam_202).
     #   model    OpenRouter 슬러그. 시간이 지나면 바뀐다 — 바꿀 때는 여기 한 곳.
     #   default  사이트가 surfaces_ai 로 고르지 않았을 때 묻는 엔진인가
     #   usd      한 번 묻는 **추정** 단가($) — 잔액 카나리아만 쓴다. 실청구는 응답 usage.cost.

@@ -1,0 +1,430 @@
+<!-- [페이지별] — 글 하나(와 그 언어판)에 걸린 것을 한자리에 모은다.
+
+     다른 화면은 사이트 전체를 주제로 쪼갠다(클릭 변화·순위·AI 인용·사이트 점검). 이 화면은
+     축이 거꾸로다: 글 하나를 고르면 그 글의 언어판(/kr/ko/x · /us/en/x …)이 함께 서고, 언어마다
+     노출·클릭·클릭률·평균 순위·글 수정일, 날짜별 추이(고친 날 세로선), 그 주소로 들어온 검색어,
+     그 주소를 인용한 AI 답이 나온다. 언어 칩이 넷 다(띠·추이·검색어·AI)를 함께 거른다.
+
+     숫자는 서버 한 벌이다 — GET /api/pages(글 목록)·/api/page(글 하나), 본체 scripts/page_view.py
+     (두 배포 공통 dashboard.ROUTES). 고친 날은 페이로드의 d.page_works 를 그대로 읽는다([관찰 중]과
+     같은 표). 부품도 셸 것이다 — 표(table)·주소 칸(SM.api.urlCell)·여러 줄 추이(SM.api.chLines)·
+     칩(.kseg .chip)·띠(.band .m)·엔진 이름(SM.api.engName).
+
+     다른 화면이 보여 주는 내 페이지 주소를 누르면 여기로 온다(SM.api.openPage — 주소는 이 탭의
+     sessionStorage, hash 는 사이트 이름 그대로). 박제본에서는 뺀다(SM.drop) — 고를 때마다
+     서버에 묻는 화면이라 종이에서는 못 고른다. -->
+<script type="application/json" class="view-def">
+{"id": "page", "group": "search", "title": "페이지별",
+ "sub": "글 하나를 골라 그 글의 언어판·날짜별 추이·검색어·AI 인용을 한자리에서 봅니다.",
+ "sections": ["pg-sec"], "stages": ["gsc"]}
+</script>
+
+<style>
+/* 새 클래스는 전부 #pg-sec 아래다. 카드·격자·띠·칩·표는 셸 것을 그대로 쓴다. */
+#pg-sec { margin-top:var(--sp-4); }
+#pg-sec .pg-ch { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between;
+  gap:var(--sp-2) var(--sp-4); margin:0 0 var(--sp-3); }
+#pg-sec .pg-ch > div:first-child { min-width:0; flex:1 1 240px; }
+#pg-sec .pg-ch h2 { margin:0; }
+#pg-sec .pg-cs { font-size:var(--fs-1); line-height:1.55; color:var(--sub); margin:2px 0 0; overflow-wrap:anywhere; }
+#pg-sec .pg-cs:empty { display:none; }
+#pg-sec .pg-tools { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2) var(--sp-3); }
+#pg-sec .pg-find { width:min(100%, 420px); }
+#pg-sec .pg-cur { font:650 var(--fs-4)/1.35 var(--sans); color:var(--ink); margin:0; overflow-wrap:anywhere; }
+#pg-sec .pg-key { font:400 var(--fs-1)/1.5 var(--mono); color:var(--sub); overflow-wrap:anywhere; }
+/* 글 제목은 한글이 섞인다 — 등폭이 아니라 본문 서체(등폭은 주소에만). */
+#pg-sec .pg-lbl { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); overflow-wrap:anywhere; margin-top:2px; }
+#pg-sec .pg-band { margin-top:var(--gap); }
+#pg-sec .pg-grid { margin-top:var(--gap); }
+#pg-sec .pg-old { color:var(--warn); }
+#pg-sec .pg-lang { white-space:nowrap; }
+#pg-sec .pg-more { margin-top:var(--sp-2); }
+#pg-sec .pg-others { color:var(--sub); font-size:var(--fs-1); overflow-wrap:anywhere; }
+#pg-sec [hidden] { display:none; }
+</style>
+
+<section id="pg-sec">
+  <div class="card" id="pg-pick">
+    <div class="pg-ch">
+      <div>
+        <h2 id="pg-pick-h">글 고르기</h2>
+        <p class="pg-cs" id="pg-pick-sub"></p>
+      </div>
+      <div class="pg-tools" id="pg-pick-tools"></div>
+    </div>
+    <div id="pg-list"><span class="skel box" role="status" aria-label="글 목록을 불러오는 중"></span></div>
+  </div>
+  <div id="pg-body" hidden>
+    <div class="band pg-band" id="pg-band"></div>
+    <div class="g12 pg-grid">
+      <div class="card c12" id="pg-vers"></div>
+      <div class="card c12">
+        <div class="pg-ch">
+          <div><h2>날짜별 추이</h2><p class="pg-cs" id="pg-trend-sub"></p></div>
+          <div class="pg-tools" id="pg-trend-tools"></div>
+        </div>
+        <div id="pg-trend"></div>
+      </div>
+      <div class="card c12" id="pg-q"></div>
+      <div class="card c12" id="pg-ai"></div>
+    </div>
+  </div>
+</section>
+
+<script>
+"use strict";
+/* 이 파일의 전역은 전부 PG_ — 조립하면 형제 화면들과 한 문서가 된다.
+   상태: 사이트(PG_PROJECT) · 글 목록(PG_INDEX) · 고른 글(PG_DATA) · 켠 언어(PG_LANGS) ·
+   추이 지표(PG_METRIC) · 찾는 말(PG_Q) · 목록을 펼쳤나(PG_PICKING). */
+let PG_PROJECT = "", PG_INDEX = null, PG_INDEX_FOR = "", PG_DATA = null, PG_LANGS = null;
+let PG_METRIC = "clicks", PG_Q = "", PG_PICKING = false, PG_WORKS = {}, PG_REQ = 0, PG_IREQ = 0;
+// 추이 단위 — 글 하나의 하루 클릭은 0~2 가 흔해 하루 단위 선은 톱니가 된다. 주 단위가 기본이다.
+let PG_UNIT = "week";
+const PG_UNITS = [["week", "주"], ["day", "하루"]];
+const PG_LIST_MAX = 30;
+const PG_METRICS = [["clicks", "클릭"], ["impressions", "노출"], ["ctr", "클릭률"], ["position", "평균 순위"]];
+// 일별 행: [날짜, 클릭, 노출, 클릭률, 순위] — 서버(page_view._daily)의 순서.
+const PG_COL = {clicks: 1, impressions: 2, ctr: 3, position: 4};
+
+// 주소 열쇠 — 서버의 page_view.norm 과 같은 규칙(스킴 무시·호스트 소문자·www 무시·# 제거·끝 '/'
+// 무시·광고 꼬리표 제거). 고친 날(d.page_works)의 키와 언어판 주소를 맞출 때만 쓴다.
+// 꼬리표 목록은 page_view.TRACKING 과 같다 — test_page_view 가 두 규칙을 node 로 대조한다.
+const PG_TRACK = ["utm_", "gclid", "fbclid", "msclkid", "srsltid", "_gl", "yclid", "mc_"];
+function PG_norm(u) {
+  const s = String(u || "").trim().split("#")[0];
+  const q = s.indexOf("?"), base = q < 0 ? s : s.slice(0, q);
+  const keep = new URLSearchParams(q < 0 ? "" : s.slice(q + 1));
+  for (const k of [...keep.keys()]) if (PG_TRACK.some(t => k.toLowerCase().startsWith(t))) keep.delete(k);
+  const tail = keep.toString() ? "?" + keep.toString() : "";
+  const m = /^[a-z]+:\/\/([^/]*)(.*)$/i.exec(base);
+  if (!m) return (base.replace(/\/+$/, "") || "/") + tail;
+  const host = m[1].toLowerCase().replace(/^www\./, "");
+  let path = m[2] || "/";
+  if (path.length > 1) path = path.replace(/\/+$/, "") || "/";
+  return host + path + tail;
+}
+function PG_saved() {
+  try { const v = JSON.parse(sessionStorage.getItem("sm:page:" + PG_PROJECT) || "null"); return v || ""; }
+  catch (e) { return ""; }
+}
+function PG_save(url) { try { sessionStorage.setItem("sm:page:" + PG_PROJECT, JSON.stringify(url)); } catch (e) {} }
+
+VIEW("page", function (d) {
+  const name = (d.project && d.project.name) || "";
+  PG_WORKS = d.page_works || {};
+  if (name !== PG_PROJECT) {
+    PG_PROJECT = name; PG_INDEX = null; PG_INDEX_FOR = ""; PG_DATA = null; PG_LANGS = null;
+    PG_Q = ""; PG_PICKING = false;
+  }
+  // 이 화면은 고를 때마다 서버에 묻는다 — 화면을 열 때만 부른다(다른 화면을 보는 동안 부르지 않는다).
+  if (SM.cur === "page") PG_enter();
+});
+document.addEventListener("sm:view", e => { if (e.detail && e.detail.view === "page") PG_enter(); });
+// 다른 화면이 주소를 들고 왔다(SM.api.openPage) — 그 글을 연다.
+document.addEventListener("sm:page", e => {
+  const url = e.detail && e.detail.url;
+  if (url) { PG_save(url); PG_open(url); }
+});
+
+function PG_enter() {
+  if (!$("pg-sec")) return;
+  if (READONLY)
+    return PG_solo(SM.ui.empty("저장된 보고서에서는 글을 고를 수 없습니다",
+      "이 화면은 고를 때마다 서버에 묻습니다. 살아 있는 대시보드에서 열면 됩니다."));
+  if (!PG_PROJECT)
+    return PG_solo(SM.ui.empty("사이트를 고르지 않았습니다", "사이트를 고르면 그 사이트의 글 목록이 나옵니다."));
+  // 다른 화면이 넘긴 주소(SM.api.openPage 가 sm:page 로 넣은 것)가 먼저다 — 없으면 이 탭에서 보던 글.
+  let handed = "";
+  try { handed = sessionStorage.getItem("sm:page") || ""; sessionStorage.removeItem("sm:page"); } catch (e) {}
+  if (handed) PG_save(handed);
+  if (PG_INDEX_FOR !== PG_PROJECT) PG_loadIndex();
+  const want = handed || PG_saved();
+  if (want && (!PG_DATA || PG_norm(PG_DATA.asked) !== PG_norm(want))) PG_open(want);
+  else if (!want && !PG_DATA) PG_PICKING = true;
+  PG_drawPick();
+}
+
+function PG_solo(html) {
+  $("pg-body").hidden = true;
+  $("pg-pick-tools").innerHTML = ""; $("pg-pick-sub").textContent = "";
+  $("pg-list").innerHTML = html;
+}
+
+async function PG_loadIndex() {
+  const req = ++PG_IREQ, proj = PG_PROJECT;
+  try {
+    const res = await fetch("/api/pages?project=" + encodeURIComponent(proj));
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const got = await res.json();
+    if (req !== PG_IREQ || proj !== PG_PROJECT) return;
+    PG_INDEX = got; PG_INDEX_FOR = proj;
+  } catch (e) {
+    if (req !== PG_IREQ) return;
+    console.error("[페이지별] 글 목록", e);
+    PG_INDEX = {error: true};
+  }
+  PG_drawPick();
+}
+
+// ── 고르는 칸 — 고른 글이 있으면 그 이름 한 줄, [다른 글 고르기]를 누르면 찾기·목록이 펴진다.
+function PG_drawPick() {
+  if (!$("pg-sec") || READONLY || !PG_PROJECT) return;
+  const cur = PG_DATA && !PG_DATA.error;
+  $("pg-pick-h").textContent = cur && !PG_PICKING ? "보는 글" : "글 고르기";
+  if (cur && !PG_PICKING) {
+    const n = PG_DATA.versions.length;
+    $("pg-pick-sub").textContent = "";
+    $("pg-pick-tools").innerHTML = `<button type="button" class="go sm sec" onclick="PG_pick(true)">다른 글 고르기</button>`;
+    $("pg-list").innerHTML = `<p class="pg-cur">${esc(PG_DATA.label)}</p>
+      <div class="pg-key">${esc(PG_DATA.key)}${n > 1 ? ` · 언어판 ${num(n)}개` : ""}</div>`;
+    return;
+  }
+  const ix = PG_INDEX;
+  $("pg-pick-tools").innerHTML = `<input type="search" class="pg-find" id="pg-find" value="${esc(PG_Q)}"
+      placeholder="주소나 제목으로 찾기" aria-label="주소나 제목으로 글 찾기" oninput="PG_find(this.value)">`
+    + (cur ? `<button type="button" class="go sm sec" onclick="PG_pick(false)">닫기</button>` : "");
+  if (!ix) {
+    $("pg-pick-sub").textContent = "";
+    $("pg-list").innerHTML = `<span class="skel box" role="status" aria-label="글 목록을 불러오는 중"></span>`;
+    return;
+  }
+  if (ix.error) {
+    $("pg-pick-sub").textContent = "";
+    $("pg-list").innerHTML = `<div class="empty err"><b>글 목록을 불러오지 못했습니다</b>
+      <p>연결이나 서버에 문제가 있을 수 있습니다. 잠시 뒤 다시 불러오면 됩니다.</p>
+      <div class="acts"><button type="button" class="go sec" onclick="PG_INDEX_FOR='';PG_INDEX=null;PG_loadIndex();PG_drawPick()">다시 불러오기</button></div></div>`;
+    return;
+  }
+  const w = ix.window || {};
+  $("pg-pick-sub").textContent = ix.pages.length
+    ? `언어판을 한 글로 묶었습니다 · 글 ${num(ix.total)}개${w.to ? ` · 클릭은 ${PG_span(w)}` : ""}` : "";
+  PG_drawList();
+}
+function PG_pick(on) { PG_PICKING = on; PG_drawPick(); if (on && $("pg-find")) $("pg-find").focus(); }
+function PG_find(v) { PG_Q = v; PG_drawList(); }
+
+function PG_drawList() {
+  const ix = PG_INDEX;
+  if (!ix || ix.error) return;
+  const q = PG_Q.trim().toLowerCase();
+  const hit = ix.pages.filter(p => !q || p.label.toLowerCase().includes(q)
+    || p.urls.some(u => u.url.toLowerCase().includes(q)));
+  const rows = hit.slice(0, PG_LIST_MAX).map(p => `<tr><td>${SM.api.urlCell(p.key, {
+      after: ""})}<div class="pg-lbl">${esc(p.label)}</div></td>
+    <td class="num">${num(p.urls.length)}</td><td class="num">${num(p.clicks)}</td>
+    <td class="num">${num(p.impressions)}</td>
+    <td><button type="button" class="go sm" data-u="${esc(p.key)}" onclick="PG_choose(this.dataset.u)">보기</button></td></tr>`);
+  const empty = ix.pages.length
+    ? SM.ui.empty("찾는 말에 맞는 글이 없습니다", "주소의 일부(예: /blog/)나 제목의 낱말로 찾아 보세요.")
+    : SM.ui.empty("아직 고를 글이 없습니다",
+      "검색 실적을 한 번 수집하면 서치콘솔에 잡힌 내 페이지가 여기 섭니다.");
+  $("pg-list").innerHTML = table(["글", ">언어판", ">클릭", ">노출", ""], rows, empty, "cards")
+    + (hit.length > PG_LIST_MAX ? `<p class="pg-cs pg-more">위 ${num(PG_LIST_MAX)}개만 보입니다 · 맞는 글 ${num(hit.length)}개. 찾는 말을 더 적으면 좁혀집니다.</p>` : "");
+}
+function PG_choose(url) { PG_PICKING = false; PG_Q = ""; PG_save(url); PG_open(url); }
+
+async function PG_open(url) {
+  if (!PG_PROJECT || READONLY) return;
+  const req = ++PG_REQ, proj = PG_PROJECT;
+  $("pg-body").hidden = false;
+  for (const id of ["pg-band", "pg-vers", "pg-trend", "pg-q", "pg-ai"])
+    $(id).innerHTML = `<span class="skel box" role="status" aria-label="글을 불러오는 중"></span>`;
+  let got;
+  try {
+    const res = await fetch("/api/page?project=" + encodeURIComponent(proj) + "&url=" + encodeURIComponent(url));
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    got = await res.json();
+  } catch (e) {
+    if (req !== PG_REQ) return;
+    console.error("[페이지별] 글", e);
+    PG_DATA = null;
+    $("pg-body").hidden = true;
+    PG_PICKING = true;
+    PG_drawPick();
+    $("pg-list").insertAdjacentHTML("afterbegin", `<div class="empty err"><b>이 글을 불러오지 못했습니다</b>
+      <p>연결이나 서버에 문제가 있을 수 있습니다. 목록에서 다시 고르면 됩니다.</p></div>`);
+    return;
+  }
+  if (req !== PG_REQ || proj !== PG_PROJECT) return;
+  PG_DATA = got;
+  PG_Q_ALL = false;
+  PG_PICKING = false;          // 어디서 왔든(목록·다른 화면의 주소) 글을 열었으면 고르는 목록은 접는다
+  // 켠 언어 — 같은 글을 다시 열면 그대로, 다른 글이면 전부 켠다.
+  const locs = [...new Set(got.versions.map(v => v.locale))];
+  if (!PG_LANGS || !locs.some(l => PG_LANGS.has(l))) PG_LANGS = new Set(locs);
+  PG_drawPick();
+  PG_draw();
+}
+
+// ── 고른 글 ────────────────────────────────────────────────────────────────
+const PG_on = v => PG_LANGS.has(v.locale);
+const PG_locOf = url => {
+  const v = (PG_DATA.versions || []).find(x => PG_norm(x.url) === PG_norm(url));
+  return v ? v.locale : "";
+};
+const PG_locLabel = loc => {
+  const v = (PG_DATA.versions || []).find(x => x.locale === loc);
+  return (v && v.locale_label) || loc;
+};
+const PG_pct = v => v == null ? "-" : `${(v * 100).toFixed(1)}%`;
+const PG_pos = v => v == null ? "-" : `${Number(v).toFixed(1)}위`;
+const PG_span = w => w && w.source === "daily" && w.from
+  ? `최근 28일 (${String(w.from).slice(5)}~${String(w.to).slice(5)})`
+  : "최근 수집의 검색어별 28일 합계";
+
+function PG_draw() {
+  if (!PG_DATA) return;
+  PG_langChips();
+  PG_band();
+  PG_vers();
+  PG_trend();
+  PG_queries();
+  PG_ai();
+}
+
+// 언어 칩 — 언어판이 둘 이상일 때만. 넷(띠·추이·검색어·AI)을 함께 거른다. 다 끌 수는 없다.
+function PG_langChips() {
+  const locs = [...new Set(PG_DATA.versions.map(v => v.locale))];
+  const chips = locs.length < 2 ? "" : `<span class="kseg" role="group" aria-label="보는 언어">${locs.map(l =>
+    `<button type="button" class="chip${PG_LANGS.has(l) ? " on" : ""}" aria-pressed="${PG_LANGS.has(l)}"
+      data-l="${esc(l)}" onclick="PG_lang(this.dataset.l)">${esc(PG_locLabel(l))}</button>`).join("")}</span>`;
+  const metric = `<span class="kseg" role="group" aria-label="보는 지표">${PG_METRICS.map(([v, l]) =>
+    `<button type="button" class="chip${PG_METRIC === v ? " on" : ""}" aria-pressed="${PG_METRIC === v}"
+      onclick="PG_metric('${v}')">${l}</button>`).join("")}</span>`;
+  const unit = `<span class="kseg" role="group" aria-label="묶는 단위">${PG_UNITS.map(([v, l]) =>
+    `<button type="button" class="chip${PG_UNIT === v ? " on" : ""}" aria-pressed="${PG_UNIT === v}"
+      onclick="PG_unit('${v}')">${l}</button>`).join("")}</span>`;
+  $("pg-trend-tools").innerHTML = metric + unit + chips;
+}
+function PG_unit(u) { PG_UNIT = u; PG_langChips(); PG_trend(); }
+function PG_lang(l) {
+  if (PG_LANGS.has(l) && PG_LANGS.size === 1) return;      // 마지막 하나는 못 끈다 — 빈 화면이 된다
+  if (PG_LANGS.has(l)) PG_LANGS.delete(l); else PG_LANGS.add(l);
+  PG_draw();
+}
+function PG_metric(m) { PG_METRIC = m; PG_langChips(); PG_trend(); }
+
+function PG_band() {
+  const vs = PG_DATA.versions.filter(PG_on);
+  const clk = vs.reduce((a, v) => a + (v.clicks || 0), 0);
+  const imp = vs.reduce((a, v) => a + (v.impressions || 0), 0);
+  const pw = vs.reduce((a, v) => a + (v.position != null ? v.position * (v.impressions || 0) : 0), 0);
+  const span = PG_span(PG_DATA.window);
+  const langs = PG_DATA.versions.length > 1 ? ` · 언어판 ${num(vs.length)}/${num(PG_DATA.versions.length)}개` : "";
+  $("pg-band").innerHTML = [
+    ["클릭", num(clk)], ["노출", num(imp)], ["클릭률", imp ? PG_pct(clk / imp) : "-"],
+    ["평균 순위", imp ? PG_pos(pw / imp) : "-"],
+  ].map(([l, v]) => `<div class="m"><div class="v">${v}</div><div class="l">${l}</div>
+    <div class="b">${span}${langs}</div></div>`).join("");
+}
+
+function PG_vers() {
+  const vs = PG_DATA.versions;
+  const today = new Date();
+  const old = day => day && (today - new Date(day)) / 864e5 > 180;
+  const rows = vs.map(v => `<tr><td class="pg-lang">${esc(v.locale_label || v.locale)}</td>
+    <td>${SM.api.urlCell(v.url, {link: true})}</td>
+    <td class="num">${num(v.impressions)}</td><td class="num">${num(v.clicks)}</td>
+    <td class="num">${PG_pct(v.ctr)}</td><td class="num">${PG_pos(v.position)}</td>
+    <td class="num${old(v.modified) ? " pg-old" : ""}">${v.modified ? esc(v.modified) : "-"}</td></tr>`);
+  const sub = vs.length > 1
+    ? "같은 글의 언어판입니다. 페이지 점검이 읽은 hreflang, 또는 시장 경로를 뗀 나머지가 같은 주소를 묶었습니다."
+    : "언어판이 하나뿐입니다. 다른 언어판이 있는데 안 보이면 그 글의 hreflang 이 아직 점검되지 않은 것입니다.";
+  $("pg-vers").innerHTML = `<div class="pg-ch"><div><h2>언어판</h2><p class="pg-cs">${sub}</p></div></div>`
+    + table(["언어", "주소", ">노출", ">클릭", ">클릭률", ">평균 순위?서치콘솔이 보고한 노출 가중 평균입니다. 나라·기기가 섞인 값입니다.",
+      ">글 수정일?페이지 점검이 글에서 읽은 수정일입니다(article:modified_time 등). 반년이 지나면 색으로 표시합니다."], rows, "", "cards");
+}
+
+// 일별 행 [날짜, 클릭, 노출, CTR, 순위] 여럿을 하나로 — 합계는 더하고 CTR 은 다시 재고 순위는 노출 가중.
+function PG_fold(rows) {
+  let c = 0, i = 0, pw = 0;
+  for (const r of rows) { c += r[1] || 0; i += r[2] || 0; pw += (r[4] || 0) * (r[2] || 0); }
+  return {clicks: c, impressions: i, ctr: i ? c / i : null, position: i ? pw / i : null};
+}
+// 주의 첫날(월요일) — 주 단위 칸의 이름.
+function PG_week(day) {
+  const t = new Date(day + "T00:00:00Z"), k = (t.getUTCDay() + 6) % 7;
+  t.setUTCDate(t.getUTCDate() - k);
+  return t.toISOString().slice(0, 10);
+}
+function PG_trend() {
+  const s = (PG_DATA.daily || {}).series || {};
+  const vs = PG_DATA.versions.filter(v => PG_on(v) && s[v.url]);
+  if (!vs.length) {
+    $("pg-trend-sub").textContent = "";
+    $("pg-trend").innerHTML = SM.ui.empty("날짜별 숫자가 아직 없습니다",
+      "검색 실적을 다시 수집하면 이 글의 날짜별 숫자가 쌓입니다. 처음 한 번은 지난 16개월치를 받아 옵니다.");
+    return;
+  }
+  const bin = PG_UNIT === "week" ? PG_week : (day => day);
+  // 언어마다 한 줄 — 같은 언어의 주소(옛 주소·새 주소)는 같은 칸끼리 더한다.
+  const byLoc = new Map();
+  for (const v of vs) {
+    const m = byLoc.get(v.locale) || new Map();
+    for (const r of s[v.url]) { const k = bin(r[0]); (m.get(k) || m.set(k, []).get(k)).push(r); }
+    byLoc.set(v.locale, m);
+  }
+  const cells = [...new Set([...byLoc.values()].flatMap(m => [...m.keys()]))].sort();
+  // 주 단위면 칸을 빈틈없이 잇는다 — 노출이 없는 주는 서치콘솔이 안 주므로 그 칸을 0 으로 채운다.
+  const sum = PG_METRIC === "clicks" || PG_METRIC === "impressions";
+  const sets = [...byLoc.entries()].map(([loc, m]) => ({label: PG_locLabel(loc),
+    data: cells.map(k => m.has(k) ? PG_fold(m.get(k))[PG_METRIC] : (sum ? 0 : null))}));
+  // 고친 날 — d.page_works(작업 기록)의 날을 세로선으로. 언어판 어느 주소든 그 글의 일이다.
+  const mine = new Set(vs.map(v => PG_norm(v.url)));
+  const works = Object.entries(PG_WORKS).filter(([u]) => mine.has(PG_norm(u))).flatMap(([, ws]) => ws);
+  const marks = [];
+  for (const w of works) {
+    const i = cells.indexOf(bin(w.day));
+    if (i < 0) continue;
+    const text = `${String(w.day).slice(5)} 고침${w.label ? " · " + w.label : ""}`;
+    const at = marks.find(m => m.i === i);
+    if (at) at.text = at.text.includes(text) ? at.text : `${at.text} / ${text}`;
+    else marks.push({i, text, tag: `${String(w.day).slice(5)} 고침`});
+  }
+  const fmt = PG_METRIC === "ctr" ? PG_pct
+    : PG_METRIC === "position" ? (v => v == null ? "-" : Number(v).toFixed(1)) : (v => num(Math.round(v || 0)));
+  const last = cells[cells.length - 1];
+  $("pg-trend-sub").textContent = `${cells[0]} ~ ${last} · ${PG_UNIT === "week" ? "주 단위(월요일부터, 마지막 주는 덜 찼을 수 있습니다)" : "하루 단위"}`
+    + (marks.length ? " · 점선은 이 글을 고친 날" : "");
+  $("pg-trend").innerHTML = SM.api.chLines(cells.map(k => k.slice(5)), sets,
+    {height: 260, fmt, reverse: PG_METRIC === "position", marks});
+}
+
+// 검색어는 위 15줄만 — 200줄을 다 펴면 아래 AI 인용이 화면 끝으로 밀린다. [전체 보기]로 편다.
+const PG_Q_TOP = 15;
+let PG_Q_ALL = false;
+function PG_qAll(on) { PG_Q_ALL = on; PG_queries(); }
+function PG_queries() {
+  const all = (PG_DATA.queries || []).filter(q => PG_LANGS.has(PG_locOf(q.url)));
+  const rows = PG_Q_ALL ? all : all.slice(0, PG_Q_TOP);
+  const multi = PG_DATA.versions.length > 1;
+  const body = rows.map(q => `<tr>${multi ? `<td class="pg-lang">${esc(PG_locLabel(PG_locOf(q.url)))}</td>` : ""}
+    <td class="stq">${esc(q.query)}</td><td class="num">${num(q.clicks)}</td><td class="num">${num(q.impressions)}</td>
+    <td class="num">${PG_pct(q.ctr)}</td><td class="num">${PG_pos(q.position)}</td></tr>`);
+  $("pg-q").innerHTML = `<div class="pg-ch"><div><h2>엮인 검색어</h2>
+      <p class="pg-cs">이 글의 주소로 들어온 검색어입니다 · 최근 수집의 28일 합계.</p></div></div>`
+    + table([...(multi ? ["언어"] : []), "검색어", ">클릭", ">노출", ">클릭률", ">평균 순위"], body,
+      SM.ui.empty("들어온 검색어가 없습니다", "서치콘솔이 이 주소로 보고한 검색어가 아직 없습니다. 노출이 적은 검색어는 서치콘솔이 가립니다."), "cards")
+    + (all.length > PG_Q_TOP ? `<div class="pg-more"><button type="button" class="go sm sec" onclick="PG_qAll(${!PG_Q_ALL})">${
+        PG_Q_ALL ? `위 ${num(PG_Q_TOP)}개만 보기` : `전체 ${num(all.length)}개 보기`}</button></div>` : "");
+}
+
+function PG_ai() {
+  const a = PG_DATA.ai || {};
+  // 질문의 시장이 비면(옛 질문) 사이트 기본 시장이다 — 그 언어가 켜져 있으면 보인다.
+  const base = (PG_INDEX && PG_INDEX.markets && PG_INDEX.markets[0] || {}).locale || "";
+  const rows = (a.rows || []).filter(r => PG_LANGS.has(r.locale || base) || !PG_DATA.versions.some(v => v.locale === (r.locale || base)));
+  const body = rows.map(r => `<tr><td>${esc(r.prompt)}</td>
+    <td class="pg-lang">${SM.api.engLogo(r.engine) + esc(SM.api.engName(r.engine))}</td>
+    <td class="num">${num(r.hits)}/${num(r.samples)}</td>
+    <td class="pg-others">${r.others.length ? esc(r.others.slice(0, 4).join(", ")) + (r.others.length > 4 ? ` 외 ${num(r.others.length - 4)}` : "") : "-"}</td></tr>`);
+  const when = a.run_at ? ` · 최근 인용 확인 ${esc(String(a.run_at).slice(0, 10))}` : "";
+  $("pg-ai").innerHTML = `<div class="pg-ch"><div><h2>엮인 AI 인용</h2>
+      <p class="pg-cs">AI 답변이 이 글의 주소를 출처로 단 질문입니다${when}.</p></div></div>`
+    + table(["질문", "엔진", ">인용?그 엔진의 표본(같은 질문을 여러 번 물은 답) 중 이 글을 인용한 답의 수입니다.",
+      "함께 인용된 곳"], body,
+      a.run_at ? SM.ui.empty("이 글을 인용한 AI 답이 없습니다",
+        `최근 인용 확인에서 이 주소를 출처로 단 답이 없었습니다. ${SM.api.go("aicite")}에서 질문마다 누가 인용됐는지 볼 수 있습니다.`)
+      : SM.ui.empty("AI 인용 확인을 아직 돌리지 않았습니다", `${SM.api.go("aicite")}에서 인용 확인을 돌리면 이 칸이 채워집니다.`), "cards");
+}
+</script>

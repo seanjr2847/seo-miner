@@ -231,6 +231,19 @@ CREATE TABLE IF NOT EXISTS gsc_daily (
   clicks INTEGER, impressions INTEGER, ctr REAL, position REAL,
   UNIQUE(project_id, date)
 );
+-- 페이지별 날짜별 성과 — [페이지별] 화면의 추이 원본. gsc_daily 는 사이트 합계뿐이고
+-- gsc_snapshots 의 페이지 값은 "지난 28일 합계" 한 덩어리라, 매일 받아도 둘을 빼서 하루치를
+-- 되짚을 수 없다(창이 27일씩 겹친다). date 는 성과일이다. page 는 서치콘솔이 준 절대 URL 그대로.
+-- 처음 한 번은 서치콘솔 보관 기간(16개월)만큼 되받는다(collect_gsc.PAGE_DAILY_BACKFILL_DAYS).
+CREATE TABLE IF NOT EXISTS gsc_page_daily (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  date TEXT NOT NULL,
+  page TEXT NOT NULL,
+  clicks INTEGER, impressions INTEGER, ctr REAL, position REAL,
+  UNIQUE(project_id, date, page)
+);
+CREATE INDEX IF NOT EXISTS idx_gsc_page_daily ON gsc_page_daily(project_id, page, date);
 CREATE TABLE IF NOT EXISTS gsc_breakdown (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -2152,6 +2165,29 @@ def write_gsc_daily(conn: sqlite3.Connection, project_id: int, rows) -> int:
          for d, clk, imp, ctr, pos in rows])
     conn.commit()
     return len(rows)
+
+
+def write_gsc_page_daily(conn: sqlite3.Connection, project_id: int, rows) -> int:
+    """페이지별 날짜별 성과 적재. rows: (date, page, clicks, impressions, ctr, position).
+    write_gsc_daily 와 같은 upsert 다 — 최근 며칠은 서치콘솔이 나중에 보정한다."""
+    rows = list(rows)
+    conn.executemany(
+        """INSERT INTO gsc_page_daily(project_id, date, page, clicks, impressions, ctr, position)
+           VALUES(?,?,?,?,?,?,?)
+           ON CONFLICT(project_id, date, page) DO UPDATE SET
+             clicks=excluded.clicks, impressions=excluded.impressions,
+             ctr=excluded.ctr, position=excluded.position""",
+        [(project_id, d, pg, int(clk or 0), int(imp or 0),
+          round(float(ctr or 0), 4), round(float(pos or 0), 1))
+         for d, pg, clk, imp, ctr, pos in rows])
+    conn.commit()
+    return len(rows)
+
+
+def has_gsc_page_daily(conn: sqlite3.Connection, project_id: int) -> bool:
+    """페이지별 일별을 한 번이라도 받았나 — 처음이면 수집이 보관 기간만큼 되받는다."""
+    return conn.execute("SELECT 1 FROM gsc_page_daily WHERE project_id=? LIMIT 1",
+                        (project_id,)).fetchone() is not None
 
 
 def write_gsc_breakdown(conn: sqlite3.Connection, project_id: int, snapshot_date: str,

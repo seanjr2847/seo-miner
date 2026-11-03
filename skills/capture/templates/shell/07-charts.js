@@ -80,6 +80,27 @@ const chText = {id: "chText",
     }
     ctx.restore();
   },
+  // 세로 표시선 — 선 차트의 그날(고친 날 등). vlines: [{i: 라벨 자리, text}]. 점선 1px 에
+  // 위쪽 작은 글자(먹색 보조 토큰). 선은 계열 색을 쓰지 않는다 — 계열이 아니라 사건이다.
+  beforeDatasetsDraw(ch, _a, o) {
+    if (!o || !o.T || !o.vlines || !o.vlines.length || !ch.scales.x) return;
+    const T = o.T, {ctx, chartArea: A} = ch;
+    ctx.save();
+    ctx.strokeStyle = T.slate; ctx.fillStyle = T.slate; ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]); ctx.textBaseline = "top"; ctx.textAlign = "left";
+    ctx.font = `400 11px ${T.sans}`;
+    // 글자는 앞 글자와 겹치지 않을 때만 — 고친 날이 몰리면 선만 긋고 뜻은 툴팁이 말한다.
+    let free = -Infinity;
+    for (const v of [...o.vlines].sort((a, b) => a.i - b.i)) {
+      const x = Math.round(ch.scales.x.getPixelForValue(v.i)) + .5;
+      if (isNaN(x) || x < A.left || x > A.right) continue;
+      ctx.beginPath(); ctx.moveTo(x, A.top); ctx.lineTo(x, A.bottom); ctx.stroke();
+      const w = v.text ? ctx.measureText(v.text).width : 0;
+      const tx = Math.min(x + 4, A.right - w);
+      if (v.text && tx >= free) { ctx.fillText(v.text, tx, A.top + 2); free = tx + w + 8; }
+    }
+    ctx.restore();
+  },
   afterDraw(ch, _a, o) {
     if (!o || !o.cross || !o.T) return;
     const act = ch.tooltip && ch.tooltip.getActiveElements();
@@ -364,6 +385,54 @@ SM.api.chLine = (series, opt = {}) => {
             && series[c.dataIndex].mark !== true ? ` · ${series[c.dataIndex].mark}` : "")}}),
         chText: {T, cross: true}}}}),
     aria, `height:${H}px`);
+};
+
+// 시계열 · 여러 줄 — 같은 지표를 무리(언어판 등)마다 한 줄씩. 면은 안 깐다(겹치면 읽히지
+// 않는다). 색은 토큰 넷을 차례로 쓰고 다섯째부터는 회색 명암이다 — 새 색을 만들지 않는다.
+// labels: x 축 글자 배열. sets: [{label, data: [값|null …]}] — 빈 날은 null(선을 잇는다).
+// opt: height · unit · reverse(순위처럼 작을수록 좋은 값) · fmt(값 → 글자) ·
+//      marks: [{i, text, tag}] 세로 표시선(고친 날 등) — 선 위 글자는 짧은 tag(없으면 text),
+//      툴팁은 text 전부. 범례는 캔버스 밖 HTML 이다.
+SM.api.chLines = (labels, sets, opt = {}) => {
+  sets = (sets || []).filter(s => (s.data || []).some(v => v != null));
+  if (!labels || labels.length < 2 || !sets.length) return "";
+  const H = opt.height || 220, unit = opt.unit || "";
+  const fmt = opt.fmt || (v => v == null ? "-" : chVal(v, unit));
+  const TONES = ["patina", "copper", "slate"];
+  const legend = `<div class="chleg">${sets.map((s, k) => `<span><i style="background:${
+    k < TONES.length ? chTone(TONES[k]) : "var(--rule)"}"></i>${esc(s.label)}</span>`).join("")}</div>`;
+  const aria = `${labels.length}개 지점 추이 ${sets.length}줄: ` + sets.map(s => {
+    const v = s.data.filter(x => x != null);
+    return `${s.label} 최근 ${fmt(v[v.length - 1])}`;
+  }).join(", ");
+  return chMount(T => {
+    const col = k => k < TONES.length ? T[TONES[k]] : chA(T.slate, .45 - (k - TONES.length) * .08);
+    return {type: "line",
+      data: {labels: labels.map(String), datasets: sets.map((s, k) => ({label: s.label,
+        data: s.data, borderColor: col(k), borderWidth: k ? 2 : 2.5, fill: false, spanGaps: true,
+        tension: .3, cubicInterpolationMode: "monotone", borderCapStyle: "round",
+        borderJoinStyle: "round", pointRadius: 0, pointHoverRadius: 4,
+        pointBackgroundColor: col(k), pointBorderColor: T.card, pointBorderWidth: 2}))},
+      options: {responsive: true, maintainAspectRatio: false,
+        interaction: {mode: "index", intersect: false},
+        scales: {
+          x: {grid: {display: false}, border: {display: false},
+            ticks: {color: T.slate, font: {family: T.mono, size: 12}, maxTicksLimit: 7,
+              maxRotation: 0, autoSkipPadding: 12}},
+          y: {beginAtZero: !opt.reverse, reverse: !!opt.reverse,
+            grid: {color: T.soft, lineWidth: 1}, border: {display: false},
+            ticks: {color: T.slate, font: {family: T.mono, size: 12}, maxTicksLimit: 4,
+              callback: v => fmt(v)}}},
+        plugins: {legend: {display: false},
+          tooltip: chTipSays(T, {displayColors: true, boxWidth: 8, boxHeight: 8,
+            callbacks: {title: c => c[0].label,
+              label: c => `${c.dataset.label}: ${fmt(c.raw)}`,
+              afterBody: c => {
+                const m = (opt.marks || []).filter(x => x.i === c[0].dataIndex);
+                return m.length ? m.map(x => x.text) : [];
+              }}}),
+          chText: {T, cross: true, vlines: (opt.marks || []).map(m => ({i: m.i, text: m.tag || m.text}))}}}};
+  }, aria, `height:${H}px`) + legend;
 };
 
 // 기회 kind 의 한국어 라벨·처방(what/acts/deliver)은 이제 파이썬(scoring.py 의

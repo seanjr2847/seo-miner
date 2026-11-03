@@ -38,6 +38,7 @@ const NAV_ICON = {
   keywords: `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4 14 14"/></svg>`,
   kwmanage: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h3M8.5 4h5M2.5 8h7M12.5 8h1M2.5 12h1.5M7 12h6.5"/><circle cx="7" cy="4" r="1.5"/><circle cx="11" cy="8" r="1.5"/><circle cx="5.5" cy="12" r="1.5"/></svg>`,
   rank: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 11.5 6 7l3 3 5-5.5"/><path d="M10.5 4.5H14V8"/></svg>`,
+  page: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.5L13 5v8.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z"/><path d="M5.5 11.5 7.5 9l1.5 1.5L11 8"/></svg>`,
   aicite: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8.5L5.5 13.8V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/><path d="M5.8 8.6 6.5 6M9.2 8.6 9.9 6"/></svg>`,
   aisum: `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M4.8 6h6.4M4.8 8.5h6.4M4.8 11h3.4"/></svg>`,
   site: `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.5 6.5V13a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 13V3A1.5 1.5 0 0 1 5 1.5h4z"/><path d="M9 1.5v4a1 1 0 0 0 1 1h2.5"/><path d="M6 10.2 7.4 11.6 10 9"/></svg>`,

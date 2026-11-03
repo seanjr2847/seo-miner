@@ -1646,6 +1646,25 @@ label a { text-decoration:underline; text-underline-offset:2px; }
 .gov, .lnk { font:inherit; color:var(--accent); background:transparent; border:0; padding:0;
   cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
 .gov:hover, .lnk:hover { color:var(--ink); }
+/* 내 페이지 주소 → [페이지별] (SM.api.pageLink). 주소는 등폭이고 칸이 좁아 밑줄 대신
+   글자색만 — 표 안 경로 글자는 원래 먹색이라, 누를 수 있다는 표시는 hover 밑줄로 한다.
+   옆의 ↗ 가 실제 페이지(새 탭)다. */
+.pgo { font:inherit; color:inherit; background:transparent; border:0; padding:0; cursor:pointer;
+  text-align:left; overflow-wrap:anywhere; text-decoration:none; }
+.pgo:hover, .pgo:focus-visible { color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
+.pgx { margin-left:4px; color:var(--sub); text-decoration:none; font:400 var(--fs-1)/1 var(--sans); }
+.pgx:hover { color:var(--accent); }
+/* 표 안의 이름 칸(SM.api.urlCell) — URL·검색어는 이니셜 아바타 + 경로(본문) + 호스트(보조)로
+   선다. 스캔하는 눈이 첫 글자와 경로 끝을 먼저 잡는다. 등폭은 URL 에만 쓴다(검색어는 한글이라
+   본문 서체). [사이트 점검]에서 시작해 [페이지별]·기회 서랍이 함께 쓴다. */
+.stu { display:flex; align-items:center; gap:10px; min-width:0; }
+.stt { display:flex; flex-direction:column; min-width:0; }
+/* 셸의 .stp(안내 화면 단계 칸, display:contents)와 이름이 같다 — 아바타 옆 경로는 .stt 안에서만 쓴다. */
+.stt > .stp { display:block; font:500 var(--fs-1)/1.45 var(--mono); color:var(--ink); overflow-wrap:anywhere; }
+.stt > .stp a { color:inherit; }
+.stt > .stp a:hover { color:var(--accent); }
+.stq { font:500 var(--fs-2)/1.45 var(--sans); color:var(--ink); }
+.sth { font:400 var(--fs-1)/1.45 var(--mono); color:var(--sub); overflow-wrap:anywhere; }
 /* 본문의 맨 링크 한 벌 — 규칙이 없어 브라우저 기본 파랑·보라가 화면마다 섰다.
    :where() 로 특이도를 0 으로 둔다: 클래스를 단 링크(.go·.cmd 등)는 자기 규칙이 이긴다. */
 :where(main a) { color:var(--accent); text-decoration:none; text-underline-offset:2px; }

@@ -920,8 +920,91 @@ def test_side_calls_cannot_kill_the_main_snapshot():
                         (pid,)).fetchone()[0] == 0, "실패한 분해가 행을 남겼다"
     notes = conn.execute("SELECT notes FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 1",
                          (pid,)).fetchone()["notes"]
-    assert "daily=skip" in notes and "device=skip" in notes, \
+    assert "daily=skip" in notes and "device=skip" in notes and "page_daily=skip" in notes, \
         f"건너뛴 축이 실행 기록에 안 남았다 — 나중에 '왜 비었나'를 답할 수 없다: {notes}"
+    assert conn.execute("SELECT COUNT(*) FROM gsc_page_daily WHERE project_id=?",
+                        (pid,)).fetchone()[0] == 0, "실패한 페이지별 일별이 행을 남겼다"
+    conn.close()
+
+
+def test_gsc_page_daily_backfills_once_then_only_the_window():
+    """페이지별 일별(date×page) — [페이지별] 화면의 추이 원본.
+
+    gsc_snapshots 의 페이지 값은 "지난 28일 합계"라 매일 받아도 하루치를 되짚을 수 없다.
+    그래서 date×page 를 따로 받는다. 처음 한 번은 보관 기간(PAGE_DAILY_BACKFILL_DAYS)만큼
+    되받아 그래프가 첫날부터 비지 않게 하고, 그 뒤로는 창만 받아 같은 날을 덮어쓴다
+    (서치콘솔은 최근 며칠을 나중에 보정한다). 장이 넘치면 startRow 로 이어받는다.
+    """
+    import collect_gsc
+    conn = db.connect()
+    conn.execute("INSERT OR IGNORE INTO projects(name, domain, locale, gsc_property) "
+                 "VALUES('pgdaily', 'p.com', 'ko-KR', 'sc-domain:p.com')")
+    conn.commit()
+    pid = conn.execute("SELECT id FROM projects WHERE name='pgdaily'").fetchone()["id"]
+    conn.close()
+
+    seen: list[dict] = []
+    clicks = {"v": 5}
+
+    class _Exec:
+        def __init__(self, body):
+            self.body = body
+
+        def execute(self):
+            dims = self.body.get("dimensions")
+            if dims == ["date", "page"]:
+                seen.append(self.body)
+                start = self.body.get("startRow", 0)
+                # 첫 장은 꽉 채워(rowLimit) 다음 장을 부르게 하고, 둘째 장에서 끝낸다.
+                if start == 0:
+                    return {"rows": [{"keys": ["2026-10-01", f"https://p.com/a{i}"],
+                                      "clicks": clicks["v"], "impressions": 50,
+                                      "ctr": 0.1, "position": 4.0}
+                                     for i in range(self.body["rowLimit"])]}
+                return {"rows": [{"keys": ["2026-10-02", "https://p.com/a0"], "clicks": 1,
+                                  "impressions": 10, "ctr": 0.1, "position": 6.0}]}
+            if dims == ["query", "page"]:
+                return {"rows": [{"keys": ["신발", "https://p.com/a0"], "clicks": 3,
+                                  "impressions": 100, "ctr": 0.03, "position": 8.0}]}
+            return {"rows": []}
+
+    class _SA:
+        def query(self, siteUrl, body):
+            return _Exec(body)
+
+    class _Service:
+        def searchanalytics(self):
+            return _SA()
+
+    orig = collect_gsc.get_service, collect_gsc.PAGE, collect_gsc.PAGE_DAILY_MAX
+    collect_gsc.get_service = lambda: _Service()
+    collect_gsc.PAGE, collect_gsc.PAGE_DAILY_MAX = 3, 9      # 작은 장으로 이어받기를 본다
+    try:
+        collect_gsc.collect("pgdaily", days=28, breakdown="")
+        first = list(seen)
+        seen.clear()
+        clicks["v"] = 7                                      # 서치콘솔이 그날 값을 보정했다
+        collect_gsc.collect("pgdaily", days=28, breakdown="")
+        second = list(seen)
+    finally:
+        collect_gsc.get_service, collect_gsc.PAGE, collect_gsc.PAGE_DAILY_MAX = orig
+
+    from datetime import date as _d
+    end = _d.fromisoformat(first[0]["endDate"])
+    assert (end - _d.fromisoformat(first[0]["startDate"])).days == collect_gsc.PAGE_DAILY_BACKFILL_DAYS, \
+        f"처음인데 보관 기간만큼 되받지 않았다: {first[0]['startDate']}~{first[0]['endDate']}"
+    assert [b["startRow"] for b in first] == [0, 3], f"장을 이어받지 않았다: {first}"
+    assert (end - _d.fromisoformat(second[0]["startDate"])).days == 28, \
+        f"두 번째부터는 창만 받아야 한다: {second[0]['startDate']}"
+
+    conn = db.connect()
+    rows = {(r["date"], r["page"]): r["clicks"] for r in conn.execute(
+        "SELECT date, page, clicks FROM gsc_page_daily WHERE project_id=?", (pid,))}
+    assert len(rows) == 4, rows
+    assert rows[("2026-10-01", "https://p.com/a0")] == 7, f"같은 날을 덮어쓰지 않았다: {rows}"
+    notes = conn.execute("SELECT notes FROM runs WHERE project_id=? ORDER BY id DESC LIMIT 1",
+                         (pid,)).fetchone()["notes"]
+    assert "page_daily=4" in notes, notes
     conn.close()
 
 

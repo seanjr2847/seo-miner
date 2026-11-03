@@ -452,6 +452,7 @@ if (window.__SNAPSHOT__) {
   SM.drop("guide");
   SM.drop("triage");                     // 판정은 서버가 저장한다 — 종이에서는 누를 수 없다
   SM.drop("kwmanage");                   // 추적을 켜고 끄는 화면이다 — 종이에서는 바꿀 수 없다
+  SM.drop("page");                       // 글을 고를 때마다 서버에 묻는다 — 종이에서는 못 고른다
   if ($("sm-kwnudge")) $("sm-kwnudge").remove();   // [개요]의 그 화면으로 가는 알림도 같이 뺀다
   document.querySelector(".tag").textContent = `${s.exported} 기록`;
   if (s.actions.length) {
