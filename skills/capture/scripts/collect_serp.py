@@ -352,7 +352,7 @@ def collect(project: str, *,
             # 상위 글 몇 개의 주소만 모아 둔다 — 여는 것은 런 끝에 한 번, 주소 단위로.
             # 글로 겨룰 상대만 연다(serp_kinds.peer_skip): 위키백과·유튜브·뉴스·마켓을 열어
             # H2 를 견줘 봐야 우리 글이 따라 할 구간이 안 나온다. 빼고 남은 것 중 앞에서부터.
-            outline_urls.extend(outline_targets(top_rows))
+            outline_urls.extend(outline_targets(top_rows, own))
             # 함께 묻는 질문·연관 검색어를 **어느 검색어에서 나왔는지와 함께** 남긴다 —
             # 아래 키워드 후보 적재와 별개다(그쪽은 --no-harvest 로 끌 수 있는 부산물이고,
             # 이쪽은 이 검색어의 요청문이 쓰는 사실이다).
@@ -562,13 +562,14 @@ OUTLINE_PER_KEYWORD = 3
 OUTLINE_MAX_PER_RUN = 40
 
 
-def outline_targets(top_rows) -> list[str]:
+def outline_targets(top_rows, own: str | None = None) -> list[str]:
     """이 검색어에서 열어 볼 상위 글 주소 — 내 것과 '글로 겨룰 상대가 아닌 자리'를 빼고
-    앞에서부터 OUTLINE_PER_KEYWORD 개. 뺄 까닭의 정본은 serp_kinds.peer_skip 이다."""
+    앞에서부터 OUTLINE_PER_KEYWORD 개. 뺄 까닭의 정본은 serp_kinds.peer_skip 이다.
+    요청문이 싣는 상위 표(db.SERP_KEEP 자리) 안에서만 고른다 — 표에 없는 글의 H2 는 짝지을 자리가 없다."""
     out = []
-    for t in top_rows:
+    for t in top_rows[:db.SERP_KEEP]:
         u = t.get("url")
-        if not u or t.get("is_own") or serp_kinds.peer_skip(u, t.get("domain")):
+        if not u or t.get("is_own") or serp_kinds.peer_skip(u, t.get("domain"), own):
             continue
         out.append(u)
         if len(out) >= OUTLINE_PER_KEYWORD:

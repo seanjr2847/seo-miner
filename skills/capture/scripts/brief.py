@@ -1307,8 +1307,9 @@ def _serp_top(o: dict, ctx: dict, shape: str = "fix_page") -> list[str]:
     # 글로 겨룰 상대가 아닌 자리(제3자 플랫폼·뉴스·공공 기관·마켓·SEO 도구·태그 목록)는 표에는
     # 두고 비교 재료(H2·형식)에서만 뺀다 — 판정은 serp_kinds.peer_skip 한 벌이다(수집이 그
     # 글을 안 여는 것과 같은 규칙). 위키백과의 H2 를 따라 쓰라고 시키지 않는다.
+    own = (ctx.get("project") or {}).get("domain")
     skipped = {i: why for i, r in enumerate(rows) if not r.get("is_own")
-               for why in [serp_kinds.peer_skip(r.get("url"), r.get("domain"))] if why}
+               for why in [serp_kinds.peer_skip(r.get("url"), r.get("domain"), own)] if why}
     if skipped:
         L.insert(-1, f"- 이 중 {len(skipped)}자리({serp_kinds.skip_summary(skipped.values())})는 "
                      "검색결과에는 서지만 글로 겨룰 상대가 아니라, 아래 비교 재료(H2·형식)에서 뺐습니다.")
@@ -1367,7 +1368,7 @@ SERP_FORMAT_HINT = {
 # 갈랐으면 위 "직답·표·번호 목록" 뭉뚱그린 줄 대신 이 줄이 선다. 못 가른 조회는 위 줄 그대로다.
 SNIPPET_FORM_HINT = {
     "paragraph": "강조 스니펫(문단): 지금은 두세 문장 직답이 그 자리에 있습니다. 질문 꼴 소제목 "
-                 "바로 아래 40~60단어 안팎의 직답 문단이 그 자리를 가져갑니다",
+                 "바로 아래 두세 문장으로 끝나는 직답 문단이 그 자리를 가져갑니다",
     "list": "강조 스니펫(목록): 지금은 번호·글머리 목록이 그 자리에 있습니다. 단계·항목을 "
             "소제목 아래 목록 한 벌로 적은 글이 그 자리를 가져갑니다",
     "table": "강조 스니펫(표): 지금은 표가 그 자리에 있습니다. 값을 문장에 흩지 않고 "

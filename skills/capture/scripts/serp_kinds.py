@@ -13,6 +13,7 @@ scoring.PRESS_OUTLETS(언론)이고, 여기는 그것을 읽어 한 가지 답�
 
 self-check:  python serp_kinds.py
 """
+import functools
 import re
 import sys
 from pathlib import Path
@@ -116,25 +117,47 @@ def is_public(domain: str) -> bool:
     return len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _PUBLIC_SLD
 
 
-def peer_skip(url: str | None, domain: str | None = None) -> str | None:
+@functools.lru_cache(maxsize=1)
+def _lists() -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """(제3자 플랫폼, 언론, 마켓, SEO 도구) — 한 프로세스에서 한 번만 편다. 목록은 코드
+    상수(skill_config·scoring.PRESS_OUTLETS)라 도는 중에 안 바뀐다. 대시보드 한 번에
+    상위 자리 수천 줄을 가르므로 줄마다 다시 펴지 않는다."""
+    return (scoring.third_party_platforms(), scoring.press_outlets(),
+            _cfg_hosts("marketplaces"), _cfg_hosts("seo_tool_sites"))
+
+
+def _site_kind(d: str) -> str | None:
+    """도메인이 속한 '사이트 종류' 까닭 — 주소 꼴(archive)은 여기서 안 본다."""
+    plats, press, markets, tools = _lists()
+    if scoring.is_third_party(d, plats):
+        return "platform"
+    if scoring.is_press(d, press):
+        return "press"
+    if is_public(d):
+        return "public"
+    if any(scoring.owns(d, m) for m in markets):
+        return "market"
+    if any(scoring.owns(d, m) for m in tools):
+        return "seo_tool"
+    return None
+
+
+def peer_skip(url: str | None, domain: str | None = None, own: str | None = None) -> str | None:
     """이 상위 자리를 비교 재료에서 빼는 까닭 id(PEER_SKIP_LABEL 의 키), 뺄 까닭이 없으면 None.
 
     뺀다는 것은 '검색결과에 없었다'가 아니다 — 상위 표에는 그대로 선다. 그 글의 H2·형식을
     우리 글과 견주지 않고, 두 검색어가 같은 지면인지(SERP 겹침) 세는 데도 안 쓴다는 뜻이다:
-    위키백과·유튜브는 어느 검색어에나 서서, 그것이 겹쳤다고 같은 주제가 되지 않는다."""
+    위키백과·유튜브는 어느 검색어에나 서서, 그것이 겹쳤다고 같은 주제가 되지 않는다.
+
+    own(우리 도메인)을 주면 **우리와 같은 종류**의 사이트는 빼지 않는다 — 대학 사이트에게
+    다른 대학(.edu)은, 언론사에게 다른 언론은, 마켓에게 다른 마켓은 바로 그 겨룰 상대다."""
     d = scoring.host_of(domain or url or "")
     if not d:
         return None
-    if scoring.is_third_party(d):
-        return "platform"
-    if scoring.is_press(d):
-        return "press"
-    if is_public(d):
-        return "public"
-    if any(scoring.owns(d, m) for m in _cfg_hosts("marketplaces")):
-        return "market"
-    if any(scoring.owns(d, m) for m in _cfg_hosts("seo_tool_sites")):
-        return "seo_tool"
+    why = _site_kind(d)
+    if why:
+        mine = _site_kind(scoring.host_of(own)) if own else None
+        return None if mine == why else why
     try:
         path = urlsplit(url or "").path
     except ValueError:
@@ -297,6 +320,8 @@ def _selfcheck() -> None:
     assert peer_skip("https://example.com/authors/kim") == "archive"
     assert peer_skip("https://example.com/tagline/") is None
     assert peer_skip("https://www.cdc.gov/flu") == "public"
+    assert peer_skip("https://www.cdc.gov/flu", own="nih.gov") is None       # 같은 종류는 겨룰 상대다
+    assert peer_skip("https://www.cdc.gov/flu", own="example.com") == "public"
     lp = [{"pos": 1, "title": "가나 치과", "domain": None},
           {"pos": 2, "title": "우리 피부과 강남점", "domain": None},
           {"pos": 3, "title": "다라", "domain": "www.ours.com"}]

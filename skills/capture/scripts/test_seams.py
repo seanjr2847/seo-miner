@@ -3054,7 +3054,8 @@ def test_seam_w05peer_skip_is_one_rule_for_fetch_brief_and_overlap():
     assert '_peer_skip(u, r.get("domain"))' in src["plays"]
     assert "serp_kinds.peer_skip(" in _py_func(src["plays"], "_peer_skip")
     # peer_skip 이 돌려주는 까닭 = 이름표의 키 (새 까닭을 더하고 이름표를 빼먹으면 KeyError 로 샌다)
-    body = _py_func(src["serp_kinds"], "peer_skip")
+    body = _py_func(src["serp_kinds"], "peer_skip") + _py_func(src["serp_kinds"], "_site_kind") \
+        + _py_func(src["serp_kinds"], "_lists")
     returned = set(re.findall(r'return "(\w+)"', body))
     assert returned == set(serp_kinds.PEER_SKIP_LABEL), (returned, set(serp_kinds.PEER_SKIP_LABEL))
     # 읽는 설정 키가 실제로 있다 — 키 이름이 어긋나면 그 갈래가 조용히 빈 목록이 된다

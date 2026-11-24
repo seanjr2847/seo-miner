@@ -1660,7 +1660,10 @@ SETTING_KEYS = ("brand_aliases", "tools", "foreign_brands", "place_aliases",
                 "markets",
                 # 서치콘솔 없는 사이트에서 검색량 상위 후보를 자동으로 켠 날(호스팅 워커).
                 # 한 번만 켠다 — 그 뒤 사람이 끈 키워드를 런마다 되켜지 않게.
-                "auto_keywords")
+                "auto_keywords",
+                # 유료 선택 수집을 사이트마다 켜고 끈다 — 순위에 덧붙는 종류(쉼표 글, 정본
+                # serp_extras.KINDS)와 LLM 언급 집계(0|1, collect_ai). 없으면 코드 기본값.
+                "serp_extras", "ai_llm_mentions")
 # 순위를 한 런에 몇 개까지 재나(limits.max_keywords 의 기본). 추적 키워드는 전부 재는
 # 것이 원칙이고, 이 수는 잘못 켠 수천 개에 돈을 붓지 않게 하는 안전장치다.
 # collect_serp 의 --max-keywords 기본이 이 값이다(두 벌로 적지 않는다).

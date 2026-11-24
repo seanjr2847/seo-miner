@@ -6707,10 +6707,10 @@ def _chunks(xs: list, n: int = 400):
         yield xs[i:i + n]
 
 
-def _peer_skip(url: str) -> str | None:
+def _peer_skip(url: str, own: str | None = None) -> str | None:
     """serp_kinds.peer_skip — 늦게 들인다(serp_kinds 가 이 모듈을 읽는다)."""
     import serp_kinds
-    return serp_kinds.peer_skip(url)
+    return serp_kinds.peer_skip(url, None, own)
 
 
 def _surface_facts(conn: sqlite3.Connection, project_id: int,
@@ -6729,6 +6729,8 @@ def _surface_facts(conn: sqlite3.Connection, project_id: int,
     by_norm: dict[str, list[str]] = {}
     for t in targets:
         by_norm.setdefault(norm(t), []).append(t)
+    _own = conn.execute("SELECT domain FROM projects WHERE id=?", (project_id,)).fetchone()
+    own = _own["domain"] if _own else None
     # 검색어 → keywords 행. 글자가 똑같은 행이 있으면 그것, 없으면 norm 이 같은 첫 행.
     chosen: dict[str, tuple[bool, sqlite3.Row]] = {}
     for r in conn.execute("SELECT id, keyword, cluster, volume FROM keywords"
@@ -6765,7 +6767,7 @@ def _surface_facts(conn: sqlite3.Connection, project_id: int,
                      ORDER BY s.keyword_id, s.position""", ch):
             # 어느 검색어에나 서는 자리(위키백과·유튜브·뉴스·마켓…)는 겹침에 안 센다 —
             # 그것이 셋 겹쳤다고 두 검색어가 같은 지면이 되지 않는다(serp_kinds.peer_skip).
-            if r["url"] and not _peer_skip(r["url"]):
+            if r["url"] and not _peer_skip(r["url"], own):
                 top.setdefault(r["keyword_id"], []).append(url_key(r["url"]))
         for kid in ch:
             for t in kid_of[kid]:

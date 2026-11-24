@@ -198,6 +198,12 @@ def test_peer_skip_reads_the_config_lists_and_domain_shapes():
     assert skip("https://rival.example/guide") is None
     assert skip("https://rival.example/tagged-posts") is None
     assert skip("", None) is None
+    # 우리와 같은 종류의 사이트는 겨룰 상대다 — 대학에게 대학, 언론에게 언론, 마켓에게 마켓
+    assert skip("https://www.mit.edu/x", own="snu.ac.kr") is None
+    assert skip("https://www.nytimes.com/a", own="www.wsj.com") is None
+    assert skip("https://www.amazon.de/dp/1", own="coupang.com") is None
+    assert skip("https://www.nytimes.com/a", own="snu.ac.kr") == "press"     # 다른 종류는 뺀다
+    assert skip("https://rival.example/tag/x/", own="snu.ac.kr") == "archive"
     assert set(serp_kinds.PEER_SKIP_LABEL) == {"platform", "press", "public", "market",
                                                "seo_tool", "archive"}
     assert serp_kinds.skip_summary(["press", "platform", "platform", None]) == \
@@ -206,16 +212,21 @@ def test_peer_skip_reads_the_config_lists_and_domain_shapes():
 
 def test_outline_targets_skip_non_peers_and_take_the_next_three():
     rows = [{"url": "https://ko.wikipedia.org/wiki/x", "domain": "ko.wikipedia.org"},
-            {"url": "https://e.com/mine", "domain": "e.com", "is_own": True},
             {"url": "https://r1.example/a", "domain": "r1.example"},
             {"url": "https://www.youtube.com/watch?v=1", "domain": "youtube.com"},
-            {"url": "https://r2.example/tag/x/", "domain": "r2.example"},
             {"url": "https://r3.example/a", "domain": "r3.example"},
-            {"url": None, "domain": "r4.example"},
             {"url": "https://r5.example/a", "domain": "r5.example"},
             {"url": "https://r6.example/a", "domain": "r6.example"}]
+    # 예전엔 앞 세 자리(위키·r1·유튜브)를 열었다 — 견줄 글은 r1 하나뿐이었다
     assert collect_serp.outline_targets(rows) == [
         "https://r1.example/a", "https://r3.example/a", "https://r5.example/a"]
+    assert len(rows) > db.SERP_KEEP                       # r6 은 요청문 상위 표 밖이라 안 연다
+    mixed = [{"url": "https://e.com/mine", "domain": "e.com", "is_own": True},
+             {"url": "https://r2.example/tag/x/", "domain": "r2.example"},
+             {"url": None, "domain": "r4.example"},
+             {"url": "https://www.mit.edu/a", "domain": "mit.edu"}]
+    assert collect_serp.outline_targets(mixed) == []
+    assert collect_serp.outline_targets(mixed, "snu.ac.kr") == ["https://www.mit.edu/a"]
 
 
 def test_serp_overlap_ignores_pages_that_stand_on_every_serp():
@@ -473,6 +484,10 @@ def test_extras_spend_nothing_without_a_key_or_when_off():
     # 기본으로 도는 것은 묶어 한 번(intent)과 기능이 선 검색어뿐 — 돈이 검색어 수만큼 느는
     # 종류(bing_rank)와 한 건이 비싼 종류(trends·ai_mode)는 사람이 켠다
     assert serp_extras.wanted(None) == ["intent", "images", "youtube"]
+    # 사이트마다 켜고 끌 수 있다 — 설정 키가 정본 목록에 있어야 저장된다(없으면 ValueError)
+    db.set_project_settings(conn, p["id"], {"serp_extras": "bing_rank", "ai_llm_mentions": 1})
+    cfg = db.project_cfg(conn, p["name"])
+    assert serp_extras.wanted(cfg["serp_extras"]) == ["bing_rank"] and cfg["ai_llm_mentions"] == 1
     assert not any(serp_extras.KINDS[k]["default"] for k in ("bing_rank", "trends", "ai_mode"))
     conn.close()
 
