@@ -289,7 +289,8 @@ CREATE TABLE IF NOT EXISTS ga4_snapshots (
   total_revenue REAL,
   engagement_rate REAL,                       -- bounceRate의 여집합. 전환 미설정 사이트도 항상 값이 있어 이쪽을 남겼다(bounceRate는 버림, collect_ga4.py 참조)
   avg_session_duration REAL,                  -- 평균 세션 길이(초) — 체류
-  pageviews_per_session REAL                  -- 세션당 페이지뷰 — 깊이
+  pageviews_per_session REAL,                 -- 세션당 페이지뷰 — 깊이
+  source TEXT                                 -- 분석 출처. NULL = GA4, 그 밖은 analytics_alt.SOURCES 의 id(posthog|matomo)
 );
 CREATE INDEX IF NOT EXISTS idx_ga4_proj_date ON ga4_snapshots(project_id, snapshot_date);
 -- gsc_breakdown 과 같은 문법(dim/dim_value)에 query 대신 landing_page 축(GA4엔 검색어
@@ -307,7 +308,8 @@ CREATE TABLE IF NOT EXISTS ga4_breakdown (
   sessions INTEGER,
   key_events REAL,
   total_revenue REAL,
-  engagement_rate REAL
+  engagement_rate REAL,
+  source TEXT                                 -- ga4_snapshots.source 와 같은 뜻
 );
 CREATE INDEX IF NOT EXISTS idx_ga4_bd ON ga4_breakdown(project_id, snapshot_date, dim);
 -- AI 답변의 링크를 타고 들어온 방문(collect_ga4 의 부가 조회). 채널 필터가 없다 —
@@ -380,6 +382,27 @@ CREATE TABLE IF NOT EXISTS page_audits (     -- 내 페이지 HTML 감사 (colle
   schema_issues_json TEXT,                    -- ld+json 값 이슈 [{type,prop,code}](schema_values). '[]' = 없음
   schema_hash TEXT,                           -- ld+json 내용 지문(속성 값이 바뀌면 바뀐다). '' = 블록 없음
   canonical_check_json TEXT,                  -- canonical 대상을 열어 본 결과 {url,status,final,next,loop}. NULL = 안 봄
+  UNIQUE(project_id, checked_date, url)
+);
+-- 헤드리스 렌더 결과(render.py) — js_shell 페이지를 브라우저로 열어 다시 읽은 차이와,
+-- 여는 김에 잰 모바일 화면 값. page_audits 와 같은 열쇠(project_id, checked_date, url)다.
+-- rendered=0 은 "정적 HTML 만 봤다"(렌더 엔진 없음·상한 밖·렌더 실패)이고 그 줄의 측정 칸은
+-- NULL 이다 — 0 으로 채우면 안 잰 것을 "오류 0건"으로 읽는다. 문턱 숫자의 출처는 render.py.
+CREATE TABLE IF NOT EXISTS page_renders (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,                 -- YYYY-MM-DD
+  url TEXT NOT NULL,
+  rendered INTEGER NOT NULL,                  -- 1 = 헤드리스로 열어 봄
+  error TEXT,                                 -- 렌더를 시도했는데 못 연 사유
+  js_gap_json TEXT,                           -- 원본 대 렌더 차이 {words:[전,후],h1:[],schema:[],canonical?,title?}. js_shell 페이지만
+  console_errors INTEGER,                     -- 로드 중 예외 + console.error + 브라우저 오류 로그
+  hscroll_px INTEGER,                         -- 모바일 폭(412px)에서 문서가 넘친 px. 0 = 가로 스크롤 없음
+  small_text_pct REAL,                        -- 12px 미만 글자의 비율(%). NULL = 글자 없음
+  targets INTEGER, small_targets INTEGER,     -- 터치 대상 수 / 그중 24px 보다 작은 것(인라인 링크 제외)
+  fixed_cover_pct REAL,                       -- position:fixed 요소 하나가 첫 화면을 덮는 최대 비율(%)
+  pushstate_load INTEGER,                     -- 로드 중(사용자 동작 없이) history.pushState 호출 수
+  pushstate_inline INTEGER,                   -- 원문 인라인 스크립트 중 pushState 를 부르는 것의 수 (렌더 없이도 봄)
   UNIQUE(project_id, checked_date, url)
 );
 CREATE TABLE IF NOT EXISTS page_vitals (    -- 속도 (collect_vitals.py · PageSpeed Insights)
@@ -795,6 +818,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "bounce_rate" in ga4_cols:
         conn.execute("ALTER TABLE ga4_snapshots DROP COLUMN bounce_rate")
         conn.commit()
+    # 분석 출처 칸(analytics_alt — PostHog·Matomo). 옛 행은 NULL = GA4 다.
+    for tbl in ("ga4_snapshots", "ga4_breakdown"):
+        if "source" not in {r["name"] for r in conn.execute(f"PRAGMA table_info({tbl})")}:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN source TEXT")
+            conn.commit()
 
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(keywords)")}
     # volume·difficulty 는 처음부터 있었지만 채우는 코드가 없어 늘 NULL 이었다.

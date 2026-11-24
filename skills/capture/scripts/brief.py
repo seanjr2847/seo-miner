@@ -42,6 +42,7 @@ import re
 from typing import Callable
 
 import ai_access
+import render
 import scoring
 import serp_adapter
 import serp_kinds
@@ -1281,6 +1282,7 @@ def _page_state(a: dict | None, url: str, *, author_work: bool = True) -> list[s
         when = " · ".join(x for x in (f"발행 {a['published']}" if a.get("published") else "",
                                       f"수정 {a['modified']}" if a.get("modified") else "") if x)
         L.append(f"- 글의 날짜: {when or '(페이지에 안 적혀 있습니다)'}")
+    L += render.brief_lines(a)      # 헤드리스로 열어 본 결과(렌더 차이·모바일 화면) — 사실만
     if a.get("js_shell"):
         L.append("- **주의**: 이 페이지는 본문을 자바스크립트로 그리는 것으로 보입니다"
                  "(정적 HTML 에 본문이 거의 없습니다). 위의 본문 길이·H2·구조화 데이터"

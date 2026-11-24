@@ -79,6 +79,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import analytics_alt  # noqa: E402
 import collect_gsc  # noqa: E402
 import collector  # noqa: E402
 import db  # noqa: E402
@@ -317,6 +318,10 @@ def collect(project: str, *,
         prop_id = p["ga4_property"]
         scope = scoring.scopes_of([sc for _, sc in db.site_markets(conn, p["id"])])
         if not prop_id:
+            # 출처 분기 — GA4 가 없고 PostHog·Matomo 키가 있으면 거기서 같은 꼴로 받는다.
+            alt = analytics_alt.collect(st, days=days, scope=scope)
+            if alt is not None:
+                return alt
             return st.skip(f"'{project}' 에 GA4 속성이 연결되어 있지 않습니다. "
                            "project yaml 에 ga4_property: '숫자 ID' 를 넣고 "
                            "대시보드 [설정]에서 등록하세요 (연결 화면은 다음 단계)")

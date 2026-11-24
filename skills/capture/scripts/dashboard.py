@@ -46,6 +46,7 @@ import htmlsafe   # noqa: E402  (문서에 값을 박을 때의 이스케이프 
 import paths      # noqa: E402  (사이트별 로컬 폴더 장부 — 설정 0단계)
 import play_pr    # noqa: E402  (이번 달 할 일 → PR — 로컬 대시보드의 [PR 만들기])
 import remote     # noqa: E402  (원격 사이트면 박제·화면을 서버가 낸다)
+import render     # noqa: E402  (헤드리스 렌더 줄 — 감사 행에 붙여 요청문이 싣는다)
 import run_verdict  # noqa: E402  (런 한 건의 결과 판정 — runs[].verdict 를 페이로드에 싣는다)
 import scoring    # noqa: E402  (판정 규칙 — 화면·박제본·산문이 같은 임계값을 본다)
 import serp_adapter  # noqa: E402  (언어-지역 목록 정본 — 설정 폼이 이걸 그린다)
@@ -2154,7 +2155,9 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
             q_of_url.setdefault(pr["page"], []).append((pr["impressions"] or 0, qq))
     page_audits = {}
     if audit_date:
+        renders = render.latest(conn, pid)     # 헤드리스 렌더 줄(없으면 빈 dict — 호스팅)
         for a in (dict(r) for r in db.latest_page_audits(conn, pid)):
+            render.attach(conn, pid, a, renders)
             qs = [x[1] for x in sorted(q_of_url.get(a["url"], []), reverse=True)]
             a["queries"] = qs
             # 속도 행(_axis_vitals 의 {url: {기기: 행}})도 넘긴다 — [이미지 용량]은 감사가

@@ -3820,7 +3820,8 @@ def zero_conversion_pages(conn: sqlite3.Connection, project_id: int, *,
         clicks, sessions = r["clk"] or 0, g["sessions"] or 0
         if clicks < GA4_NOCONV_MIN_CLICKS or sessions < GA4_NOCONV_MIN_SESSIONS:
             continue
-        if g["key_events"]:
+        # NULL = 그 출처(analytics_alt)는 전환을 모른다 — "전환 0"이 아니다.
+        if g["key_events"] is None or g["key_events"]:
             continue
         out.append({"page": page, "clicks": clicks, "impressions": r["imp"],
                     "sessions": sessions, "queries": r["q"]})

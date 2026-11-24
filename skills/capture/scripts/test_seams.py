@@ -5838,6 +5838,145 @@ def test_seam_200_hosted_safe_strips_what_fatal_makes():
         assert "서비스 쪽 문제" in out, f"사람 말로 바뀌지 않았다: {out!r}"
 
 
+def test_seam_w12a_render_path_reaches_the_brief_and_stays_off_without_a_browser():
+    """w12a) 헤드리스 렌더는 다섯 자리를 잇는다: 수집 훅(collect_page) → 렌더(render) → 표
+    (db.page_renders) → 페이로드(dashboard 의 page_audits[].render) → 요청문(brief).
+
+    한 자리만 보면 다 멀쩡하다. 훅이 빠지면 표가 비고, 붙이기가 빠지면 요청문이 조용히 예전
+    '의심' 문장만 낸다. 그리고 렌더 엔진이 없는 곳(호스팅 컨테이너)에서는 감사 행이 한 글자도
+    안 바뀌어야 한다 — 그 약속도 여기서 못 박는다.
+    """
+    import ast
+    import sqlite3 as _sq
+
+    import brief
+    import collect_page
+    import render
+    import scoring
+
+    # ① 훅이 실제로 걸려 있다 — 수집·페이로드·요청문
+    cp = (SCRIPTS / "collect_page.py").read_text("utf-8")
+    for hook in ('render.Session("auto" if fetch is _FETCH else None)',
+                 "rnd.reread(url, row, audit_html)", "rnd.save(conn"):
+        assert hook in cp, f"collect_page 에 렌더 훅이 없다: {hook}"
+    assert "render.attach(conn, pid, a, renders)" in (SCRIPTS / "dashboard.py").read_text("utf-8")
+    assert "render.brief_lines(a)" in (SCRIPTS / "brief.py").read_text("utf-8")
+
+    # ② 재는 칸 = 표의 칸 (한쪽에만 더하면 INSERT 가 터지거나 값이 조용히 버려진다)
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    cols = {r["name"] for r in c.execute("PRAGMA table_info(page_renders)")}
+    assert set(render.METRIC_COLS) | {"rendered", "error", "js_gap_json", "pushstate_inline"} \
+        <= cols, sorted(cols)
+
+    # ③ 원문 → 표 → 페이로드 행 → 요청문. 브라우저 없이 서는 줄(인라인 pushState)로 끝까지 간다
+    html = ("<html><head><title>T</title><script>history.pushState({}, '', '/x')</script></head>"
+            "<body><h1>T</h1><p>" + "word " * 200 + "</p></body></html>")
+    row = collect_page.audit_html("https://me.example/a", html)
+    assert row["pushstate_inline"] == 1, row.get("pushstate_inline")
+    off = render.Session(browser=None)
+    assert off.reread(row["url"], row, collect_page.audit_html) is row, \
+        "렌더 엔진이 없는데 감사 행이 바뀌었다(호스팅에서 깨진다)"
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'w12','saas','me.example')")
+    db.write_page_audits(c, 1, "2026-11-01", [row])
+    off.save(c, 1, "2026-11-01", [row])
+    a = dict(db.latest_page_audits(c, 1)[0])
+    render.attach(c, 1, a, render.latest(c, 1))
+    assert a["render"]["rendered"] == 0 and a["render"]["console_errors"] is None, a["render"]
+    a["advice"] = scoring.page_advice(a, ["검색어"], domain="me.example")
+    o = {"kind": "ctr_gap", "target": "검색어", "label": scoring.kind_label("ctr_gap"),
+         "reasoning": "근거", "play": scoring.kind_play("ctr_gap"), "gap_kind": None}
+    body = brief.build(o, {"query_pages": {"검색어": [
+        {"page": a["url"], "impressions": 100, "clicks": 5, "ctr": 5.0, "position": 8.0}]},
+        "page_audits": {a["url"]: a}})["body"]
+    assert "history.pushState" in body and "뒤로가기 가로채기" in body, body
+    assert "렌더 차이" not in body, "렌더하지 않은 페이지에 렌더 차이 줄이 섰다"
+    # 정보 한 줄이다 — 기회·진단을 만들지 않는다
+    assert not any("pushState" in str(x) for x in a["advice"]), a["advice"]
+    c.close()
+
+    # ④ 옛 Brain(표가 없다)에서도 읽는 쪽이 안 죽는다
+    old = _sq.connect(":memory:")
+    old.row_factory = _sq.Row
+    assert render.latest(old, 1) == {}
+    old.close()
+
+    # ⑤ 검사가 찾는 브라우저 = 수집이 찾는 브라우저 (test_render.BROWSERS 와 같은 목록)
+    tree = ast.parse((SCRIPTS / "test_render.py").read_text("utf-8"))
+    theirs = next(ast.literal_eval(n.value) for n in tree.body
+                  if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "BROWSERS")
+    assert tuple(theirs) == render.BROWSERS, "test_render.BROWSERS 와 render.BROWSERS 가 갈렸다"
+
+    # ⑥ 문턱 숫자는 파이썬 상수 한 벌 — 브라우저에 심는 스크립트가 그 값을 받는다
+    assert f"< {render.SMALL_FONT_PX})" in render._MEASURE_JS
+    assert render._MEASURE_JS.count(f"< {render.TARGET_MIN_PX}") == 2
+
+
+def test_seam_w12b_analytics_source_branch_writes_the_ga4_shape_and_names_its_source():
+    """w12b) 분석 대체 출처(PostHog·Matomo)는 ga4 단계 **안의** 분기다 — 새 단계가 아니다.
+
+    이어지는 자리: 출처 명부(analytics_alt.SOURCES) ↔ 수집 함수(FETCHERS) ↔ doctor 의 keys ↔
+    collect_ga4 의 분기 ↔ ga4_* 표의 source 칸 ↔ 읽는 쪽(scoring). 키 이름은 명부 한 벌이고,
+    이 출처가 모르는 전환은 NULL 이라 '전환 0' 기회(zero_conversion_pages)를 세우지 않는다.
+    """
+    import sqlite3 as _sq
+
+    import analytics_alt
+    import run_all
+    import scoring
+    sys.path.insert(0, str(SETUP_SCRIPTS))
+    import doctor
+
+    ids = [s["id"] for s in analytics_alt.SOURCES]
+    assert set(analytics_alt.FETCHERS) == set(ids), "명부에 있는데 수집 함수가 없는 출처가 있다"
+    # 새 단계를 만들지 않았다 — 정본(run_all.STAGES)에 출처 이름의 단계가 없다
+    assert not set(ids) & set(run_all.VALID_STAGE_NAMES), "출처가 단계로 새어 나왔다"
+    src = (SCRIPTS / "collect_ga4.py").read_text("utf-8")
+    assert "analytics_alt.collect(st, days=days, scope=scope)" in src, "collect_ga4 에 출처 분기가 없다"
+
+    # 키 이름은 명부 한 벌 — 다른 파일이 다시 적지 않는다(문서 포함)
+    names = [k for s in analytics_alt.SOURCES for k in (*s["keys"], *s["optional"])]
+    pat = re.compile("|".join(map(re.escape, names)))
+    hits = [str(f.relative_to(ROOT)) for base in ("skills", "server") for f in (ROOT / base).rglob("*")
+            if f.is_file() and f.suffix in (".py", ".md", ".html", ".js")
+            and f.name not in ("analytics_alt.py", "test_seams.py")
+            and pat.search(f.read_text("utf-8", errors="replace"))]
+    assert not hits, f"분석 출처 키 이름의 사본: {hits}"
+
+    # doctor 가 명부를 읽는다 — 출처마다 keys 판정이 있고, 명부 이름이 설명에 있다
+    d = doctor.diagnose()
+    for s in analytics_alt.SOURCES:
+        assert s["id"] in d["keys"], f"doctor 가 {s['id']} 키를 안 본다"
+    cap = next(c for c in doctor.CAPABILITIES if c["id"] == "analytics_alt")
+    assert all(s["name"] in cap["desc"] for s in analytics_alt.SOURCES), cap["desc"]
+
+    # source 칸 — 새 Brain(SCHEMA)에도, 옛 Brain(마이그레이션)에도 있다
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.executescript(db.SCHEMA)
+    for tbl in ("ga4_snapshots", "ga4_breakdown"):
+        assert "source" in {r["name"] for r in c.execute(f"PRAGMA table_info({tbl})")}, tbl
+    mig = (SCRIPTS / "db.py").read_text("utf-8")
+    assert 'conn.execute(f"ALTER TABLE {tbl} ADD COLUMN source TEXT")' in mig, \
+        "옛 Brain 에 source 칸을 더하는 마이그레이션이 없다"
+
+    # 전환을 모르는 출처(NULL)는 '전환 0' 이 아니다 — 같은 페이지가 GA4(0)면 서고 NULL 이면 안 선다
+    c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'w12','saas','x.com')")
+    c.execute("INSERT INTO gsc_snapshots(project_id, snapshot_date, period_days, query, page,"
+              " clicks, impressions, ctr, position)"
+              " VALUES(1,'2026-11-01',28,'q','https://x.com/a',?,900,0.0,5.0)",
+              (scoring.GA4_NOCONV_MIN_CLICKS + 5,))
+    c.execute("INSERT INTO ga4_snapshots(project_id, snapshot_date, period_days, landing_page,"
+              " sessions, sessions_all, key_events, total_revenue, engagement_rate)"
+              " VALUES(1,'2026-11-02',28,'/a',?,50,0,0,0.5)", (scoring.GA4_NOCONV_MIN_SESSIONS + 5,))
+    assert [r["page"] for r in scoring.zero_conversion_pages(c, 1)] == ["https://x.com/a"]
+    c.execute("UPDATE ga4_snapshots SET key_events=NULL, total_revenue=NULL, source=?", (ids[0],))
+    assert scoring.zero_conversion_pages(c, 1) == [], \
+        "전환을 모르는 출처의 페이지를 '전환 0' 기회로 세웠다"
+    c.close()
+
+
 def test_seam_201_home_is_opened_in_one_form_and_found_in_both():
     """201) 홈은 www·비www 가 한 홈이다 - 여는 쪽(collect_page.target_urls)은 home_of 가 고른 한 꼴만
     열고, 찾는 쪽(dashboard.gather 의 page_audits - 요청문·드로어가 주소 글자로 찾는 표)은 두 꼴을 그
