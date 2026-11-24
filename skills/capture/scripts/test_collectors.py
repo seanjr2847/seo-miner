@@ -1763,9 +1763,11 @@ def test_run_all_chain_order_and_paid_skips():
         for k in orig_env:
             os.environ.pop(k, None)
 
-        # 1. 유료 키 없음 — rank/ai/competitors 는 건너뜀, 나머지는 순서대로
+        # 1. 유료 키 없음 — rank/ai/competitors 는 건너뜀, 나머지는 순서대로.
+        #    backlinks 는 건너뛰지 않는다: 유료 키가 없으면 수집기가 무료 출처(Bing 웹마스터·
+        #    Common Crawl)로 물러선다(collect_backlinks._collect_free — test_seams 213).
         results, out = run()
-        assert calls == ["gsc", "ga4", "index", "keywords", "crawl", "gaps",
+        assert calls == ["gsc", "ga4", "index", "keywords", "crawl", "backlinks", "gaps",
                          "pages", "vitals", "report"], calls
         assert run_all.chain_rc(results) == 0, results
         assert [n for n, _ in results] == list(run_all.VALID_STAGE_NAMES), results
@@ -1824,7 +1826,7 @@ def test_run_all_chain_order_and_paid_skips():
 
         # 7. skip / only
         run(skip="index,ai")
-        assert calls == ["gsc", "ga4", "keywords", "crawl", "gaps",
+        assert calls == ["gsc", "ga4", "keywords", "crawl", "backlinks", "gaps",
                          "pages", "vitals", "report"], calls
         run(only="gsc,gaps")
         assert calls == ["gsc", "gaps"], calls

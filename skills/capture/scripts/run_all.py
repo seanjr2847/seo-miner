@@ -17,7 +17,7 @@ StageResult 를 그대로 호출자에게 넘긴다.
   crawl       : 사이트 전수 크롤. 한 장만 봐서는 모르는 것(중복·고아·사슬)의 유일한 출처.
   ai          : 유료 AI 인용 체크. 키 없으면 건너뜀.
   competitors : 유료 DataForSEO Labs 역키워드. 키 없으면 건너뜀.
-  backlinks   : 유료 백링크 프로필·링크 교집합. 키 없으면 건너뜀.
+  backlinks   : 유료 백링크 프로필·링크 교집합. 유료 키가 없으면 무료 출처(Bing 웹마스터·Common Crawl)로.
   local       : 유료 지역 업체(구글 비즈니스 프로필·지도 순위·격자·리뷰). 사이트 종류가 지역
                 비즈니스일 때만 돈다. 지도 칸이 선 검색어를 rank 가 먼저 알아야 한다.
   merchant    : 유료 쇼핑 가격 분포. 사이트 종류가 쇼핑몰·브랜드일 때만 돈다. 쇼핑 칸이 선
@@ -427,10 +427,11 @@ def check_paid_keys(stage_name: str) -> tuple[bool, str]:
                     else "기회를 페이지별 할 일로 묶고 수정안을 씁니다")
             return False, ("키가 없어 건너뜁니다. OPENROUTER_API_KEY 를 넣으면 "
                           f"{what}. 발급: https://openrouter.ai/keys")
-    elif stage_name in ("metrics", "backlinks"):
+    # backlinks 는 여기 없다 — 유료 키가 없으면 건너뛰는 대신 무료 출처(Bing 웹마스터·
+    # Common Crawl)로 물러선다. 그 갈림은 collect_backlinks.collect 가 한다(_collect_free).
+    elif stage_name == "metrics":
         if not serp_adapter.has_dataforseo():
-            what = ("검색량과 난이도를 조회합니다" if stage_name == "metrics"
-                    else "백링크 프로필과 링크 교집합을 수집합니다")
+            what = "검색량과 난이도를 조회합니다"
             return False, ("키가 없어 건너뜁니다. DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD "
                           f"를 넣으면 {what}. 발급: https://dataforseo.com")
     elif stage_name == "competitors":

@@ -3443,6 +3443,213 @@ def test_seam_91_backlinks_counts_rivals_like_competitors():
     assert "모자랍니다" not in got["box"], f"경쟁사가 셋인데 모자라다고 한다: {got['box']}"
 
 
+def _bl_payload_keys() -> set:
+    """백링크 축(dashboard._axis_backlinks)이 실제로 내는 키 — 빈 Brain 으로 한 번 돌려 읽는다."""
+    import dashboard
+    import db
+    conn = db.connect()
+    try:
+        conn.execute("INSERT OR IGNORE INTO projects(name, domain, locale, type)"
+                     " VALUES('seam-bl','seam-bl.example','en-US','saas')")
+        pid = db.get_project(conn, "seam-bl")["id"]
+        return set(dashboard._axis_backlinks(conn, pid))
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def test_seam_210_backlinks_view_reads_only_what_the_axis_sends():
+    """백링크 화면이 읽는 `d.bl_*` 는 전부 백링크 축이 싣고, 축이 싣는 `bl_*` 는 전부 누가 읽는다.
+
+    화면만 보면 `d.bl_velocity` 는 멀쩡한 읽기고, 축만 보면 `bl_velocty` 는 멀쩡한 키다. 어긋난
+    것은 둘 사이다 — 그러면 카드가 조용히 「데이터 부족」으로 선다(오류가 아니라서 아무도 모른다).
+    """
+    sent = _bl_payload_keys()
+    view = _view_script("backlinks.html")
+    read = set(re.findall(r"\bd\.(bl_\w+)", view))
+    assert len(read) >= 15, f"화면에서 d.bl_* 를 거의 못 읽었다 — 검사가 헛돈다: {sorted(read)}"
+    assert read <= sent, f"화면이 읽는데 축이 안 싣는 키: {sorted(read - sent)}"
+    brief_src = (SCRIPTS / "brief.py").read_text("utf-8")
+    used = read | set(re.findall(r'ctx\.get\("(bl_\w+)"\)', brief_src))
+    assert sent <= used, f"축이 싣는데 화면도 요청문도 안 읽는 키: {sorted(sent - used)}"
+
+
+def test_seam_211_link_check_states_one_table():
+    """무료 GET 확인의 답 넷(link_check.STATES)은 한 벌이다 — 적는 쪽(수집기의 메모)·닫는 쪽
+    (scoring 해소 규칙)·말하는 쪽(화면 배지, 요청문)이 같은 이름을 쓴다.
+
+    「확인 불가」가 어느 한쪽에서 빠지면 그쪽은 403 으로 막힌 페이지를 '링크 없음'으로 말한다 —
+    이미 링크한 곳에 링크를 달라는 연락이 나간다.
+    """
+    import collect_backlinks
+    import link_check
+    import scoring
+    states = set(link_check.STATES)
+    view = _view_script("backlinks.html")
+    m = re.search(r"const BLK_CHK = \{(.*?)\};", view, re.S)
+    assert m, "화면에 BLK_CHK 가 없다"
+    assert set(re.findall(r"(\w+): \[", m.group(1))) == states, "화면 배지 표가 STATES 와 어긋난다"
+    assert "확인 불가" in m.group(1), "화면이 '확인 불가'를 따로 말하지 않는다"
+    note = collect_backlinks._verify_note({s: 1 for s in states})
+    assert all(f"{s}=1" in note for s in states), f"수집 메모에 빠진 상태: {note}"
+    # 닫는 규칙은 '봤다'(linked·nofollow)만 근거로 쓴다 — 부재(no_link·unknown)로 닫지 않는다.
+    src = (SCRIPTS / "scoring.py").read_text("utf-8")
+    body = src[src.index("def _free_check_says"):src.index("def _resolve_prospect")]
+    named = set(re.findall(r"'(\w+)'", re.search(r"state IN \(([^)]*)\)", body).group(1)))
+    assert named == {"linked", "nofollow"}, f"해소 규칙이 부재를 근거로 쓴다: {named}"
+    assert named <= states
+    for kind in ("backlink_mention", "backlink_prospect"):
+        assert "직접 열었을 때" in scoring.RESOLVE_WHEN[kind], f"{kind}: 요청문의 끝나는 조건이 무료 확인을 말하지 않는다"
+    # 판정이 읽는 막힘 코드·JS 껍데기는 페이지 점검의 정본이다 — link_check 에 사본을 두지 않는다.
+    lc = (SCRIPTS / "link_check.py").read_text("utf-8").split("def _selfcheck")[0]
+    assert "collect_page.BLOCK_STATUS" in lc and not re.search(r"\b(403|429)\s*[,)}]", lc), \
+        "link_check 가 막힘 코드를 다시 적었다(정본은 collect_page.BLOCK_STATUS)"
+
+
+def test_seam_212_backlink_sources_and_anchor_types_one_table():
+    """줄의 출처(source 칸)와 앵커 유형은 link_profile 한 벌이다.
+
+    수집기가 'bing' 으로 적는데 SOURCES 에 그 이름이 없으면 화면은 그 숫자를 전부를 주는 출처의
+    것으로 읽는다 — 읽은 데까지의 합이 총 백링크로 나간다.
+    """
+    import cc_graph
+    import collect_backlinks
+    import link_profile
+    assert collect_backlinks.SOURCE_DFS in link_profile.SOURCES
+    bing_src = (SCRIPTS / "collect_bing.py").read_text("utf-8")
+    written = set(re.findall(r"'(\w+)'\)\"?\s*$|,'(\w+)'\) ON CONFLICT|source\) VALUES \([?,]*'(\w+)'\)", bing_src, re.M))
+    written = {x for t in written for x in t if x} | set(re.findall(r"VALUES \([?,01]*'(\w+)'\)", bing_src))
+    assert written == {"bing"}, f"collect_bing 이 적는 source: {written}"
+    assert written <= set(link_profile.SOURCES), f"SOURCES 에 없는 출처: {written - set(link_profile.SOURCES)}"
+    assert link_profile.SOURCES["bing"]["full"] is False and link_profile.SOURCES["bing"].get("says")
+    assert link_profile.SOURCES[collect_backlinks.SOURCE_DFS]["full"] is True
+    assert cc_graph.SOURCE not in link_profile.SOURCES, "그래프 순위는 백링크 줄의 출처가 아니다(표가 따로다)"
+    T = set(link_profile.ANCHOR_TYPES)
+    assert T == set(link_profile.ANCHOR_LABEL) == set(link_profile.ANCHOR_HINT), "앵커 유형 표 셋이 어긋난다"
+    made = {link_profile.classify_anchor(a, brands=["Acme"], domain="acme.com", keywords=["blue widget"])
+            for a in (None, "acme.com", "Acme", "blue widget", "click here", "some sentence about widgets")}
+    assert made == T, f"분류가 내지 못하는 유형: {sorted(T - made)}"
+    # 화면은 문턱·유형 이름을 다시 적지 않는다 — 전부 페이로드에서 온다.
+    view = _view_script("backlinks.html")
+    assert "BLK_ANCHOR_MAX" not in view, "화면에 옛 쏠림 상수가 남았다(정본은 link_profile.ANCHOR_EXACT_WARN)"
+    copy = re.search(r"\b(" + "|".join(link_profile.ANCHOR_TYPES) + r")\s*:\s*[\"'`\[]", view)
+    assert not copy, f"화면이 앵커 유형 표를 다시 적었다: {copy.group(0) if copy else ''}"
+    assert link_profile.INSUFFICIENT not in re.sub(r"/\*.*?\*/|^\s*//.*$", "", view, flags=re.S | re.M), "화면이 '데이터 부족'을 다시 적었다(페이로드 bl_insufficient)"
+
+
+def test_seam_213_backlinks_runs_without_paid_key_and_bing_key_is_registered():
+    """유료 키가 없을 때의 갈림은 한 곳이다 — run_all 은 backlinks 를 키로 막지 않고, 수집기가
+    무료 출처로 물러선다. Bing 키는 doctor 명부에 있고 이름은 collect_bing.KEY_ENV 한 벌이다.
+
+    run_all 이 다시 막으면 무료 경로는 코드만 있고 영영 안 돈다(둘 다 멀쩡해 보인다).
+    """
+    import os
+    import collect_bing
+    import doctor
+    import run_all
+    saved = {k: os.environ.pop(k, None) for k in ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")}
+    try:
+        ok, why = run_all.check_paid_keys("backlinks")
+        assert ok, f"키가 없으면 backlinks 를 건너뛴다 — 무료 경로가 안 돈다: {why}"
+        assert not run_all.check_paid_keys("metrics")[0], "metrics 는 여전히 유료 키가 있어야 한다"
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+    src = (SCRIPTS / "collect_backlinks.py").read_text("utf-8")
+    assert "_collect_free(" in src and "FREE_NOTE" in src
+    cap = next((c for c in doctor.CAPABILITIES if c["id"] == "bing"), None)
+    assert cap and cap["cost"] == "무료" and not cap["blocking"], cap
+    dsrc = (ROOT / "skills" / "setup" / "scripts" / "doctor.py").read_text("utf-8")
+    assert "collect_bing.KEY_ENV" in dsrc and f'"{collect_bing.KEY_ENV}"' not in dsrc.replace(
+        "(BING_WEBMASTER_API_KEY)", ""), "doctor 가 Bing 키 이름을 다시 적었다"
+    # 옛 SOAP·POX 주소(2026-08-31 종료)를 쓰지 않는다 — JSON 주소 하나다.
+    assert collect_bing.API == "https://ssl.bing.com/webmaster/api.svc/json"
+    bsrc = (SCRIPTS / "collect_bing.py").read_text("utf-8")
+    assert "api.svc/pox" not in bsrc and "api.svc/soap" not in bsrc.lower()
+
+
+def test_seam_214_backlinks_view_says_insufficient_instead_of_a_number():
+    """근거가 모자란 칸은 숫자가 아니라 「데이터 부족」으로 선다(보고서 검사기 규칙).
+
+    링크 5개짜리 사이트의 앵커 비율, 추적 검색어가 없는 사이트의 '정확 일치 0%', 일부만 읽은
+    Bing 목록의 합계는 숫자처럼 보이지만 아무 말도 아니다. 페이로드는 그 칸을 None 으로 주고
+    (link_profile), 화면은 그 None 을 0 이나 '-' 가 아니라 그 말로 찍는다.
+    """
+    import link_profile
+    thin = link_profile.anchor_mix([{"anchor": "blue widget", "backlinks": 5}], keywords=["blue widget"])
+    d = {"bl_insufficient": link_profile.INSUFFICIENT, "bl_date": "2026-11-24",
+         "bl_anchors": [{"anchor": "blue widget", "backlinks": 5, "referring_domains": 2}],
+         "bl_anchor_mix": thin,
+         "bl_dist": link_profile.distribution({"backlinks": 5}, [{"domain": "a.com", "backlinks": 5}]),
+         "bl_spam": None, "bl_reciprocal": {"crawled": False, "rows": []},
+         "bl_velocity": link_profile.velocity([], "2026-11-24"),
+         "bl_pages": {"magnets": [{"url": "https://x.com/a", "backlinks": 3, "referring_domains": None}],
+                      "zero": None, "zero_n": None, "zero_why": "크롤 전이라 우리 페이지 목록이 없습니다"},
+         "bl_source": {"id": "bing", **link_profile.SOURCES["bing"]},
+         "bl_summary": {"backlinks": None, "referring_domains": None, "source": "bing"},
+         "bl_trend": [], "bl_graph": None}
+    js = (_view_stubs() + _view_script("competitors.html") + _view_script("backlinks.html")
+          + f"\nconst d = {json.dumps(d, ensure_ascii=False)};"
+            "\nconsole.log(JSON.stringify({anchors: BLK_anchors(d), shape: BLK_shape(d),"
+            " pages: BLK_pages(d), hero: BLK_hero(d), health: BLK_health(d)}));")
+    got = _node_views(js)
+    if got is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    NA = link_profile.INSUFFICIENT
+    assert NA in got["anchors"] and 'class="num">100%' not in got["anchors"], \
+        f"링크 5개의 앵커 비율을 숫자로 찍었다: {got['anchors'][-600:]}"
+    # 비율 **칸 자체**가 그 말이어야 한다 — 곁줄에 '데이터 부족'이 있어도 칸이 0% 면 숫자를 찍은 것이다.
+    assert '<td class="num"><span class="blk-na"' in got["anchors"] and not re.search(
+        r'class="num">\d+%', got["anchors"]), f"앵커 유형의 비율 칸에 숫자가 섰다: {got['anchors'][-500:]}"
+    assert "쏠림</span>" not in got["anchors"].split("<table")[0].replace("쏠림 판단", ""), \
+        "근거가 모자란데 쏠림 배지를 달았다"
+    assert got["shape"].count(NA) >= 4, f"분포·집중도·spam·상호 링크가 '데이터 부족'으로 서지 않는다: {got['shape'][:600]}"
+    assert 'class="v">100%' not in got["shape"], "총 백링크 5개의 집중도를 100% 로 찍었다"
+    assert NA in got["pages"], "링크 없는 페이지를 모르는데 그렇게 말하지 않는다"
+    # Bing 폴백: 합계를 끝까지 못 읽었으면 0곳·0개가 아니다.
+    zero = re.compile(r">0<small>(곳|개)")          # 값 자리의 0 (풍선 글의 "100개"는 아니다)
+    assert got["hero"].count(NA) == 2 and not zero.search(got["hero"]), \
+        (got["hero"].count(NA), got["hero"][-900:])
+    assert NA in got["health"] and not zero.search(got["health"]), f"모르는 끊긴 링크를 0개로 찍었다: {got['health'][:500]}"
+    assert link_profile.SOURCES["bing"]["says"] in got["hero"], "출처가 무엇을 안 주는지 말하지 않는다"
+
+
+def test_seam_215_spam_and_graph_wording_rules():
+    """백링크 문구 규칙 — 화면·요청문·모듈 어디서도:
+      · 링크 거부(disavow)는 **수동 조치**와 같은 문장에서만 말한다 (구글 도움말: 수동 조치가
+        있거나 곧 있을 때만의 도구이고 잘못 쓰면 해롭다)
+      · Common Crawl 에서 못 찾은 것을 '권위가 낮다'로 읽지 않는다 (표본이다)
+      · '독성'·합성 건강 점수(0~100 Backlink Health)를 만들지 않는다
+    """
+    import cc_graph
+    import link_profile
+    view = (ROOT / "skills" / "capture" / "templates" / "views" / "backlinks.html").read_text("utf-8")
+    # 주석이 아니라 **사용자에게 가는 글자**만 본다 — JS·CSS 주석을 걷어 낸다.
+    shown = re.sub(r"/\*.*?\*/|^\s*//.*$|<!--.*?-->", "", view, flags=re.S | re.M)
+    said = [shown, link_profile.SPAM_SAYS, cc_graph.NOT_FOUND_SAYS, cc_graph.FOUND_SAYS,
+            *(v.get("says", "") for v in link_profile.SOURCES.values()),
+            *link_profile.ANCHOR_HINT.values()]
+    n = 0
+    for text in said:
+        for m in re.finditer(r"disavow|링크 거부", text):
+            n += 1
+            sent = text[max(0, m.start() - 200):m.end() + 200]
+            assert "수동 조치" in sent, f"수동 조치 없이 링크 거부를 말한다: …{sent[120:330]}…"
+        assert "독성" not in text and "toxic" not in text.lower(), "'독성' 판정을 말한다"
+    assert n >= 2, "링크 거부를 말하는 자리를 못 찾았다 — 검사가 헛돈다"
+    files = {"backlinks.html": view, "link_profile.py": (SCRIPTS / "link_profile.py").read_text("utf-8")}
+    assert "수동 조치" in link_profile.SPAM_SAYS and "무시" in link_profile.SPAM_SAYS
+    miss = cc_graph.says({"found": 0, "scanned": 3000000})
+    assert "표본" in miss and not re.search(r"낮|약합|약한|권위가 없", miss), miss
+    # 화면은 그래프 문장을 다시 짓지 않는다 — 파이썬이 준 says 를 그대로 찍는다.
+    assert "bl_graph.says" in files["backlinks.html"] and "조화 중심성" not in files["backlinks.html"]
+    # 합성 점수가 없다: link_profile 이 내는 값에 'score' 는 수집원이 준 spam score 뿐이다.
+    prof = files["link_profile.py"]
+    assert not re.search(r"health_score|backlink_score|\bgrade\b", prof), "link_profile 이 합성 점수를 만든다"
+
+
 def test_seam_92_ai_rows_badge_every_gap_and_show_cited_answer_first():
     """AI 인용 질문 목록 — 인용 공백 배지는 서버 판정(ai_gap_rows) 전부에 달리고,
     인용된 질문은 우리가 인용된 답변 발췌가 먼저, 발췌의 마크다운 찌꺼기는 걷힌다.

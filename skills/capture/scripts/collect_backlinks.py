@@ -15,6 +15,17 @@
   6. /content_analysis/search/live      → brand_mentions     (우리 이름을 말했는데 링크는 없는 곳)
      별칭마다 한 번 + 언급한 도메인이 이미 링크했는지 referring_domains 로 한 번 더.
 
+그 밖에 같은 단계가 하는 일(각 모듈이 정본이다 — 여기는 부르기만 한다):
+  · /backlinks/domain_pages_summary/live → backlink_pages (링크가 몰린 페이지)
+  · /backlinks/timeseries_summary/live · timeseries_new_lost_summary/live → backlink_timeseries
+  · 요약·참조 도메인·개별 링크의 spam score, 요약의 TLD·국가 분포 (받아 놓고 버리던 값)
+  · 무료 GET 확인(link_check) → backlink_checks: 언급한 페이지·경쟁사만 받는 도메인의 첫 화면을
+    직접 열어 링크가 걸렸는지 본다. 신선도 안이라 다시 사지 않는 회차에도 돈다(돈이 안 든다).
+  · Bing 웹마스터(collect_bing, 키가 있을 때) → bing_* : 색인·크롤·검색어
+  · DataForSEO 키가 없으면 무료 출처로 물러선다(_collect_free): Bing 인바운드 링크를 백링크 표에
+    source='bing' 으로, Common Crawl 그래프 순위(cc_graph)를 backlink_graph_rank 에.
+읽는 쪽(유형·분포·속도 같은 판정)은 link_profile 이다.
+
 설계 메모:
   · 인증·타임아웃·task 오류 판정은 serp_adapter.post_dataforseo 한 곳이다.
     이 파일은 requests 를 import 하지 않는다 (server/backlinks.py 가 자기 _post 를
@@ -36,6 +47,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import unicodedata
@@ -53,6 +65,12 @@ REQUEST_COST = 0.024        # 요청 1건 (dry-run 고지용 추정)
 ROW_COST = 0.000036         # 행 1개
 INTERSECT_MIN_RIVALS = 2    # 교집합은 둘 이상이어야 '교집합'이다
 INTERSECT_MAX_RIVALS = 5    # 그 이상은 교집합이 좁아지기만 하고 요청만 무거워진다
+# 줄이 어디서 왔나(backlink_summary·referring_domains·backlinks 의 source 칸). 옛 행의 NULL 은
+# dataforseo 다. 화면은 이 값으로 "어느 숫자를 믿어도 되나"를 가른다(link_profile.SOURCES).
+SOURCE_DFS = "dataforseo"
+TLD_LIST_LIMIT = 50         # 요약의 referring_links_* 목록 길이(internal_list_limit, 기본 10·최대 1000)
+PAGES_LIMIT = 100           # 우리 페이지별 백링크(domain_pages_summary) 줄 수
+TIMESERIES_MONTHS = 12      # 달별 시계열을 몇 달 치 받나
 
 # 링크 없는 언급 — 우리 이름을 말했는데 우리에게 링크하지 않은 남의 페이지.
 # Content Analysis 는 같은 DataForSEO 키로 사고 값도 같다(요청 $0.024 + 행 $0.000036).
@@ -142,7 +160,26 @@ def _put_summary(conn, pid: int, today: str, res) -> int:
          _int(_g(s, "referring_domains")), _int(_g(s, "referring_main_domains")),
          _int(_g(s, "broken_backlinks")),
          _int(_g(attrs, "dofollow")), _int(_g(attrs, "nofollow"))))
+    # 받아 놓고 버리던 값 — spam score(0~100)·TLD·국가 분포. 필드 이름은 문서 그대로다:
+    # https://docs.dataforseo.com/v3/backlinks/summary/live/ (backlinks_spam_score,
+    # info.target_spam_score, referring_links_tld, referring_links_countries).
+    # 안 온 값은 NULL 이다(0 점·빈 분포가 아니다).
+    info = _g(s, "info", default={}) or {}
+    conn.execute(
+        "UPDATE backlink_summary SET spam_score=?, target_spam_score=?, tld_json=?,"
+        " country_json=?, source=? WHERE project_id=? AND checked_date=?",
+        (_int(_g(s, "backlinks_spam_score")), _int(_g(info, "target_spam_score")),
+         _counts_json(_g(s, "referring_links_tld")), _counts_json(_g(s, "referring_links_countries")),
+         SOURCE_DFS, pid, today))
     return 1 if s else 0
+
+
+def _counts_json(d) -> str | None:
+    """{"com": 26012, "": 27445} 같은 이름→개수 객체를 JSON 문자열로. 객체가 아니면 None."""
+    if not isinstance(d, dict):
+        return None
+    out = {str(k): n for k, n in ((k, _int(v)) for k, v in d.items()) if n is not None}
+    return json.dumps(out, ensure_ascii=False, sort_keys=True) if out else None
 
 
 def _put_refdomains(conn, pid: int, today: str, res) -> int:
@@ -153,13 +190,15 @@ def _put_refdomains(conn, pid: int, today: str, res) -> int:
             continue
         rows.append((pid, today, str(dom).lower(), _int(_g(it, "rank", "domain_rank")),
                      _int(_g(it, "backlinks")), _int(_g(it, "dofollow")),
-                     _g(it, "first_seen"), _g(it, "lost_date")))
+                     _g(it, "first_seen"), _g(it, "lost_date"),
+                     _int(_g(it, "backlinks_spam_score")), SOURCE_DFS))
     conn.executemany(
         "INSERT INTO referring_domains(project_id, checked_date, domain, rank,"
-        " backlinks, dofollow, first_seen, lost_date) VALUES (?,?,?,?,?,?,?,?)"
+        " backlinks, dofollow, first_seen, lost_date, spam_score, source) VALUES (?,?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(project_id, checked_date, domain) DO UPDATE SET"
         " rank=excluded.rank, backlinks=excluded.backlinks, dofollow=excluded.dofollow,"
-        " first_seen=excluded.first_seen, lost_date=excluded.lost_date", rows)
+        " first_seen=excluded.first_seen, lost_date=excluded.lost_date,"
+        " spam_score=excluded.spam_score, source=excluded.source", rows)
     return len(rows)
 
 
@@ -199,15 +238,19 @@ def _put_backlinks(conn, pid: int, today: str, res) -> int:
                      _g(it, "anchor", "text"),
                      _int(_g(it, "rank", "page_from_rank", "domain_from_rank")),
                      _int(_g(it, "dofollow")), int(bool(broken)), status or 0,
-                     _g(it, "first_seen"), _g(it, "last_seen", "last_visited")))
+                     _g(it, "first_seen"), _g(it, "last_seen", "last_visited"),
+                     _int(_g(it, "backlink_spam_score")), _g(it, "domain_from_country"),
+                     SOURCE_DFS))
     conn.executemany(
         "INSERT INTO backlinks(project_id, checked_date, url_from, url_to, domain_from,"
-        " anchor, rank, dofollow, is_broken, to_status, first_seen, last_seen)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+        " anchor, rank, dofollow, is_broken, to_status, first_seen, last_seen,"
+        " spam_score, country, source)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(project_id, checked_date, url_from, url_to) DO UPDATE SET"
         " domain_from=excluded.domain_from, anchor=excluded.anchor, rank=excluded.rank,"
         " dofollow=excluded.dofollow, is_broken=excluded.is_broken, to_status=excluded.to_status,"
-        " first_seen=excluded.first_seen, last_seen=excluded.last_seen", rows)
+        " first_seen=excluded.first_seen, last_seen=excluded.last_seen,"
+        " spam_score=excluded.spam_score, country=excluded.country, source=excluded.source", rows)
     return len(rows)
 
 
@@ -216,9 +259,14 @@ def _put_anchors(conn, pid: int, today: str, res) -> int:
     for it in _items(res):
         anchor = _g(it, "anchor", "text")
         if anchor is None or str(anchor).strip() == "":
-            continue                     # 빈 앵커(이미지 링크)는 앵커 분포에 뜻이 없다
+            # 빈 앵커(이미지 링크)도 한 줄로 적는다(anchor='') — 빼면 유형 비율의 분모에서 이미지
+            # 링크가 사라져 나머지 유형이 부풀려진다(link_profile.anchor_mix 의 '빈 앵커').
+            # 링크 수가 없는 빈 줄은 정보가 없으니 건너뛴다.
+            if _int(_g(it, "backlinks")) is None:
+                continue
+            anchor = ""
         types = _g(it, "referring_links_types", default={}) or {}
-        rows.append((pid, today, str(anchor), _int(_g(it, "backlinks")),
+        rows.append((pid, today, str(anchor).strip(), _int(_g(it, "backlinks")),
                      _int(_g(it, "referring_domains", "referring_main_domains")),
                      _int(_g(it, "dofollow")) if _g(it, "dofollow") is not None
                      else _int(_g(types, "anchor"))))
@@ -379,6 +427,182 @@ def _put_intersect(conn, pid: int, today: str, res, pos: dict[str, str]) -> int:
     return len(rows)
 
 
+def _put_pages(conn, pid: int, today: str, res) -> int:
+    """우리 페이지별 백링크 — https://docs.dataforseo.com/v3/backlinks/domain_pages_summary/live/"""
+    rows = [(pid, today, str(it["url"]), _int(_g(it, "backlinks")), _int(_g(it, "referring_domains")),
+             _int(_g(it, "rank")), _int(_g(it, "backlinks_spam_score")))
+            for it in _items(res) if it.get("url")]
+    conn.executemany(
+        "INSERT INTO backlink_pages(project_id, checked_date, url, backlinks, referring_domains,"
+        " rank, spam_score) VALUES (?,?,?,?,?,?,?)"
+        " ON CONFLICT(project_id, checked_date, url) DO UPDATE SET backlinks=excluded.backlinks,"
+        " referring_domains=excluded.referring_domains, rank=excluded.rank,"
+        " spam_score=excluded.spam_score", rows)
+    return len(rows)
+
+
+def _month(v) -> str | None:
+    """"2022-01-31 00:00:00 +00:00" → '2022-01-31' (그 달의 끝 날)."""
+    d = str(v or "")[:10]
+    return d if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) else None
+
+
+def _put_series(conn, pid: int, today: str, res) -> int:
+    """달별 총량 — https://docs.dataforseo.com/v3/backlinks/timeseries_summary/live/"""
+    rows = [(pid, m, _int(_g(it, "backlinks")), _int(_g(it, "referring_domains")))
+            for it in _items(res) for m in [_month(_g(it, "date"))] if m]
+    conn.executemany(
+        "INSERT INTO backlink_timeseries(project_id, month, backlinks, referring_domains)"
+        " VALUES (?,?,?,?) ON CONFLICT(project_id, month) DO UPDATE SET"
+        " backlinks=excluded.backlinks, referring_domains=excluded.referring_domains", rows)
+    return len(rows)
+
+
+def _put_newlost(conn, pid: int, today: str, res) -> int:
+    """달별 새로 생긴·사라진 링크 —
+    https://docs.dataforseo.com/v3/backlinks/timeseries_new_lost_summary/live/"""
+    rows = [(pid, m, _int(_g(it, "new_backlinks")), _int(_g(it, "lost_backlinks")),
+             _int(_g(it, "new_referring_domains")), _int(_g(it, "lost_referring_domains")))
+            for it in _items(res) for m in [_month(_g(it, "date"))] if m]
+    conn.executemany(
+        "INSERT INTO backlink_timeseries(project_id, month, new_backlinks, lost_backlinks,"
+        " new_referring_domains, lost_referring_domains) VALUES (?,?,?,?,?,?)"
+        " ON CONFLICT(project_id, month) DO UPDATE SET new_backlinks=excluded.new_backlinks,"
+        " lost_backlinks=excluded.lost_backlinks,"
+        " new_referring_domains=excluded.new_referring_domains,"
+        " lost_referring_domains=excluded.lost_referring_domains", rows)
+    return len(rows)
+
+
+def _series_from(today: str) -> str:
+    """시계열을 받을 첫 날 — TIMESERIES_MONTHS 달 전의 1일."""
+    y, m = int(today[:4]), int(today[5:7])
+    k = y * 12 + (m - 1) - TIMESERIES_MONTHS
+    return f"{k // 12:04d}-{k % 12 + 1:02d}-01"
+
+
+# ── 무료 GET 확인 — 언급한 페이지·경쟁사만 받는 도메인을 직접 열어 본다 ──────────
+# 해소 판정(scoring._resolve_mention·_resolve_prospect)이 다음 유료 수집을 기다리지 않게.
+# 판정의 정본은 link_check 다. 여기는 무엇을 열지 고르고 결과를 backlink_checks 에 적을 뿐이다.
+VERIFY_MENTIONS = 30
+VERIFY_PROSPECTS = 15
+VERIFY_WORKERS = 4
+PROSPECT_HOME_ONLY = "그 도메인의 첫 화면에는 우리 링크가 없습니다(다른 페이지는 열어 보지 않았습니다)"
+
+
+def verify_jobs(conn, pid: int) -> list[tuple[str, str, str]]:
+    """열어 볼 (종류, 도메인, 주소). 언급은 링크 없음(0)·확인 못 함(NULL)인 페이지, 경쟁사만
+    받는 곳은 주소가 없어 그 도메인의 첫 화면이다(거기 없다고 링크가 없는 것은 아니다)."""
+    jobs = [("mention", r["domain"], r["url"]) for r in conn.execute(
+        "SELECT domain, url FROM brand_mentions WHERE project_id=? AND checked_date=("
+        "SELECT MAX(checked_date) FROM brand_mentions WHERE project_id=?)"
+        " AND (linked=0 OR linked IS NULL) AND domain IS NOT NULL"
+        " ORDER BY rank IS NULL, rank DESC, url LIMIT ?", (pid, pid, VERIFY_MENTIONS))]
+    jobs += [("prospect", r["domain"], f"https://{r['domain']}/") for r in conn.execute(
+        "SELECT domain FROM link_intersect WHERE project_id=? AND checked_date=("
+        "SELECT MAX(checked_date) FROM link_intersect WHERE project_id=?) AND we_have=0"
+        " ORDER BY hits DESC, rank IS NULL, rank DESC, domain LIMIT ?",
+        (pid, pid, VERIFY_PROSPECTS))]
+    return jobs
+
+
+def verify_links(conn, pid: int, target: str, *, check=None) -> dict[str, int]:
+    """verify_jobs 를 무료 GET 으로 열어 backlink_checks 에 적는다 → {상태: 건수}.
+    돈이 안 든다. 한 장도 예외를 올리지 않는다(link_check.check 가 전부 unknown 으로 접는다)."""
+    import link_check
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import datetime, timezone
+    jobs = verify_jobs(conn, pid)
+    if not jobs or not target:
+        return {}
+    check = check or link_check.check
+    with ThreadPoolExecutor(max_workers=VERIFY_WORKERS, thread_name_prefix="seo-miner-linkcheck") as ex:
+        got = list(ex.map(lambda j: check(j[2], target), jobs))
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    out: dict[str, int] = {}
+    for (kind, dom, url), g in zip(jobs, got):
+        why = PROSPECT_HOME_ONLY if kind == "prospect" and g["state"] == "no_link" else g.get("why")
+        conn.execute(
+            "INSERT INTO backlink_checks(project_id, kind, domain, url, checked_at, state, status,"
+            " rel_nofollow, meta_nofollow, why) VALUES (?,?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(project_id, kind, url) DO UPDATE SET domain=excluded.domain,"
+            " checked_at=excluded.checked_at, state=excluded.state, status=excluded.status,"
+            " rel_nofollow=excluded.rel_nofollow, meta_nofollow=excluded.meta_nofollow,"
+            " why=excluded.why",
+            (pid, kind, dom, url, now, g["state"], g.get("status"), g.get("rel_nofollow"),
+             g.get("meta_nofollow"), why))
+        out[g["state"]] = out.get(g["state"], 0) + 1
+    conn.commit()
+    return out
+
+
+def _verify_note(v: dict[str, int]) -> str:
+    """runs.notes 한 토막 — 확인 불가를 '링크 없음'에 섞지 않는다."""
+    if not v:
+        return ""
+    return ("직접 열어 확인 " + " ".join(f"{k}={v[k]}" for k in ("linked", "nofollow", "no_link", "unknown")
+                                         if v.get(k)))
+
+
+# ── 무료 경로 — DataForSEO 키가 없을 때만 ──────────────────────────────────────
+FREE_NOTE = ("DataForSEO 키가 없어 무료 출처만 읽었습니다. 도메인 지수·순위 반영 여부·링크 교집합·"
+             "링크 없는 언급은 유료 수집에서만 채워집니다")
+
+
+def _free_fresh(conn, pid: int, max_age: int) -> bool:
+    return bool(max_age > 0 and conn.execute(
+        "SELECT 1 FROM backlink_graph_rank WHERE project_id=? AND checked_date > date('now', ?)"
+        " UNION ALL SELECT 1 FROM backlink_summary WHERE project_id=? AND checked_date > date('now', ?)"
+        " LIMIT 1", (pid, f"-{max_age} days", pid, f"-{max_age} days")).fetchone())
+
+
+def _collect_free(st, ap, limit, max_age, *, check, bing_call, graph) -> collector.StageResult:
+    """DataForSEO 없이 읽을 수 있는 것: Bing 웹마스터(키가 있으면 — 인바운드 링크를 백링크 표에
+    source='bing' 으로)와 Common Crawl 그래프 순위(키 없음). 예전에는 단계가 통째로 빠졌다."""
+    import cc_graph
+    import collect_bing
+    conn, p = st.conn, st.project
+    s = st.settings(ap, argparse.Namespace(limit=limit, max_age=max_age))
+    max_age = int(s["backlink_max_age_days"])
+    pid, today = p["id"], st.today
+    target = (p["domain"] or "").strip().lower()
+    has_bing = collect_bing.has_key() or bing_call is not None
+    plan = (["Bing 웹마스터(색인·크롤·검색어·인바운드 링크)"] if has_bing else []) + ["Common Crawl 그래프 순위"]
+    print(f"[backlinks] project={p['name']} target={target} 무료 출처: {' · '.join(plan)} est_cost=$0")
+    if st.dry_run:
+        return st.noop(cost=0.0)
+    if _free_fresh(conn, pid, max_age):
+        v = verify_links(conn, pid, target, check=check)
+        reason = (f"최근 {max_age}일 안에 이미 읽었습니다: 백링크는 하루 단위로 움직이지 않습니다. "
+                  f"다시 읽으려면 `--max-age 0`." + (f" {_verify_note(v)}" if v else ""))
+        print(f"[backlinks] {reason}")
+        return st.noop(reason=reason)
+    rows: dict[str, int] = {}
+    notes = [FREE_NOTE]
+    with st.record("backlinks") as r:
+        b_rows, b_notes, calls = collect_bing.collect_into(conn, pid, target, today, links=True,
+                                                           call_fn=bing_call)
+        rows.update(b_rows)
+        notes += b_notes
+        try:
+            cc_graph.put(conn, pid, today, (graph or cc_graph.lookup)(target))
+            rows["graph"] = 1
+        except Exception as e:  # noqa: BLE001 — 무료 출처 하나가 죽어도 단계는 간다
+            notes.append(f"Common Crawl 그래프를 읽지 못했습니다({type(e).__name__}: {e})"[:200])
+        v = verify_links(conn, pid, target, check=check)
+        if v:
+            notes.append(_verify_note(v))
+        r.api_calls = calls + 1
+        r.cost = 0.0
+        r.notes = (" ".join(f"{k}={n}" for k, n in sorted(rows.items())) + f" {st.err_note}"
+                   + " | " + " | ".join(notes))
+    total = sum(rows.values())
+    print(f"\ncollected {total} rows ({r.notes}), actual_cost=$0\nrun_id={r.id}")
+    if not total:
+        return st.skip("무료 출처에서 읽은 것이 없습니다. " + " | ".join(notes[1:]))
+    return st.done(rows=total, cost=0.0)
+
+
 # ── 단계 ─────────────────────────────────────────────────────────────────────
 
 def collect(project: str, *,
@@ -387,6 +611,9 @@ def collect(project: str, *,
             max_age: int | None = None,
             conn=None,
             post=None,
+            check=None,
+            bing_call=None,
+            graph=None,
             **opts) -> collector.StageResult:
     """백링크 여섯 축을 Brain 에 적재한다.
 
@@ -398,6 +625,9 @@ def collect(project: str, *,
         max_age: 이 일수 안에 이미 샀으면 건너뛴다. 0이면 항상 산다.
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
         post: (path, body) -> (result, cost) — 주면 DataForSEO 대신 이것을 부른다
+        check: (url, own) -> link_check 판정 — 주면 무료 GET 확인이 이것을 부른다
+        bing_call: (method, params) -> d — 주면 Bing 웹마스터 대신 이것을 부른다
+        graph: (domain) -> cc_graph.lookup 꼴 — 주면 Common Crawl 대신 이것을 부른다
 
     Returns:
         StageResult. 유료 키 부재만 ok=False(skip). 신선도·dry-run 은 ok=True, skipped=True.
@@ -407,9 +637,10 @@ def collect(project: str, *,
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
         if not serp_adapter.has_dataforseo():
-            return st.skip("백링크는 DataForSEO 유료 키가 필요합니다. "
-                           "DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 를 설정하세요. "
-                           "발급: https://dataforseo.com")
+            # 유료 키가 없으면 무료 출처로 물러선다(Bing 웹마스터·Common Crawl). 예전에는
+            # 여기서 단계가 통째로 빠졌다.
+            return _collect_free(st, ap, limit, max_age, check=check, bing_call=bing_call,
+                                 graph=graph)
 
         s = st.settings(ap, argparse.Namespace(limit=limit, max_age=max_age))
         limit = int(s["limits.backlink_limit"])
@@ -421,8 +652,12 @@ def collect(project: str, *,
                 "SELECT 1 FROM backlink_summary WHERE project_id=? AND"
                 " checked_date > date('now', ?) LIMIT 1",
                 (pid, f"-{max_age} days")).fetchone() and not _legacy_broken(conn, pid):
+            # 다시 사지는 않지만 **무료 확인은 한다** — 링크를 부탁한 곳이 걸어 줬는지는
+            # 다음 유료 수집(30일)을 기다릴 일이 아니다. dry-run 은 아무것도 안 연다.
+            v = {} if st.dry_run else verify_links(conn, pid, target, check=check)
             reason = (f"최근 {max_age}일 안에 이미 수집했습니다: 백링크는 하루 단위로 "
-                      f"움직이지 않습니다. 다시 사려면 `--max-age 0`.")
+                      f"움직이지 않습니다. 다시 사려면 `--max-age 0`."
+                      + (f" {_verify_note(v)}" if v else ""))
             print(f"[backlinks] {reason}")
             return st.noop(reason=reason)
 
@@ -445,7 +680,7 @@ def collect(project: str, *,
         # 적재는 이 스레드가 이 순서대로 한다(fanout) — 순서가 뜻이 있다: 교집합의
         # we_have 는 먼저 적힌 referring_domains 를 보고 정한다.
         summary = ("summary", "/backlinks/summary/live",
-                   [{"target": target, "internal_list_limit": 1}], _put_summary)
+                   [{"target": target, "internal_list_limit": TLD_LIST_LIMIT}], _put_summary)
         refdomains = ("referring_domains", "/backlinks/referring_domains/live",
                       [{"target": target, "limit": limit, "order_by": ["rank,desc"]}],
                       _put_refdomains)
@@ -459,9 +694,18 @@ def collect(project: str, *,
                      [{"targets": pos, "limit": limit, "exclude_targets": [target]}],
                      lambda conn, pid, today, res: _put_intersect(conn, pid, today, res, pos))
 
+        # 우리 페이지별 백링크(어디에 몰렸나)와 달별 시계열(늘고 있나). 요청당 값은 같다.
+        pages = ("pages", "/backlinks/domain_pages_summary/live",
+                 [{"target": target, "limit": PAGES_LIMIT, "order_by": ["backlinks,desc"]}],
+                 _put_pages)
+        series_body = [{"target": target, "date_from": _series_from(today), "group_range": "month"}]
+        series = ("timeseries", "/backlinks/timeseries_summary/live", series_body, _put_series)
+        newlost = ("timeseries", "/backlinks/timeseries_new_lost_summary/live", series_body,
+                   _put_newlost)
+
         tasks = [summary]
         if limit > 0:
-            tasks += [refdomains, links, anchors]
+            tasks += [refdomains, links, anchors, pages, series, newlost]
         else:
             notes.append("limit=0: 요약만 삽니다 (참조 도메인·개별 링크·앵커 생략)")
         # 교집합은 경쟁사가 둘 이상일 때만 뜻이 있다. 없다고 단계를 죽이지는 않는다.
@@ -493,6 +737,7 @@ def collect(project: str, *,
         n_ix = sum(1 for t in tasks if t[0] == "intersect")
         est = (len(tasks) * REQUEST_COST
                + limit * (3 + n_ix) * ROW_COST + len(aliases) * MENTION_LIMIT * ROW_COST
+               + (PAGES_LIMIT + 2 * TIMESERIES_MONTHS) * ROW_COST * (limit > 0)
                + (REQUEST_COST if aliases else 0))
         print(f"[backlinks] project={p['name']} target={target} limit={limit} "
               f"calls={len(tasks)} rivals={len(rivals)} est_cost≈${est:.3f}")
@@ -529,6 +774,17 @@ def collect(project: str, *,
                 if linked is None:
                     notes.append("언급한 곳이 이미 링크했는지 확인하지 못했습니다. 다음 수집에서 다시 봅니다")
                 _bump("mentions", _put_mentions(conn, pid, today, ms, linked), c)
+            # Bing 웹마스터(무료) — 색인·크롤·검색어. 인바운드 링크는 DataForSEO 가 이미 줬다.
+            import collect_bing
+            b_rows, b_notes, b_calls = collect_bing.collect_into(conn, pid, target, today,
+                                                                 links=False, call_fn=bing_call)
+            rows.update(b_rows)
+            notes += b_notes
+            r.api_calls = (r.api_calls or 0) + b_calls
+            # 방금 받은 언급·교집합을 바로 열어 본다(무료).
+            v = verify_links(conn, pid, target, check=check)
+            if v:
+                notes.append(_verify_note(v))
             r.cost = cost
             r.notes = (" ".join(f"{k}={v}" for k, v in sorted(rows.items()))
                        + f" {st.err_note}"
@@ -593,7 +849,11 @@ def _fake_post(calls: list):
         if path.endswith("/summary/live"):
             return [{"rank": 120, "backlinks": 340, "referring_domains": 55,
                      "referring_main_domains": 51, "broken_backlinks": 3,
-                     "info": {"referring_links_attributes": {"dofollow": 300,
+                     "backlinks_spam_score": 14,
+                     "referring_links_tld": {"com": 40, "kr": 12, "pics": 3},
+                     "referring_links_countries": {"": 20, "US": 25, "KR": 9, "WW": 1},
+                     "info": {"target_spam_score": 6,
+                              "referring_links_attributes": {"dofollow": 300,
                                                              "nofollow": 40}}}], 0.024
         if path.endswith("/referring_domains/live") and body[0].get("filters"):
             # 링크 확인 — 물은 도메인 중 우리에게 링크하는 것만 돌려준다
@@ -627,7 +887,7 @@ def _fake_post(calls: list):
         if path.endswith("/referring_domains/live"):
             return [{"items": [
                 {"domain": "Shared.com", "rank": 90, "backlinks": 5, "dofollow": 4,
-                 "first_seen": "2026-01-01"},
+                 "first_seen": "2026-01-01", "backlinks_spam_score": 72},
                 {"domain": "d2.com"},                       # 필드가 거의 없다 — 살아야 한다
                 {"rank": 10},                               # 도메인이 없다 — 건너뛴다
             ]}], 0.03
@@ -636,7 +896,8 @@ def _fake_post(calls: list):
                 {"url_from": "https://a.com/p", "url_to": "https://bt.com/x",
                  "anchor": "좋은 앵커", "domain_from": "a.com", "rank": 55,
                  "dofollow": True, "is_broken": False, "first_seen": "2026-02-02",
-                 "last_seen": "2026-08-01"},
+                 "last_seen": "2026-08-01", "backlink_spam_score": 3,
+                 "domain_from_country": "KR"},
                 {"page_from_url": "https://b.com/q", "page_to_url": "https://bt.com/404",
                  "text": "깨진 링크", "url_to_status_code": 404},   # 다른 필드명 + 파생 is_broken
                 {"url_from": "https://c.com/r", "url_to": "https://bt.com/",
@@ -648,8 +909,27 @@ def _fake_post(calls: list):
                 {"anchor": "좋은 앵커", "backlinks": 12, "referring_domains": 4,
                  "dofollow": 9},
                 {"anchor": "빈약", "backlinks": 1},          # referring_domains 없음
-                {"anchor": "  "},                            # 빈 앵커 — 건너뛴다
+                {"anchor": "  "},                            # 링크 수도 없는 빈 앵커 — 건너뛴다
+                {"anchor": None, "backlinks": 7},            # 빈 앵커(이미지 링크) — anchor='' 로 적는다
             ]}], 0.05
+        if path.endswith("/domain_pages_summary/live"):
+            return [{"items": [
+                {"type": "backlinks_page_summary", "url": "https://bt.com/guide", "backlinks": 40,
+                 "referring_domains": 22, "rank": 310, "backlinks_spam_score": 5},
+                {"url": "https://bt.com/", "backlinks": 9},
+                {"backlinks": 3},                            # url 이 없다 — 건너뛴다
+            ]}], 0.025
+        if path.endswith("/timeseries_summary/live"):
+            return [{"items": [
+                {"date": "2026-09-30 00:00:00 +00:00", "backlinks": 300, "referring_domains": 50},
+                {"date": "2026-10-31 00:00:00 +00:00", "backlinks": 340, "referring_domains": 55},
+                {"date": None, "backlinks": 1},              # 날짜가 없다 — 건너뛴다
+            ]}], 0.025
+        if path.endswith("/timeseries_new_lost_summary/live"):
+            return [{"items": [
+                {"date": "2026-10-31 00:00:00 +00:00", "new_backlinks": 45, "lost_backlinks": 5,
+                 "new_referring_domains": 6, "lost_referring_domains": 1},
+            ]}], 0.025
         if path.endswith("/domain_intersection/live"):
             # 문서의 응답 모양 그대로다(docs.dataforseo.com/v3/backlinks/domain_intersection/live).
             # 예전 가짜는 "1"·"2" 를 항목 바로 밑에 두었다 — 진짜는 domain_intersection
@@ -684,6 +964,19 @@ def _selfcheck() -> None:
         Path(tempfile.mkdtemp(prefix="seo-miner-backlinks-selftest-")))
     os.environ["DATAFORSEO_LOGIN"] = "login"      # 모킹 단계에서만 필요 — 실제 호출 0건
     os.environ["DATAFORSEO_PASSWORD"] = "pw"
+    os.environ.pop("BING_WEBMASTER_API_KEY", None)
+    # 무료 GET 확인(verify_links)이 가짜 응답 속 주소(news.com …)를 진짜로 열지 않게 —
+    # 이 자기검사는 끝까지 전송을 갈아끼운 채 돈다. 기본은 403(확인 불가)이다.
+    import http_adapter
+    opened: list[str] = []
+    pages: dict[str, tuple[int, str]] = {}
+
+    def _no_net(url, headers, timeout):
+        opened.append(url)
+        st, html = pages.get(url, (403, ""))
+        return http_adapter.Fetched(url, url, st, (), "text/html; charset=utf-8", text=html)
+    _net = http_adapter.use(_no_net)
+    _net.__enter__()
 
     conn = db.connect()
     conn.execute("INSERT INTO projects(name, domain, locale) VALUES('bt','bt.com','ko-KR')")
@@ -704,18 +997,27 @@ def _selfcheck() -> None:
     assert sorted(c[0] for c in calls) == sorted([
         "/backlinks/summary/live", "/backlinks/referring_domains/live",
         "/backlinks/backlinks/live", "/backlinks/anchors/live",
+        "/backlinks/domain_pages_summary/live", "/backlinks/timeseries_summary/live",
+        "/backlinks/timeseries_new_lost_summary/live",
         "/backlinks/domain_intersection/live"]), calls
-    assert abs(res.cost - 0.204) < 1e-9, res.cost         # 응답 cost 합산
+    assert abs(res.cost - 0.279) < 1e-9, res.cost         # 응답 cost 합산
 
     smry = rows("backlink_summary")
     assert len(smry) == 1 and smry[0]["backlinks"] == 340, smry
     assert (smry[0]["dofollow"], smry[0]["nofollow"]) == (300, 40), smry
+    # 받아 놓고 버리던 값 — spam score·TLD·국가. 안 온 값은 NULL 이다(0 점이 아니다).
+    assert (smry[0]["spam_score"], smry[0]["target_spam_score"], smry[0]["source"]) == (
+        14, 6, "dataforseo"), smry
+    assert json.loads(smry[0]["tld_json"]) == {"com": 40, "kr": 12, "pics": 3}, smry
+    assert json.loads(smry[0]["country_json"])["US"] == 25, smry
+    assert _counts_json(None) is None and _counts_json({"x": "y"}) is None
 
     # 5. 응답에 없는 필드가 있어도 안 죽는다 — 값 없는 항목은 NULL 로 살아남고,
     #    키(도메인·url·앵커)가 없는 항목만 건너뛴다.
     rd = {r["domain"]: r for r in rows("referring_domains")}
     assert set(rd) == {"shared.com", "d2.com"}, rd        # 소문자 정규화 + 도메인 없는 항목 제외
     assert rd["d2.com"]["rank"] is None and rd["shared.com"]["rank"] == 90, rd
+    assert rd["shared.com"]["spam_score"] == 72 and rd["d2.com"]["spam_score"] is None, rd
 
     bl = {r["url_to"]: r for r in rows("backlinks")}
     assert set(bl) == {"https://bt.com/x", "https://bt.com/404", "https://bt.com/"}, bl
@@ -724,9 +1026,24 @@ def _selfcheck() -> None:
     assert bl["https://bt.com/x"]["dofollow"] == 1 and bl["https://bt.com/x"]["is_broken"] == 0
     assert bl["https://bt.com/404"]["is_broken"] == 1, bl  # 404 → 파생
     assert bl["https://bt.com/404"]["domain_from"] == "b.com", bl  # url 에서 파생
+    assert (bl["https://bt.com/x"]["spam_score"], bl["https://bt.com/x"]["country"]) == (3, "KR"), bl
+    assert bl["https://bt.com/404"]["spam_score"] is None, bl
+
+    # 우리 페이지별 백링크·달별 시계열. 같은 달은 두 응답이 한 줄로 합쳐진다.
+    pg = {r["url"]: r for r in rows("backlink_pages")}
+    assert set(pg) == {"https://bt.com/guide", "https://bt.com/"}, pg
+    assert (pg["https://bt.com/guide"]["backlinks"], pg["https://bt.com/guide"]["referring_domains"]) == (40, 22)
+    ts = {r["month"]: r for r in rows("backlink_timeseries")}
+    assert set(ts) == {"2026-09-30", "2026-10-31"}, ts
+    assert (ts["2026-10-31"]["referring_domains"], ts["2026-10-31"]["new_referring_domains"],
+            ts["2026-10-31"]["lost_referring_domains"]) == (55, 6, 1), ts
+    assert ts["2026-09-30"]["new_backlinks"] is None, "응답에 없는 달의 증감을 0 으로 지어냈다"
+    assert _series_from("2026-11-24") == "2025-11-01" and _series_from("2026-01-05") == "2025-01-01"
+    sent = next(b for p, b in calls if p.endswith("/timeseries_summary/live"))
+    assert sent["group_range"] == "month" and re.fullmatch(r"\d{4}-\d{2}-01", sent["date_from"]), sent
 
     an = {r["anchor"]: r for r in rows("backlink_anchors")}
-    assert set(an) == {"좋은 앵커", "빈약"}, an
+    assert set(an) == {"좋은 앵커", "빈약", ""} and an[""]["backlinks"] == 7, an
     assert an["빈약"]["referring_domains"] is None, an
 
     # 4. we_have 는 우리 참조 도메인과 겹칠 때만 1.
@@ -739,11 +1056,13 @@ def _selfcheck() -> None:
 
     run = conn.execute("SELECT * FROM runs WHERE kind='backlinks'").fetchone()
     assert "errors=0" in run["notes"], dict(run)           # 항목이 조용히 죽지 않았다
-    assert run["api_calls"] == 5 and run["finished_at"], dict(run)
+    assert run["api_calls"] == 8 and run["finished_at"], dict(run)
+    assert "Bing 웹마스터 생략" in run["notes"], "Bing 키가 없어 건너뛴 사유가 기록에 없다"
 
     # 2. 같은 날 두 번 돌려도 행이 안 늘어난다 (UNIQUE + ON CONFLICT).
     before = {t: len(rows(t)) for t in ("backlink_summary", "referring_domains",
-                                        "backlinks", "backlink_anchors", "link_intersect")}
+                                        "backlinks", "backlink_anchors", "link_intersect",
+                                        "backlink_pages", "backlink_timeseries")}
     collect("bt", conn=conn, post=_fake_post([]), max_age=0)
     after = {t: len(rows(t)) for t in before}
     assert before == after, (before, after)
@@ -804,7 +1123,7 @@ def _selfcheck() -> None:
     calls = []
     res = collect("bt", conn=conn, post=_fake_post(calls), max_age=0)
     assert res.ok and not res.skipped, res
-    assert len(calls) == 4 and all("intersection" not in c[0] for c in calls), calls
+    assert len(calls) == 7 and all("intersection" not in c[0] for c in calls), calls
     assert rows("link_intersect") == [], rows("link_intersect")
     assert len(rows("backlink_summary")) == 1 and len(rows("referring_domains")) == 2
     note = conn.execute("SELECT notes FROM runs WHERE kind='backlinks'"
@@ -833,7 +1152,8 @@ def _selfcheck() -> None:
     conn.commit()
     base, lock, live, on = _fake_post([]), threading.Lock(), {"now": 0, "peak": 0}, set()
     delay = {"summary": 0.04, "referring_domains": 0.08, "backlinks": 0.03,
-             "anchors": 0.02, "domain_intersection": 0.0}
+             "anchors": 0.02, "domain_intersection": 0.0, "domain_pages_summary": 0.01,
+             "timeseries_summary": 0.01, "timeseries_new_lost_summary": 0.01}
 
     def slow(path, body):
         with lock:
@@ -888,6 +1208,79 @@ def _selfcheck() -> None:
         return base(path, body)
     collect("bt", conn=conn, post=no_check, max_age=0)
     assert {r["linked"] for r in rows("brand_mentions")} == {None}, rows("brand_mentions")
+
+    # 10. 무료 GET 확인 — 언급한 페이지와 경쟁사만 받는 도메인의 첫 화면을 직접 연다.
+    #     기본 전송은 403 이다: 막힌 곳은 '링크 없음'이 아니라 확인 불가(unknown)로 적힌다.
+    ck = {(r["kind"], r["url"]): r for r in rows("backlink_checks")}
+    assert ("mention", "https://www.news.com/a") in ck and ("prospect", "https://only-rivals.com/") in ck, ck
+    assert {r["state"] for r in ck.values()} == {"unknown"}, ck
+    assert all("크롤러" in r["why"] and r["status"] == 403 for r in ck.values()), ck
+    # 신선도 안이라 다시 사지 않는 회차에도 확인은 돈다(무료). 링크가 걸렸으면 그 자리에서 안다.
+    body = "<p>" + "본문 낱말 " * 200 + "</p>"
+    pages["https://www.news.com/a"] = (200, f"<html><body>{body}<a href='https://bt.com/'>bt</a></body></html>")
+    pages["https://only-rivals.com/"] = (200, f"<html><body>{body}</body></html>")
+    pages["https://linked.com/p"] = (200, f"<html><head><meta name='robots' content='nofollow'></head>"
+                                           f"<body>{body}<a href='https://bt.com/x'>bt</a></body></html>")
+    opened.clear()
+    res = collect("bt", conn=conn, post=_boom, max_age=7)
+    assert res.skipped and "직접 열어 확인" in res.reason and "linked=1" in res.reason, res.reason
+    assert opened, "신선도 안인 회차에 무료 확인을 안 돌렸다"
+    ck = {(r["kind"], r["url"]): r for r in rows("backlink_checks")}
+    assert ck[("mention", "https://www.news.com/a")]["state"] == "linked", ck
+    m = ck[("mention", "https://linked.com/p")]
+    assert (m["state"], m["rel_nofollow"], m["meta_nofollow"]) == ("nofollow", 0, 1), m
+    pr = ck[("prospect", "https://only-rivals.com/")]
+    assert pr["state"] == "no_link" and pr["why"] == PROSPECT_HOME_ONLY, pr
+    assert len(ck) == len(rows("backlink_checks")), "같은 주소가 두 줄이 됐다"
+    # dry-run 은 아무것도 열지 않는다.
+    opened.clear()
+    collect("bt", conn=conn, post=_boom, max_age=7, dry_run=True)
+    assert not opened, opened
+
+    # 11. DataForSEO 키가 없으면 무료 출처로 물러선다 — 예전에는 단계가 통째로 빠졌다.
+    import cc_graph
+    import collect_bing
+    del os.environ["DATAFORSEO_LOGIN"]
+    for t in ("backlink_summary", "referring_domains", "backlinks", "backlink_anchors",
+              "backlink_pages", "link_intersect", "brand_mentions", "backlink_checks", "runs"):
+        conn.execute(f"DELETE FROM {t}")
+    conn.commit()
+    seen_graph = []
+
+    def graph(dom):
+        seen_graph.append(dom)
+        return {"source": cc_graph.SOURCE, "release": "cc-main-x", "found": 0, "scanned": 3000000,
+                "total": 134979706, "harmonic_pos": None, "pagerank_pos": None, "hosts": None}
+    res = collect("bt", conn=conn, post=_boom, max_age=0, dry_run=True, graph=graph)
+    assert res.skipped and res.cost == 0 and not seen_graph and rows("runs") == [], res
+    # 키가 하나도 없어도(Common Crawl 은 키가 없다) 그래프 한 줄은 읽는다.
+    res = collect("bt", conn=conn, post=_boom, max_age=0, graph=graph)
+    assert res.ok and not res.skipped and res.cost == 0 and seen_graph == ["bt.com"], res
+    g = rows("backlink_graph_rank")
+    assert len(g) == 1 and (g[0]["found"], g[0]["scanned"]) == (0, 3000000), g
+    assert rows("backlink_summary") == [], "그래프만 읽고 백링크 요약을 지어냈다"
+    note = conn.execute("SELECT notes, cost_estimate_usd c FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+    assert FREE_NOTE in note["notes"] and "Bing 웹마스터 생략" in note["notes"] and note["c"] == 0, dict(note)
+    # Bing 키가 있으면 인바운드 링크가 백링크 표에 source='bing' 으로 선다.
+    res = collect("bt", conn=conn, post=_boom, max_age=0, graph=graph, bing_call=collect_bing.fake_call())
+    assert res.ok and not res.skipped, res
+    assert {r["source"] for r in rows("backlinks")} == {"bing"} and len(rows("backlinks")) == 4
+    assert rows("backlink_summary")[0]["source"] == "bing" and rows("backlink_summary")[0]["rank"] is None
+    assert len(rows("bing_query_stats")) == 2 and len(rows("bing_crawl_stats")) == 2
+    # 신선도 안이면 무료 출처도 다시 안 읽는다.
+    res = collect("bt", conn=conn, post=_boom, max_age=7, graph=_boom, bing_call=_boom)
+    assert res.skipped and "이미 읽었습니다" in res.reason, res
+    # 그래프가 죽고 Bing 도 없으면 사유 있는 건너뜀이다(실패가 아니다 — 무료 출처의 사정이다).
+    for t in ("backlink_summary", "backlink_graph_rank"):
+        conn.execute(f"DELETE FROM {t}")
+    conn.commit()
+
+    def dead(dom):
+        raise RuntimeError("503 Slow Down")
+    res = collect("bt", conn=conn, post=_boom, max_age=0, graph=dead)
+    assert res.ok and res.skipped and "503 Slow Down" in res.reason, res
+    os.environ["DATAFORSEO_LOGIN"] = "login"
+    _net.__exit__(None, None, None)
     conn.close()
     print("collect_backlinks self-check ok")
 
