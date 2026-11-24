@@ -22,7 +22,9 @@ from collections.abc import Callable
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 import ai_access
+import page_lang
 import run_verdict
+import schema_values
 import schema_vocab
 
 # 1페이지 경계. 화면(깊이 그래프)·SQL·산문이 같은 값을 봐야 한다.
@@ -1616,7 +1618,14 @@ SCHEMA_RULES = {
     "Product": {"required": ("name", "offers|review|aggregateRating"),
                 "recommended": ("image", "description", "brand", "sku")},
     "BreadcrumbList": {"required": ("itemListElement",), "recommended": ()},
-    "FAQPage": {"required": ("mainEntity",), "recommended": ()},
+    # (FAQPage 는 뺐다 — 리치 결과가 끝난 유형이라 속성을 채워도 나갈 결과가 없다. RETIRED_TYPES)
+    # 목록(캐러셀): https://developers.google.com/search/docs/appearance/structured-data/carousel
+    "ItemList": {"required": ("itemListElement",), "recommended": ()},
+    # 앱: 필수 name · offers.price · (aggregateRating 또는 review). offers 안의 price 는 값 검사
+    # (schema_values 의 app_no_price)가 본다.
+    # https://developers.google.com/search/docs/appearance/structured-data/software-app
+    "SoftwareApplication": {"required": ("name", "offers", "aggregateRating|review"),
+                            "recommended": ("applicationCategory", "operatingSystem")},
     "Review": {"required": ("author", "reviewRating", "itemReviewed"),
                "recommended": ("datePublished",)},
     "AggregateRating": {"required": ("ratingValue", "ratingCount|reviewCount", "itemReviewed"),
@@ -1655,6 +1664,7 @@ SCHEMA_SUBTYPES = {
               "ChildrensEvent", "DanceEvent", "Hackathon", "LiteraryEvent", "SaleEvent",
               "ScreeningEvent", "VisualArtsEvent"),
     "Review": ("CriticReview", "UserReview", "EmployerReview"),
+    "SoftwareApplication": tuple(sorted(schema_vocab.descendants("SoftwareApplication"))),
 }
 _SCHEMA_RULE_OF = {**{t: t for t in SCHEMA_RULES},
                    **{s: base for base, subs in SCHEMA_SUBTYPES.items() for s in subs}}
@@ -1666,6 +1676,57 @@ _SCHEMA_SPECIFIC = ("LocalBusiness",)
 # 사이트 주인 엔티티 — 홈에서 본다. 지역 업체면 이름·주소·전화(NAP)를 지도 칸 요청문이 대조한다.
 OWNER_TYPES = ("LocalBusiness", "Organization")
 NAP_PROPS = ("name", "address", "telephone")
+
+# ── 리치 결과가 끝난 유형 (정본 한 벌) ────────────────────────────────────────
+# 구글이 검색결과에 더는 안 쓰는 유형이다. **권하지 않고**(처방·요청문·create 규칙 어디서도),
+# 이미 단 마크업은 '리치 결과 없음'이라고 말한다(page_info) — 둬도 해는 없으니 지우라고 하지 않는다.
+# 예전엔 처방이 "Article·FAQPage·LocalBusiness 중 하나"를 넣으라 하고, 같은 파일의 다른 주석은
+# FAQ 리치 결과가 안 나온다고 적었다. 이 표가 그 모순의 정본이다(test_seams 가 사본을 막는다).
+# @type → (구글 기능 이름, 끝난 날, 출처).
+#   출처: 검색 센터 문서 변경 이력 https://developers.google.com/search/updates
+#         2023-08 HowTo·FAQ 공지 https://developers.google.com/search/blog/2023/08/howto-faq-changes
+#         2025-06 공지 https://developers.google.com/search/blog/2025/06/simplifying-search-results
+# 같은 2025-06 공지로 끝난 Course info·Estimated salary·Learning video·Vehicle listing·Book
+# actions 는 여기 없다: 그 기능이 쓰던 유형(Course·Occupation·LearningResource·Car·Book)이 살아
+# 있는 다른 기능(Course list·Math solver·Product)과 겹쳐 **유형 이름만으로는** 끝난 마크업인지
+# 못 가른다. 그 유형들은 권하지만 않는다(SITE_SCHEMA_TYPES 에 없다).
+_SC_UPDATES = "https://developers.google.com/search/updates"
+RETIRED_TYPES = {
+    "FAQPage": ("FAQ 리치 결과", "2026-05-07", _SC_UPDATES),
+    "HowTo": ("How-to 리치 결과", "2023-09-13",
+              "https://developers.google.com/search/blog/2023/08/howto-faq-changes"),
+    "SpecialAnnouncement": ("특별 공지 결과", "2025-07-31", _SC_UPDATES),
+    "ClaimReview": ("팩트 체크 결과", "2025-06-12",
+                    "https://developers.google.com/search/blog/2025/06/simplifying-search-results"),
+}
+# 사이트 타입(WEIGHTS 의 열쇠) → 'ld+json 없음'일 때 권하는 @type. 사이트가 무엇이냐에 따라
+# 맞는 유형이 다르다 — 일반 문장 하나로 말하면 SaaS 글에 LocalBusiness 를 권한다.
+# 홈은 여기 것이 아니다(사이트 주인 — entity_advice). 글(발행일·저자가 있는 페이지)은 어느
+# 타입이든 Article 이다(SCHEMA_FOR_ARTICLE).
+SITE_SCHEMA_TYPES = {
+    "saas": ("SoftwareApplication", "BreadcrumbList"),
+    "commerce": ("Product", "BreadcrumbList"),
+    "local_business": ("LocalBusiness", "BreadcrumbList"),
+    "game": ("VideoGame", "BreadcrumbList"),
+    "directory": ("ItemList", "BreadcrumbList"),
+}
+SCHEMA_FOR_ARTICLE = ("Article", "BreadcrumbList")
+# 타입을 모르는 사이트 — 페이지가 무엇이냐로 고르게 한다(끝난 유형은 후보에 없다)
+SCHEMA_FALLBACK = ("Article", "Product", "LocalBusiness")
+
+
+def suggested_types(audit: dict, site_type: str = "") -> tuple[str, ...]:
+    """이 페이지에 권할 @type — 글이면 Article, 아니면 사이트 타입의 것."""
+    if (audit.get("published") or audit.get("author")):
+        return SCHEMA_FOR_ARTICLE
+    return SITE_SCHEMA_TYPES.get(site_type or "", SCHEMA_FALLBACK)
+
+
+def retired_in(audit: dict) -> list[tuple[str, str, str]]:
+    """이 행의 마크업 중 리치 결과가 끝난 유형 — [(쓴 @type, 기능 이름, 끝난 날)]."""
+    seen = dict.fromkeys(schema_type_name(t) for t in _as_list(audit.get("schema_json"))
+                         if isinstance(t, str))
+    return [(t, *RETIRED_TYPES[t][:2]) for t in seen if t in RETIRED_TYPES]
 
 
 def schema_type_name(t: str) -> str:
@@ -1769,7 +1830,60 @@ def owner_types(audit: dict) -> list[tuple[str, str]]:
     return sorted(dict.fromkeys(hits), key=lambda h: OWNER_TYPES.index(h[0]))
 
 
-def _structured_data_advice(audit: dict, gaps: list[dict]) -> list[dict]:
+def schema_issues(audit: dict, site_type: str = "") -> list[dict] | None:
+    """수집기가 남긴 ld+json 값 이슈(schema_values) 중 이 사이트에 해당하는 것. None = 안 본 행.
+
+    상점 목록 수준 규칙(MERCHANT_CODES — 0 보다 큰 가격·Offer·배송·반품)은 파는 사이트
+    (commerce)에만 댄다: 리뷰 글·비교 글의 Product 는 AggregateOffer 도 되고 배송 정보가 없어도
+    된다. 자기 리뷰(self_review)는 남의 업체를 모아 평가하는 사이트(directory)에는 안 댄다 —
+    구글 문서가 그 경우는 된다고 적었다(노드의 url 이 다른 호스트면 남의 업체다)."""
+    raw = audit.get("schema_issues_json")
+    if raw is None or not _has_head_fields(audit):
+        return None
+    out = []
+    for i in _as_list(raw):
+        if not isinstance(i, dict) or not i.get("code"):
+            continue
+        if i["code"] in schema_values.MERCHANT_CODES and site_type != "commerce":
+            continue
+        if i["code"] == "self_review" and (site_type == "directory" or i.get("own") is False):
+            continue
+        out.append(i)
+    return out
+
+
+# 값 이슈 코드 → 고치는 법 한 줄. 지금 상태(now)의 문장은 schema_values.describe 가 정본이다.
+_SCHEMA_ISSUE_FIX = {
+    "self_review": "자기 사이트에 단 자기 업체의 별점·리뷰는 별점 리치 결과에 나가지 않습니다"
+                   "(구글 리뷰 스니펫 기준). 지울 필요는 없지만 별점이 뜨기를 기대하지 않습니다. "
+                   "상품·서비스 하나하나의 리뷰는 그 Product·Service 노드에 답니다.",
+    "placeholder": "템플릿의 자리표시를 이 페이지의 실제 값으로 바꾸세요. 모르는 값은 그 속성을 "
+                   "빼는 편이 낫습니다.",
+}
+_SCHEMA_ISSUE_FIX_DEFAULT = ("값을 고치되 화면에 실제로 보이는 것과 같게 씁니다. 고친 뒤 리치 결과 "
+                             "테스트(search.google.com/test/rich-results)로 확인합니다.")
+
+
+def _schema_issue_advice(audit: dict, site_type: str = "") -> list[dict]:
+    """[구조화 데이터] — 있는 값이 못 쓰는 값인 것. 같은 수준·같은 고치는 법끼리 한 줄로 묶는다
+    (이슈마다 한 줄이면 상품 페이지 하나가 진단표를 다 먹는다). note 수준은 진단이 아니다(page_info)."""
+    out = []
+    groups: dict[tuple[str, str], list[str]] = {}
+    for i in schema_issues(audit, site_type) or []:
+        level, text = schema_values.describe(i)
+        if level == "note":
+            continue
+        fix = _SCHEMA_ISSUE_FIX.get(i["code"], _SCHEMA_ISSUE_FIX_DEFAULT)
+        groups.setdefault((level, fix), []).append(text)
+    for (level, fix), texts in groups.items():
+        texts = list(dict.fromkeys(texts))
+        out.append({"tag": "구조화 데이터", "level": level,
+                    "now": " · ".join(texts[:4]) + (f" 외 {len(texts) - 4}건" if len(texts) > 4 else ""),
+                    "fix": fix})
+    return out
+
+
+def _structured_data_advice(audit: dict, gaps: list[dict], site_type: str = "") -> list[dict]:
     """[구조화 데이터] — 필수 속성이 빠진 유형마다 한 줄, 깨진 블록 한 줄. 권장은 여기서 안
     말한다: 모든 고치기 요청문이 권장 목록으로 부푼다(엔티티 쪽만 권장을 본다)."""
     out = []
@@ -1789,7 +1903,7 @@ def _structured_data_advice(audit: dict, gaps: list[dict]) -> list[dict]:
                     "fix": "필수 속성이 빠진 마크업은 그 유형의 리치 결과에 나갈 자격이 없습니다. "
                            "빠진 속성을 채우되 값은 화면에 실제로 보이는 것과 같게 씁니다. 화면에 "
                            "없는 값을 마크업에만 넣지 않습니다."})
-    return out
+    return out + _schema_issue_advice(audit, site_type)
 
 
 def entity_advice(audit: dict, gaps: list[dict], domain: str = "") -> list[dict]:
@@ -1856,6 +1970,20 @@ def entity_advice(audit: dict, gaps: list[dict], domain: str = "") -> list[dict]
                     "fix": "저자 이름과 함께 그 사람을 소개하는 페이지(url)나 외부 프로필(sameAs)을 "
                            "적으세요. 이름만으로는 누가 쓴 글인지 다른 자리와 이어 볼 수 없습니다. "
                            "모르는 값은 지어내지 않고 비워 둡니다."})
+    # 마크업의 전화·주소 ↔ 이 페이지 화면(수집기가 견준 결과만 남긴다 — 값은 안 남는다).
+    # 다르다고 확인된 것(False)만 말한다: None 은 한쪽이 없어 못 견준 것이다.
+    nap = (_signals_of(audit) or {}).get("nap") or {}
+    if nap.get("tel_match") is False:
+        out.append({"tag": "엔티티", "level": "warn",
+                    "now": f"마크업의 telephone 이 이 페이지의 전화 링크(tel:) {nap.get('tel_page')}개 "
+                           "어느 것과도 다른 번호입니다",
+                    "fix": "어느 쪽이 맞는 번호인지 확인해 둘을 같은 번호로 맞추세요. 지도의 업체 "
+                           "정보에 적힌 번호와도 같아야 합니다(국가번호·맨 앞 0 차이는 같은 번호로 봅니다)."})
+    if nap.get("addr_match") is False and (owner_types(audit)[:1] or [("", "")])[0][0] == "LocalBusiness":
+        out.append({"tag": "엔티티", "level": "warn",
+                    "now": "마크업의 주소(도로명·우편번호) 글자를 이 페이지 화면에서 찾지 못했습니다",
+                    "fix": "화면(꼬리말·연락처)에 보이는 주소와 마크업의 주소를 글자까지 같게 쓰세요. "
+                           "화면에 주소가 없으면 넣습니다. 줄임말(St.·로/길) 차이도 다른 글자입니다."})
     # sameAs — 수집기가 몇 곳만 열어 본 것. 404·410 만 죽은 주소다(403·429 는 봇 막힘일 수 있다).
     dead = [x for x in _as_list(audit.get("same_as_json"))
             if isinstance(x, dict) and x.get("dead") and (home or x.get("of") == "Person")]
@@ -1880,14 +2008,17 @@ def nap_state(audit: dict | None) -> dict | None:
     if gaps is None:
         return None
     owner = owner_types(audit)
+    # body: 마크업의 전화·주소를 이 페이지 화면과 견준 결과(collect_page._nap_compare) — 요청문의
+    # NAP 표 '본문' 줄을 사람이 열어 보기 전에 코드가 채운다. None = 못 견줬다(옛 행·값이 한쪽에 없음).
+    body = (_signals_of(audit) or {}).get("nap")
     if not owner:
         unknown = schema_unknown(audit)       # 못 읽는 유형이 있으면 '없음'이 아니다(entity_advice 와 같은 판정)
-        return {"as": None, "rule": None, "unknown": unknown,
+        return {"as": None, "rule": None, "unknown": unknown, "body": body,
                 "missing": [] if unknown else list(NAP_PROPS)}
     rule, written = owner[0]
     g = next((x for x in gaps if x.get("type") == rule), {})
     gone = set(g.get("need") or []) | set(g.get("want") or [])
-    return {"as": g.get("as") or written, "rule": rule, "unknown": [],
+    return {"as": g.get("as") or written, "rule": rule, "unknown": [], "body": body,
             "missing": [p for p in NAP_PROPS if p in gone] if rule == "LocalBusiness" else []}
 
 
@@ -2057,24 +2188,8 @@ def _desc_scraped(desc: str, title: str, h1: str) -> bool:
 # dup_description 은 글자가 완전히 같을 때만 선다. 틀은 페이지마다 제목만 바꿔 끼우므로 글자는
 # 다 다르다 — "{제목}. 자세히 보기", "{제목} | 브랜드". 판정 규칙의 정본은 여기 한 벌이고
 # 크롤의 사이트 단위 이슈(collect_crawl.meta_template_issue)와 페이지 처방이 같이 부른다.
-# 상투 CTA 는 언어별 표 한 벌이다 — 표에 없는 언어는 CTA 로 판정하지 않는다(다른 언어의
-# 문구로 재지 않는다). 소문자·NFKC 로 맞대므로 표도 그렇게 적는다.
-DESC_CTA = {
-    "en": ("learn more", "read more", "find out more", "discover more", "click here",
-           "shop now", "buy now", "get started", "contact us today", "call us today",
-           "visit us today", "see more"),
-    "ko": ("자세히 보기", "자세히 알아보기", "더 알아보기", "지금 확인하세요", "지금 바로 확인하세요",
-           "바로가기", "문의하세요", "지금 문의하세요", "더보기"),
-    "ja": ("詳しくはこちら", "詳細はこちら", "今すぐチェック", "お問い合わせください", "続きを読む"),
-    "zh": ("了解更多", "瞭解更多", "点击这里", "點擊這裡", "查看详情", "查看詳情", "立即购买", "立即購買"),
-    "de": ("mehr erfahren", "jetzt entdecken", "hier klicken", "jetzt kaufen", "jetzt informieren",
-           "weiterlesen"),
-    "es": ("más información", "leer más", "haz clic aquí", "descubre más", "compra ahora",
-           "saber más"),
-    "fr": ("en savoir plus", "lire la suite", "cliquez ici", "découvrez", "achetez maintenant"),
-    "pt": ("saiba mais", "leia mais", "clique aqui", "compre agora", "descubra mais"),
-    "it": ("scopri di più", "leggi di più", "clicca qui", "acquista ora"),
-}
+# 상투 CTA 표의 정본은 page_lang.DESC_CTA(언어별 표 한 벌 — 일반 앵커 표와 같은 자리).
+DESC_CTA = page_lang.DESC_CTA
 # 제목이 '주제 | 브랜드' 로 갈리는 자리. 붙임표는 양옆이 비어 있을 때만 구분자다(well-known 은 한 낱말).
 _META_SEP = re.compile(r"\s+[|—–\-·:»•]\s+|\s*[|»•]\s*")
 # 제목 되풀이 뒤에 오면 '틀이 끊은 자리'인 글자 — 쉼표·쌍점은 손으로 쓴 문장도 잇는다.
@@ -2191,7 +2306,272 @@ def _name_split_advice(audit: dict, title: str, h1: list) -> list[dict]:
                      "이름으로 두고 다른 하나는 본문에서 설명합니다.")}]
 
 
-def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None) -> list[dict]:
+# ── robots 지시 — meta robots·봇 이름 meta·X-Robots-Tag 헤더를 한 벌로 읽는다 ──────
+# 구글 문서: 헤더는 meta 가 받는 규칙을 다 받고, 봇 이름을 앞에 붙일 수 있다("googlebot: nofollow").
+# nosnippet·max-snippet:0 은 검색결과의 글자 스니펫을 없애고, AI 요약·AI 모드의 직접 입력으로도
+# 못 쓰게 한다. data-nosnippet 은 span·div·section 에서만 통한다.
+# https://developers.google.com/search/docs/crawling-indexing/robots-meta-tag
+_ROBOTS_VALUED = ("max-snippet", "max-image-preview", "max-video-preview", "unavailable_after")
+_ROBOTS_FOR_GOOGLE = ("", "googlebot")        # 봇 이름이 없거나 googlebot 인 지시만 본다
+
+
+def _robots_tokens(value: str, bot: str = "") -> list[tuple[str, str]]:
+    """'googlebot: noindex, nofollow, max-snippet:0' → [(봇, 지시), ...]. 봇 이름은 그 뒤 지시에 이어진다."""
+    out = []
+    for tok in (value or "").split(","):
+        tok = tok.strip().lower()
+        if not tok:
+            continue
+        head, sep, rest = tok.partition(":")
+        if sep and head.strip() not in _ROBOTS_VALUED:
+            bot, tok = head.strip(), rest.strip()
+        if tok:
+            out.append((bot, "".join(tok.split())))
+    return out
+
+
+def robots_directives(audit: dict) -> dict:
+    """이 페이지에 걸린 robots 지시 → {"noindex": 출처|None, "nosnippet": 출처|None}.
+
+    출처는 사람이 찾아갈 자리의 이름이다('meta robots'·'meta googlebot'·'X-Robots-Tag 헤더').
+    nosnippet 은 max-snippet:0 도 같다(구글 문서: "Equivalent to nosnippet")."""
+    meta = (_signals_of(audit) or {}).get("meta") or {}
+    srcs = [("meta robots", _robots_tokens(audit.get("robots") or ""))]
+    srcs += [(f"meta {bot}", _robots_tokens(v, bot)) for bot, v in (meta.get("bots") or {}).items()]
+    srcs.append(("X-Robots-Tag 헤더", _robots_tokens(meta.get("x_robots") or "")))
+    out = {"noindex": None, "nosnippet": None}
+    for name, toks in srcs:
+        mine = [d for bot, d in toks if bot in _ROBOTS_FOR_GOOGLE]
+        if out["noindex"] is None and ("noindex" in mine or "none" in mine):
+            out["noindex"] = name
+        if out["nosnippet"] is None and ("nosnippet" in mine or "max-snippet:0" in mine):
+            out["nosnippet"] = name
+    return out
+
+
+def _robots_extra_advice(audit: dict, meta_noindex: bool) -> list[dict]:
+    """[robots] — meta robots 의 noindex 는 page_advice 가 이미 말한다. 여기는 그 밖의 자리
+    (헤더·봇 이름 meta)의 noindex 와, 스니펫을 없애는 지시다."""
+    sig = _signals_of(audit)
+    if sig is None:
+        return []
+    out = []
+    d = robots_directives(audit)
+    if d["noindex"] and not meta_noindex:
+        raw = (sig.get("meta") or {}).get("x_robots") if d["noindex"].startswith("X-") else \
+            ((sig.get("meta") or {}).get("bots") or {}).get(d["noindex"][len("meta "):], "")
+        out.append({"tag": "robots", "level": "bad", "now": f"{d['noindex']}: {raw}",
+                    "fix": "noindex 를 지우기 전에는 이 페이지가 검색에 나오지 않습니다. 응답 헤더의 "
+                           "것은 HTML 에 안 보입니다. 서버·CDN·프레임워크 설정에서 찾아 빼세요."})
+    if d["nosnippet"] and not d["noindex"] and not meta_noindex:
+        out.append({"tag": "robots", "level": "warn",
+                    "now": f"{d['nosnippet']} 에 nosnippet(또는 max-snippet:0)이 있어 검색결과에 "
+                           "설명 글이 안 뜹니다",
+                    "fix": "의도한 것이 아니면 빼세요. 설명 없이 제목만 뜨고, 구글 AI 요약·AI 모드의 "
+                           "입력으로도 쓰이지 않습니다. 의도한 것이면 그렇다고 답해 주세요."})
+    bad = (sig.get("snippet") or {}).get("data_nosnippet_invalid") or 0
+    if bad:
+        out.append({"tag": "robots", "level": "warn",
+                    "now": f"data-nosnippet 을 span·div·section 이 아닌 태그에 단 곳 {bad}개",
+                    "fix": "이 속성은 span·div·section 에서만 통합니다. 가리려던 글자가 그대로 "
+                           "스니펫에 뜰 수 있으니 그 셋 중 하나로 감싸세요."})
+    return out
+
+
+def _canonical_target_advice(audit: dict) -> list[dict]:
+    """[canonical] — canonical 이 가리키는 주소를 열어 본 결과(collect_page.check_canonicals).
+    못 연 것(응답 없음·403·429)은 말하지 않는다 — 모르는 것이다."""
+    raw = audit.get("canonical_check_json")
+    try:
+        t = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        t = None
+    if not isinstance(t, dict):
+        return []
+    url, st = t.get("url"), t.get("status")
+    if t.get("loop"):
+        return [{"tag": "canonical", "level": "bad",
+                 "now": f"canonical 이 가리키는 {url} 이 다시 이 페이지를 정본이라고 합니다(고리)",
+                 "fix": "둘 중 하나를 정본으로 정해 그 페이지는 자기 자신을, 다른 페이지는 그 "
+                        "페이지를 가리키게 하세요. 서로 가리키면 구글이 둘 다 무시하고 스스로 고릅니다."}]
+    if isinstance(st, int) and st >= 400 and st not in (403, 429):
+        return [{"tag": "canonical", "level": "bad",
+                 "now": f"canonical 이 가리키는 {url} 이 HTTP {st} 입니다",
+                 "fix": "살아 있는 주소(대개 이 페이지 자신)를 가리키게 고치세요. 없는 페이지를 "
+                        "정본이라고 하면 이 페이지의 색인이 흔들립니다."}]
+    if t.get("final"):
+        return [{"tag": "canonical", "level": "warn",
+                 "now": f"canonical 이 가리키는 {url} 이 {t['final']} 로 리다이렉트됩니다",
+                 "fix": "canonical 을 리다이렉트 끝 주소로 바로 적으세요. 정본은 한 번에 열리는 "
+                        "주소여야 합니다."}]
+    if t.get("next"):
+        return [{"tag": "canonical", "level": "warn",
+                 "now": f"canonical 이 가리키는 {url} 이 또 다른 주소({t['next']})를 정본이라고 합니다",
+                 "fix": "사슬을 끊고 마지막 정본을 바로 가리키게 하세요. 정본의 정본은 구글이 "
+                        "따라간다는 보장이 없습니다."}]
+    return []
+
+
+# ── 기계 점검 — 수집기가 센 것(page_audits.signals_json)의 판정 ───────────────
+# signal_advice 가 새로 내는 태그(이미 있던 [본문]·[이미지] 는 빼고). 요청문은 태그마다 산출물
+# 틀을 갖고(brief.DELIVER_BY_TAG), 개발 쪽 일(SIGNAL_TECH_TAGS)은 글의 요청문에서 가른다.
+SIGNAL_TAGS = ("혼합 콘텐츠", "메타 태그", "채움 글", "제목 구조", "링크 품질", "숨긴 텍스트")
+SIGNAL_TECH_TAGS = ("혼합 콘텐츠", "메타 태그")
+# 이만큼 넘는 숨긴 글만 말한다 — 그 아래는 대개 말풍선·닫힌 알림창 한두 개다.
+HIDDEN_TEXT_MIN = 100
+# 일반 앵커는 이만큼부터 — 한두 개는 목록 끝의 '더 보기'라 어느 사이트에나 있다.
+GENERIC_ANCHOR_MIN = 3
+
+
+def _signals_of(audit: dict) -> dict | None:
+    """이 감사 행의 기계 점검 칸. None = 안 본 행(옛 행·막혀서 대신 읽은 행) — 0 과 다르다."""
+    raw = (audit or {}).get("signals_json")
+    if raw is None:
+        return None
+    try:
+        v = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    return v if isinstance(v, dict) else None
+
+
+def signal_advice(audit: dict) -> list[dict]:
+    """기계 점검의 진단 — 열어만 봐도 아는 것들(링크·제목 단계·메타·숨긴 글).
+
+    JS 껍데기면 링크·제목·본문 수는 렌더 전 값이라 말하지 않는다(메타·혼합 콘텐츠는 말한다 —
+    정적 HTML 에 적힌 사실이다)."""
+    sig = _signals_of(audit)
+    if sig is None:
+        return []
+    out: list[dict] = []
+
+    def add(tag, level, now, fix):
+        out.append({"tag": tag, "level": level, "now": now, "fix": fix})
+
+    shell = bool(audit.get("js_shell"))
+    links, meta, text = sig.get("links") or {}, sig.get("meta") or {}, sig.get("text") or {}
+    if links.get("mixed"):
+        add("혼합 콘텐츠", "warn", f"https 페이지가 http:// 로 부르는 자원 {links['mixed']}개",
+            "그 주소들을 https:// 로 바꾸세요. 브라우저가 막거나 주소창에 '안전하지 않음'을 띄웁니다.")
+    if meta.get("refresh"):
+        add("메타 태그", "warn", f"meta refresh 가 있습니다: {meta['refresh']}",
+            "다른 주소로 넘기는 것이면 서버의 301 리다이렉트로 바꾸세요. meta refresh 는 느리고, "
+            "검색엔진이 옮겨 간 것으로 확실히 읽는다는 보장이 없습니다. 새로 고침용이면 뺍니다.")
+    cs, cs_http = meta.get("charset"), meta.get("charset_http")
+    if cs and cs_http and cs != cs_http:
+        add("메타 태그", "warn", f"문자 인코딩이 두 자리에서 다릅니다: 응답 헤더 {cs_http}, meta {cs}",
+            "둘을 같은 값(대개 utf-8)으로 맞추세요. 어긋나면 글자가 깨져 보이거나 깨진 채 색인됩니다.")
+    if text.get("lorem"):
+        add("채움 글", "bad", f"자리 채움 글(lorem ipsum)이 {text['lorem']}곳 남아 있습니다",
+            "템플릿의 채움 글을 실제 내용으로 바꾸거나 그 구간을 지우세요.")
+    if shell:
+        return out
+    skips = [x for x in (sig.get("h") or {}).get("skips") or [] if isinstance(x, list) and len(x) == 3]
+    if skips:
+        add("제목 구조", "warn",
+            "제목 단계를 건너뜁니다: " + ", ".join(f"{a}→{b} {n}곳" for a, b, n in skips[:4]),
+            "건너뛴 자리의 제목을 한 단계 위로 올리거나(H4→H3) 사이에 맞는 제목을 두세요. 단계는 "
+            "글의 뼈대이고, 글자 크기는 CSS 로 정합니다.")
+    if links.get("http"):
+        add("링크 품질", "warn", f"https 사이트인데 제 페이지를 http:// 로 거는 링크 {links['http']}개",
+            "링크 주소를 https:// 로 바꾸세요. 누를 때마다 리다이렉트를 한 번 더 탑니다.")
+    if links.get("empty"):
+        add("링크 품질", "warn", f"글자도 이름(aria-label·그림의 alt)도 없는 링크 {links['empty']}개",
+            "링크가 어디로 가는지 글자나 aria-label 로 적으세요. 화면 낭독기도 검색엔진도 이 "
+            "링크가 무엇인지 모릅니다.")
+    if isinstance(links.get("generic"), int) and links["generic"] >= GENERIC_ANCHOR_MIN:
+        add("링크 품질", "warn", f"어디로 가는지 알 수 없는 링크 글자('여기'·'더 보기' 같은 말)가 "
+                              f"{links['generic']}개",
+            "링크 글자를 도착하는 페이지가 무엇인지 말하는 말로 바꾸세요. 앵커 글자는 검색엔진이 "
+            "그 페이지의 주제를 읽는 재료입니다.")
+    if (text.get("hidden_words") or 0) >= HIDDEN_TEXT_MIN:
+        add("숨긴 텍스트", "warn",
+            f"화면에 안 보이게 숨긴 글이 {text['hidden_words']}단어 있습니다(인라인 display:none·"
+            "visibility:hidden·hidden 속성)",
+            "사람에게 안 보이는 글을 검색엔진용으로 둔 것이면 지우세요(스팸 정책 위반입니다). "
+            "누르면 열리는 메뉴·탭이면 그대로 둬도 됩니다. 어느 쪽인지 확인만 합니다.")
+    words, mw = audit.get("words"), text.get("main_words")
+    if isinstance(words, int) and isinstance(mw, int) and mw < THIN_WORDS <= words \
+            and page_lang.lang_of(audit.get("html_lang")) not in page_lang.NO_SPACE_LANGS:
+        add("본문", "warn", f"전체 {words}단어 중 메뉴·꼬리말을 뺀 본문은 약 {mw}단어로 얇습니다",
+            f"이 검색어를 다루는 하위 질문을 채워 본문을 {THIN_WORDS}단어 이상으로 늘리세요. "
+            "지금 길이의 대부분은 어느 페이지에나 있는 틀입니다.")
+    junk = (sig.get("img") or {}).get("junk_alt") or 0
+    if junk:
+        add("이미지", "warn", f"alt 가 그림을 설명하지 않는 이미지 {junk}개(파일 이름·'image' 같은 말)",
+            "무엇을 보여주는 그림인지로 alt 를 다시 쓰세요. 파일 이름이나 '이미지'는 alt 가 없는 "
+            "것과 같습니다.")
+    return out
+
+
+# E-E-A-T 로 **셀 수 있는** 신호 — 있다/없다만. 점수로 합치지 않는다: 합치려면 가중치를 지어내야
+# 하고, 그 숫자는 구글의 어떤 문서에도 없다. 열쇠는 수집기(collect_page._signals 의 eeat)와 한 벌.
+EEAT_SIGNALS = (
+    ("author", "저자 표기"), ("author_link", "저자 페이지 링크"),
+    ("author_profile", "저자 마크업의 소개 주소(url·sameAs)"),
+    ("date_shown", "화면의 날짜(<time>)"), ("modified", "수정일 마크업"),
+    ("about_link", "소개 페이지 링크"), ("contact_link", "연락처 페이지 링크"),
+)
+
+
+def page_info(audit: dict | None, *, site_type: str = "") -> list[str]:
+    """이 페이지에 대해 **알아 둘 것** — 진단(page_advice)이 아니다. 고칠 것으로 세우지 않는다.
+
+    요청문의 '지금 이 페이지 상태'가 사실로 싣는다. 판정이 못 되는 것만 온다: 리치 결과가 끝난
+    마크업(둬도 해가 없다), 공유 카드 태그, 셀 수 있는 신뢰 신호, 가독성 값, 접힌 글 수."""
+    if not audit or audit.get("error"):
+        return []
+    L: list[str] = []
+    for t, feature, since in retired_in(audit):
+        L.append(f"{t} 마크업이 있습니다. 구글의 {feature}는 {since} 에 끝나 리치 결과가 없습니다. "
+                 "둬도 해는 없고, 새로 넣거나 늘릴 이유도 없습니다.")
+    sig = _signals_of(audit)
+    for i in schema_issues(audit, site_type) or []:
+        level, text = schema_values.describe(i)
+        if level == "note":
+            L.append(f"구조화 데이터 참고: {text}.")
+    if sig is None:
+        return L
+    mk = sig.get("markup") or {}
+    for name, key in (("Microdata", "microdata"), ("RDFa", "rdfa")):
+        if mk.get(key):
+            L.append(f"{name} 로 단 구조화 데이터: {', '.join(map(str, mk[key][:8]))}. 구글은 "
+                     "JSON-LD 와 똑같이 읽습니다. 속성이 빠졌는지는 JSON-LD 만 검사했습니다.")
+    og = set((sig.get("meta") or {}).get("og") or [])
+    known = ("og:title", "og:description", "og:image", "twitter:card")
+    L.append("공유 카드 태그: " + " · ".join(
+        x for x in ("있음 " + ", ".join(k for k in known if k in og) if og & set(known) else "",
+                    "없음 " + ", ".join(k for k in known if k not in og) if set(known) - og else "")
+        if x) + ". og:image 는 구글 Discover·이미지 검색이 큰 미리보기로 읽는 자리입니다.")
+    ee = sig.get("eeat") or {}
+    have = [label for k, label in EEAT_SIGNALS if ee.get(k)]
+    lack = [label for k, label in EEAT_SIGNALS if k in ee and not ee.get(k)]
+    if have or lack:
+        L.append("신뢰 신호(정적 HTML 에서 셀 수 있는 것만, 점수 아님): "
+                 + " · ".join(x for x in ("있음 " + ", ".join(have) if have else "",
+                                          "없음 " + ", ".join(lack) if lack else "") if x) + ".")
+    text = sig.get("text") or {}
+    if not audit.get("js_shell"):
+        if isinstance(text.get("main_words"), int):
+            L.append(f"본문만(메뉴·꼬리말·곁가지 제외) 약 {text['main_words']}단어.")
+        rd = sig.get("read")
+        if isinstance(rd, dict):
+            L.append(f"가독성(참고): 문장 {rd.get('sentences')}개, 문장당 {rd.get('wps')}낱말"
+                     + (f", {rd['formula']} {rd.get('score')}(음절 수는 근사)" if rd.get("formula") else "")
+                     + ". 판정이 아니라 상위 글과 견줄 때 쓰는 값입니다.")
+        if text.get("fold_words"):
+            L.append(f"접힌 아코디언(<details>) 속 글 {text['fold_words']}단어. 숨긴 글이 아닙니다.")
+    n = (sig.get("snippet") or {}).get("data_nosnippet") or 0
+    if n:
+        L.append(f"data-nosnippet 으로 스니펫에서 뺀 구간 {n}곳.")
+    if sig.get("url_date") and not audit.get("published"):
+        L.append(f"주소에 날짜가 있습니다({sig['url_date']}). 마크업에는 발행일이 없어 발행일로 "
+                 "치지 않았습니다.")
+    return L
+
+
+def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None,
+                site_type: str = "") -> list[dict]:
     """이 페이지의 무엇을 바꿔야 하나 — 결정적 규칙. 화면이 그대로 그린다.
 
     반환: [{"tag": 손댈 자리, "level": "bad"|"warn", "now": 지금 상태, "fix": 할 일}]
@@ -2278,6 +2658,12 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
             "본문 첫 줄을 붙여 넣은 것이 검색결과에 그대로 뜹니다. "
             "(이 '…' 는 표를 줄이며 여기서 자른 표시입니다. 실제 태그가 저기서 끝난다는 "
             "뜻이 아닙니다. 판정도 추정이니 페이지를 열어 태그 원문을 보고 확인하세요.)")
+    elif desc_template_kind(desc, title):
+        add("meta description", "warn",
+            f"{DESC_TEMPLATE_KINDS[desc_template_kind(desc, title)]}: {desc[:60]}",
+            "이 페이지가 무엇에 답하고 누구를 위한 것인지 2~3문장으로 직접 쓰세요. title 을 "
+            "되풀이한 설명은 검색결과에서 같은 말이 두 줄로 뜹니다. 템플릿이 title 을 설명 자리에 "
+            "넣고 있으면 그 템플릿을 고칩니다.")
     elif len(desc) > (DESC_MAX_KO if _wide(desc) else DESC_MAX):
         add("meta description", "warn", f"{len(desc)}자라 뒤가 잘립니다",
             f"{DESC_MAX_KO if _wide(desc) else DESC_MAX}자 이내로. 중요한 말을 앞에 두세요.")
@@ -2351,20 +2737,24 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
     home_owner = (gaps is not None and not audit.get("js_shell")
                   and is_home(str(audit.get("url") or ""), domain))
     if not schema and head and not home_owner:
+        # 권하는 유형은 사이트 타입·페이지 종류에서 온다(suggested_types) — 리치 결과가 끝난
+        # 유형(RETIRED_TYPES)은 후보에 없다.
+        sug = "·".join(suggested_types(audit, site_type))
         if audit.get("js_shell"):
             add("구조화 데이터", "warn", "정적 HTML 에는 ld+json 이 없습니다 "
                 "(본문도 자바스크립트로 그리는 페이지로 보입니다)",
-                "먼저 리치 결과 테스트(search.google.com/test/rich-results)로 렌더 후에도 "
-                "없는지 확인하세요. 정말 없으면 Article·FAQPage·LocalBusiness 중 하나를 넣습니다.")
+                "없다고 단정하지 않습니다. 자바스크립트가 넣는 것일 수 있으니 먼저 리치 결과 "
+                "테스트(search.google.com/test/rich-results)로 렌더 후에도 없는지 확인하세요. "
+                f"정말 없으면 {sug} 중 이 페이지에 맞는 것을 넣습니다.")
         else:
             add("구조화 데이터", "warn", "ld+json 이 없습니다",
-                "Article·FAQPage·LocalBusiness 중 이 페이지에 맞는 것 하나를 넣으세요. "
+                f"{sug} 중 이 페이지에 맞는 것을 JSON-LD 로 넣으세요. "
                 "AI 답변과 리치 결과가 읽는 자리입니다.")
     # 있는 마크업의 속을 본다 — 수집기가 SCHEMA_RULES 로 검사해 남긴 '빠진 것'. 이 칸이 생기기
     # 전에는 '구조화 데이터: Product' 로 끝나서, 필수 속성이 빠져 리치 결과에 못 나가는 마크업도
     # "있음"으로 읽혔다.
     if gaps is not None:
-        out += _structured_data_advice(audit, gaps)
+        out += _structured_data_advice(audit, gaps, site_type)
         out += entity_advice(audit, gaps, domain)
 
     # 모바일 — 뷰포트가 없으면 모바일 브라우저가 데스크톱 폭(980px)으로 그린 뒤
@@ -2395,6 +2785,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
     if "noindex" in robots:
         add("robots", "bad", f"meta robots: {audit['robots']}",
             "noindex 를 지우기 전에는 이 페이지가 검색에 나오지 않습니다.")
+    out += _robots_extra_advice(audit, "noindex" in robots)
 
     canon = (audit.get("canonical") or "").strip()
     if canon and host_of(canon) and domain and not owns(host_of(canon), domain):
@@ -2403,6 +2794,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
     elif canon and norm(canon) != norm(audit.get("url") or ""):
         add("canonical", "warn", f"canonical: {canon}",
             "이 주소가 정본이 아니라고 선언돼 있습니다. 의도한 것인지 확인하세요.")
+    out += _canonical_target_advice(audit)
 
     no_alt = audit.get("images_no_alt") or 0
     if no_alt:
@@ -2433,7 +2825,7 @@ def page_advice(audit: dict | None, queries=(), *, domain: str = "", vitals=None
             f"내보내는 내부 링크 {internal}개, 본문 {round(words_n / internal)}단어당 1개",
             "메뉴·푸터를 뺀 본문 안 링크만 세어 보세요. 본문 안에서도 이 정도면 한 문단에 "
             "링크가 몰려 어느 것이 중요한지 흐려집니다. 이 글의 주제와 가까운 것만 남기세요.")
-    return out
+    return out + signal_advice(audit)
 
 
 # ── 추출성 — "인용될 블록이 있는가" (AI 종류 전용) ───────────────────────────
@@ -2519,6 +2911,21 @@ def extract_advice(audit: dict | None, kind: str) -> list[dict]:
             "챗봇은 문단 단위로 뽑아서, 긴 문단은 통째로 버려집니다." if bot else
             "첫 문단은 요점만 두세 문장으로. 사람이 첫 화면에서 답을 못 찾으면 요약도 "
             "그 문단을 안 씁니다.")
+
+    # H2 구간마다의 첫 문단 — 챗봇은 질문(H2) 바로 아래 문단을 답으로 뽑는다. 첫 문단 하나만
+    # 보면 글머리만 다듬고 구간들은 그대로 둔다. 낱말을 띄어쓰기로 못 세는 언어는 못 잰다.
+    txt = (_signals_of(audit) or {}).get("text") or {}
+    leads = [n for n in txt.get("sec_leads") or [] if isinstance(n, int)]
+    longs = sum(n > LEAD_MAX_WORDS for n in leads)
+    if longs and page_lang.lang_of(audit.get("html_lang")) not in page_lang.NO_SPACE_LANGS:
+        add(tag, "warn",
+            f"H2 구간 {len(leads)}개 중 {longs}개가 {LEAD_MAX_WORDS}단어를 넘는 문단으로 시작합니다"
+            + (f" (본문 문단 {txt.get('paras')}개 중 그런 문단 {txt.get('long_paras')}개)"
+               if txt.get("long_paras") else ""),
+            "구간마다 H2 바로 아래 첫 문단을 그 제목의 직답 두세 문장으로 줄이고, 나머지는 다음 "
+            "문단으로 넘기세요. 챗봇은 문단 단위로 뽑아서 긴 문단은 통째로 버려집니다." if bot else
+            "구간마다 첫 문단은 그 제목에 대한 요점만 두세 문장으로. 훑어 읽는 사람이 구간 "
+            "첫머리에서 답을 못 찾으면 요약도 그 구간을 안 씁니다.")
 
     tables, lists = audit.get("tables"), audit.get("lists")
     if tables == 0 and lists == 0:
@@ -5219,11 +5626,11 @@ def _reason_backlink_mention(r: dict, ctx: dict) -> str:
 _CTR_ACTS = [
     "title 앞 60자 안에서 검색 의도에 바로 답하고, 브랜드명은 뒤로 밉니다.",
     "meta description 에 숫자·연도·구체적 이득을 적습니다.",
-    # "FAQ·HowTo 스키마로 면적을 넓힌다"였다 — 구글은 2023년에 HowTo 리치 결과를
-    # 거두고 FAQ 를 정부·보건 권위 사이트로 좁혔다(_AIO_PLAY 주석과 같은 사실).
+    # "FAQ·HowTo 스키마로 면적을 넓힌다"였다 — 구글은 2023년에 HowTo 리치 결과를 거뒀고
+    # FAQ 리치 결과도 2026-05-07 에 끝났다(정본은 RETIRED_TYPES — 날짜·출처는 거기서 본다).
     "검색결과에 실제로 보이는 모습을 봅니다. 구글이 title 을 바꿔 보여 주는지, "
-    "날짜·이동 경로(breadcrumb)가 맞게 나오는지. FAQ·HowTo 리치 결과는 대부분 "
-    "사이트에서 더는 안 나옵니다.",
+    "날짜·이동 경로(breadcrumb)가 맞게 나오는지. FAQ·HowTo 리치 결과는 "
+    "더는 안 나옵니다.",
     "검색 의도와 제목이 어긋나 있지 않은지 확인합니다(정보형 검색에 판매 제목)."]
 _CTR_DELIVER = ["까닭 판정 표: 갈래(제목 불일치 · 의도 어긋남 · 스니펫 약함) | 요청문의 기계 판정 | "
                 "검색결과를 직접 열어 본 것 | 맞나. 아래 산출물은 맞는 갈래만 고칩니다. 의도가 "

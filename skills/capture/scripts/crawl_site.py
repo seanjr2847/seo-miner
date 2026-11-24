@@ -23,6 +23,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from urllib.parse import parse_qsl, urljoin, urlsplit
 
+import page_lang
 import scoring
 
 # ── 상태 코드 ───────────────────────────────────────────────────────────────
@@ -767,24 +768,9 @@ def hreflang_issues(pages) -> list[tuple]:
 
 # ── 신뢰 페이지 · 매장 찾기 ─────────────────────────────────────────────────
 # 주소·앵커에 이 말이 있으면 그 페이지다. 언어를 가리지 않고 한 벌 — 사이트 언어를 몰라도 된다.
-# (라벨, 주소·앵커에 나오는 말들 — 소문자)
-TRUST_PAGES = {
-    "contact": ("연락처", ("contact", "kontakt", "contacto", "contatti", "contato", "문의",
-                           "연락처", "오시는", "お問い合わせ", "お問合せ", "联系", "聯絡", "聯繫",
-                           "связаться", "контакт", "iletisim", "iletişim", "اتصل")),
-    "privacy": ("개인정보처리방침", ("privacy", "datenschutz", "privacidad", "privacidade",
-                                    "confidentialite", "confidentialité", "개인정보",
-                                    "プライバシー", "個人情報", "隐私", "隱私", "конфиденциальн",
-                                    "gizlilik", "الخصوصية")),
-    "terms": ("이용약관", ("terms", "conditions", "tos", "agb", "nutzungsbedingungen", "terminos",
-                           "términos", "condiciones", "cgu", "cgv", "termos", "이용약관", "약관",
-                           "利用規約", "规约", "條款", "条款", "условия", "kosullar", "koşullar",
-                           "الشروط")),
-    "reviews": ("후기", ("review", "testimonial", "bewertung", "erfahrungen", "opiniones",
-                         "resenas", "reseñas", "avis", "recensioni", "depoimentos", "avaliacoes",
-                         "후기", "리뷰", "レビュー", "口コミ", "お客様の声", "评价", "評價", "отзыв",
-                         "yorum")),
-}
+# 말 목록의 정본은 page_lang.TRUST_WORDS(페이지 신호의 소개·연락처 표와 한 벌). 여기는 라벨만.
+TRUST_PAGES = {kind: (label, page_lang.TRUST_WORDS[kind]) for kind, label in (
+    ("contact", "연락처"), ("privacy", "개인정보처리방침"), ("terms", "이용약관"), ("reviews", "후기"))}
 # 매장 찾기·지점 목록 페이지의 주소·앵커에 나오는 말
 LOCATOR_WORDS = ("store-locator", "storelocator", "find-a-store", "find-store", "stores", "locations",
                  "our-locations", "branches", "매장찾기", "매장안내", "매장 찾기", "지점안내",

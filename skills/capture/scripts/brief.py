@@ -663,6 +663,17 @@ DELIVER_BY_TAG = {
     "저자": "저자 표시 자리: 본문 바이라인과 ld+json author 에 넣을 틀. 이름·자격은 "
             "[저자] 로 비워 둡니다",
 }
+# 기계 점검(scoring.signal_advice)의 태그 — 열어만 봐도 아는 것들. 틀이 없으면 화면 폴백
+# 요청문(by_tag)에서 그 진단이 조용히 빠진다. 태그 이름의 정본은 scoring.SIGNAL_TAGS 다.
+DELIVER_BY_TAG.update({
+    "제목 구조": "고칠 제목 단계 목록: 지금 태그·글자 | 바꿀 태그. 제목 글자는 그대로 둡니다",
+    "링크 품질": "고칠 링크 목록: 지금 주소·링크 글자 | 바꿀 주소 또는 링크 글자(도착하는 페이지가 "
+              "무엇인지 말하게)",
+    "혼합 콘텐츠": "https 로 바꿀 자원 주소 목록과, https 로 안 열리는 것의 대안",
+    "메타 태그": "고칠 meta 태그(또는 응답 헤더) 한 줄씩: 지금 값 | 바꿀 값 | 넣을 자리",
+    "채움 글": "남은 채움 글 자리마다 넣을 실제 문안, 또는 그 구간을 지운다는 판단",
+    "숨긴 텍스트": "숨긴 글 구간 목록: 무엇이 숨겨져 있나 | 사람이 여는 방법이 있나 | 남길지 지울지",
+})
 DELIVER_DEFAULT = "지금 이 페이지에서 가장 먼저 고칠 것 세 가지와, 각각 무엇을 무엇으로 바꿀지"
 # 고치기 요청문의 '내용 보강' — 기회 종류와 상관없이 늘 선다. 요청문은 상위 글 H2·형식 비교·
 # 함께 묻는 질문을 재료로 싣는데, 그걸로 본문을 채우라는 산출물이 없어서 답이 제목·설명만
@@ -1117,6 +1128,8 @@ def _page_state(a: dict | None, url: str, *, author_work: bool = True) -> list[s
     # 추출성 — "인용될 블록이 있는가"의 재료. 판정은 scoring.extract_advice(AI 종류만)가
     # 하고, 여기는 사실만 싣는다. 옛 행(칸이 NULL)에는 이 줄이 없다 — "표 0" 을 지어낸다.
     structured = scoring._has_extract_fields(a)
+    # 알아 둘 것(scoring.page_info) — 진단이 아니라 사실 줄이다. 문장의 정본은 거기다.
+    L += [f"- {x}" for x in a.get("info") or []]
     if structured:
         lead, au = a.get("lead_words"), a.get("author")
         L.append("- 본문 구조: " + " · ".join((
@@ -1989,6 +2002,7 @@ def _site_facts(ctx: dict, url: str | None, *, link_candidates: bool = False,
 # 같은 요청문이 [속도] 는 '이번 일은 아닙니다'로 빼고 그 원인인 이미지 재인코딩은 시켰다.
 TECH_TAGS = ("모바일", "언어", "hreflang", "속도", scoring.IMAGE_WEIGHT_TAG, "robots", "canonical",
              "가져오기")
+TECH_TAGS += scoring.SIGNAL_TECH_TAGS     # 혼합 콘텐츠·메타 태그 — 서버·템플릿 쪽 일이다
 
 
 # 고칠 페이지의 canonical 이 다른 주소일 때 산출물 맨 앞 — 나머지 산출물이 어느 주소의
