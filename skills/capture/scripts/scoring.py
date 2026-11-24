@@ -1913,6 +1913,47 @@ def _has_render_fields(audit: dict) -> bool:
 
 # ISO 639-1 언어 + 선택적 ISO 3166-1 Alpha 2 지역. 'en-UK' 는 코드가 아니다(영국은 GB).
 _HREFLANG_RE = re.compile(r"^[a-z]{2,3}(-[A-Za-z]{4})?(-[A-Za-z]{2}|-\d{3})?$")
+# 꼴만 보면 eng·jp·es-LA·en-EU 가 통과한다 — 코드처럼 생겼지만 명단에 없는 값이다. 구글은 언어를
+# ISO 639-1, 지역을 ISO 3166-1 Alpha 2, 문자 체계를 ISO 15924 로만 읽고 "es-419 처럼 그 표준에
+# 없는 코드는 지원하지 않는다"고 적는다. 그래서 실명단으로 본다.
+# https://developers.google.com/search/docs/specialty/international/localized-versions (2026-11-24 확인)
+ISO_639_1 = frozenset(
+    "aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br bs ca ce ch co cr cs cu cv cy "
+    "da de dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu "
+    "hy hz ia id ie ig ii ik io is it iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb "
+    "lg li ln lo lt lu lv mg mh mi mk ml mn mr ms mt my na nb nd ne ng nl nn no nr nv ny oc oj om "
+    "or os pa pi pl ps pt qu rm rn ro ru rw sa sc sd se sg si sk sl sm sn so sq sr ss st su sv sw "
+    "ta te tg th ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh yi yo za zh zu".split())
+ISO_3166_1 = frozenset(
+    "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR "
+    "BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ "
+    "EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW "
+    "GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY "
+    "KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV "
+    "MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY "
+    "QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG "
+    "TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM "
+    "ZW".split())
+
+
+def hreflang_code_ok(code) -> bool:
+    """hreflang 값이 구글이 읽는 코드인가 — 언어[-문자 체계][-지역], 또는 x-default.
+
+    언어는 ISO_639_1, 지역은 ISO_3166_1 명단에 있어야 한다(대소문자는 안 가린다). 문자 체계는
+    네 글자 꼴만 본다(ISO 15924 는 명단이 길고 쓰이는 값이 Hans·Hant·Latn·Cyrl 정도다).
+    페이지 처방(_hreflang_advice)과 크롤 이슈(collect_crawl)가 이 한 벌을 본다."""
+    c = str(code or "").strip()
+    if c.lower() == "x-default":
+        return True
+    parts = c.split("-")
+    if parts[0].lower() not in ISO_639_1:
+        return False
+    rest = parts[1:]
+    if rest and re.fullmatch(r"[A-Za-z]{4}", rest[0]):
+        rest = rest[1:]
+    if rest and rest[0].upper() in ISO_3166_1 and len(rest[0]) == 2:
+        rest = rest[1:]
+    return not rest
 
 
 def _hreflang_advice(audit: dict) -> list[dict]:
@@ -1937,7 +1978,7 @@ def _hreflang_advice(audit: dict) -> list[dict]:
                     "now": f"이 페이지가 자기 hreflang 목록에 없습니다 ({len(rows)}개 선언)",
                     "fix": "자기 자신을 가리키는 항목을 넣으세요. 자기 참조가 빠지면 구글이 "
                            "이 페이지의 hreflang 전부를 버립니다."})
-    bad = [c for c in codes if c.lower() != "x-default" and not _HREFLANG_RE.match(c)]
+    bad = [c for c in codes if not hreflang_code_ok(c)]
     bad += [c for c in codes if "-" in c and c.split("-")[-1].lower() in ("uk",)]
     if bad:
         out.append({"tag": "hreflang", "level": "bad",
@@ -2020,6 +2061,98 @@ def _desc_scraped(desc: str, title: str, h1: str) -> bool:
     if not all(_has_token(t, set(got)) for t in want):
         return False
     return not _SENT_PUNCT.search(d[:len(head) + 6])
+
+
+# ── 템플릿 메타 — 설명 칸이 손으로 쓴 문장이 아니라 틀이 찍은 것인가 ──────────
+# dup_description 은 글자가 완전히 같을 때만 선다. 틀은 페이지마다 제목만 바꿔 끼우므로 글자는
+# 다 다르다 — "{제목}. 자세히 보기", "{제목} | 브랜드". 판정 규칙의 정본은 여기 한 벌이고
+# 크롤의 사이트 단위 이슈(collect_crawl.meta_template_issue)와 페이지 처방이 같이 부른다.
+# 상투 CTA 는 언어별 표 한 벌이다 — 표에 없는 언어는 CTA 로 판정하지 않는다(다른 언어의
+# 문구로 재지 않는다). 소문자·NFKC 로 맞대므로 표도 그렇게 적는다.
+DESC_CTA = {
+    "en": ("learn more", "read more", "find out more", "discover more", "click here",
+           "shop now", "buy now", "get started", "contact us today", "call us today",
+           "visit us today", "see more"),
+    "ko": ("자세히 보기", "자세히 알아보기", "더 알아보기", "지금 확인하세요", "지금 바로 확인하세요",
+           "바로가기", "문의하세요", "지금 문의하세요", "더보기"),
+    "ja": ("詳しくはこちら", "詳細はこちら", "今すぐチェック", "お問い合わせください", "続きを読む"),
+    "zh": ("了解更多", "瞭解更多", "点击这里", "點擊這裡", "查看详情", "查看詳情", "立即购买", "立即購買"),
+    "de": ("mehr erfahren", "jetzt entdecken", "hier klicken", "jetzt kaufen", "jetzt informieren",
+           "weiterlesen"),
+    "es": ("más información", "leer más", "haz clic aquí", "descubre más", "compra ahora",
+           "saber más"),
+    "fr": ("en savoir plus", "lire la suite", "cliquez ici", "découvrez", "achetez maintenant"),
+    "pt": ("saiba mais", "leia mais", "clique aqui", "compre agora", "descubra mais"),
+    "it": ("scopri di più", "leggi di più", "clicca qui", "acquista ora"),
+}
+# 제목이 '주제 | 브랜드' 로 갈리는 자리. 붙임표는 양옆이 비어 있을 때만 구분자다(well-known 은 한 낱말).
+_META_SEP = re.compile(r"\s+[|—–\-·:»•]\s+|\s*[|»•]\s*")
+# 제목 되풀이 뒤에 오면 '틀이 끊은 자리'인 글자 — 쉼표·쌍점은 손으로 쓴 문장도 잇는다.
+_META_BREAK = ".|。»•·"
+
+
+# 꼴 이름 → 화면·요청문에 나가는 말. 꼴을 더하면 여기도 더한다(desc_template_kind 가 돌려주는 값 전부).
+DESC_TEMPLATE_KINDS = {"same_as_title": "제목과 같음", "brand_tail": "브랜드 꼬리가 붙음",
+                       "title_repeat": "제목을 되풀이"}
+
+
+def _meta_norm(s: str) -> str:
+    """비교용 한 줄 — NFKC·소문자로 접고 글자·숫자만 남긴다. 어느 문자 체계든 글자는 글자다
+    (라틴만 남기면 한글·가나·한자 설명은 빈 문자열끼리 '같다'가 된다)."""
+    return "".join(ch for ch in unicodedata.normalize("NFKC", str(s or "")).casefold()
+                   if ch.isalnum())
+
+
+def _meta_rest(desc: str, head_norm: str) -> str | None:
+    """desc 가 head 로 시작하면 그 뒤 원문. 아니면 None."""
+    got = 0
+    for i, ch in enumerate(desc):
+        if got >= len(head_norm):
+            return desc[i:]
+        n = _meta_norm(ch)
+        if not n:
+            continue
+        if not head_norm.startswith(n, got):
+            return None
+        got += len(n)
+    return "" if got >= len(head_norm) else None
+
+
+def desc_template_kind(desc: str, title: str, *, lang: str = "") -> str | None:
+    """meta description 이 틀이 찍은 꼴이면 그 꼴 이름, 아니면 None.
+
+    same_as_title — 설명이 제목과 같다(구두점·대소문자만 다르다).
+    brand_tail    — 제목의 브랜드 꼬리('… | 브랜드')가 설명 끝에 그대로 붙었다.
+    title_repeat  — 설명이 제목(또는 그 앞부분)을 되풀이하고 끊은 뒤 다른 말을 잇는다
+                    ('{제목}. …', '{제목} 자세히 보기'). 제목의 말로 시작하는 문장은 아니다.
+    lang 은 페이지 언어('en-US'·'ko') — 상투 CTA 표(DESC_CTA)를 고르는 데만 쓴다.
+    """
+    d, t = (desc or "").strip(), (title or "").strip()
+    nd, nt = _meta_norm(d), _meta_norm(t)
+    if not nd or not nt:
+        return None
+    if nd == nt:
+        return "same_as_title"
+    parts = [x.strip() for x in _META_SEP.split(t) if x and x.strip()]
+    head = parts[0] if parts else t
+    tail = parts[-1] if len(parts) > 1 else ""
+    if tail and re.search(r"[|—–\-·»•]\s*" + re.escape(tail) + r"\s*[.。]?\s*$", d, re.I):
+        return "brand_tail"
+    nh = _meta_norm(head)
+    if len(nh) < 4:                      # 한두 글자 제목은 어느 문장이든 그걸로 시작한다
+        return None
+    whole = _meta_rest(d, nt)
+    if whole is not None and whole.strip():
+        return "title_repeat"            # 제목 전체(브랜드까지)가 설명 앞에 통째로 들어갔다
+    rest = _meta_rest(d, nh)
+    if rest is None or not rest.strip():
+        return None
+    r = rest.lstrip()
+    if r[0] in _META_BREAK:
+        return "title_repeat"
+    low = unicodedata.normalize("NFKC", r).casefold()
+    cta = DESC_CTA.get(str(lang or "").split("-")[0].lower(), ())
+    return "title_repeat" if any(low.startswith(c) for c in cta) else None
 
 
 # 어느 페이지든 같은 문장이다 — 검색어를 박으라는 지시가 아니라 판단을 시킨다.

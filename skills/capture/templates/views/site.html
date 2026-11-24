@@ -324,6 +324,15 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
 .cr-diff > span + span.ok { color:var(--accent); background:var(--accent-wash); }
 .cr-url { min-width:20ch; max-width:48ch; }
 /* 다국어 — 갈래마다 한 묶음(이름·심각도·건수 / 왜 / 걸린 자리 몇 줄). 묶음 사이는 옅은 선. */
+/* 사이트 사실 — 이름·값 두 칸. 값에는 주소가 들어가 길어질 수 있어 어디서든 끊는다.
+   좁은 화면에서는 한 칸으로 쌓는다(두 칸을 유지하면 값이 세 글자 폭으로 눌린다). */
+#view-site .crf { display:grid; grid-template-columns:minmax(8em, 13em) minmax(0, 1fr);
+  gap:2px var(--sp-3); padding:8px 0; border-top:1px solid var(--line); font-size:var(--fs-1); }
+#view-site .crf:first-child { border-top:0; }
+#view-site .crf-k { color:var(--sub); }
+#view-site .crf-v { overflow-wrap:anywhere; }
+#view-site #cr-facts .detn { margin-top:var(--sp-3); }
+@media (max-width:640px) { #view-site .crf { grid-template-columns:minmax(0, 1fr); } }
 #view-site .in-k { padding:12px 0; border-top:1px solid var(--line); }
 #view-site .in-k:first-child { border-top:0; padding-top:0; }
 #view-site .in-h { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 4px; }
@@ -410,6 +419,10 @@ tr.rw[aria-expanded="true"] > td:first-child > .stu::before { content:"▾"; col
   <div class="cr-diff" id="cr-diff"></div>
   <div id="cr-chips" class="oppchips"></div>
   <div id="crawl"><div class="skel box"></div></div>
+  <!-- 크롤이 사이트에 대해 한 번 본 것(robots.txt·사이트맵 파일·호스트·탐침). 줄의 글자는 서버가
+       만든다(collect_crawl.fact_lines → crawl_runs.facts_json) — 여기 이름을 적으면 사본이다. -->
+  <details class="why" id="cr-facts-wrap" hidden><summary>크롤이 사이트에 대해 본 것</summary>
+    <div id="cr-facts"></div></details>
   <details class="why"><summary>여러 쪽에 걸친 문제</summary>
     <p>사이트를 따라 돌며 링크와 페이지 상태를 전수로 본 결과입니다.
       <b>깨진 내부 링크·리다이렉트 사슬·고아 페이지는 한 장만 봐서는 안 나옵니다.</b>
@@ -1770,6 +1783,23 @@ function stKpCrawl(d) {
     ${bars ? `<div class="kp-viz">${bars}</div>` : ""}`);
 }
 
+/* ── 사이트 사실 ───────────────────────────────────────────
+   크롤이 사이트에 대해 한 번 본 것. 줄(이름·값)은 서버가 만든다(collect_crawl.fact_lines) —
+   화면은 그리기만 한다. g="agent" 줄은 에이전트용 발견 파일류다: 있는지 없는지만 적고 기회로
+   올리지 않는다(없는 것이 결함이 아니다). 이 칸 전의 회차에는 facts_json 이 없다 — 접힘째 숨긴다. */
+function CR_facts(d) {
+  let f = null;
+  try { f = JSON.parse((((d.crawl || {}).run || {}).facts_json) || "null"); } catch (e) { f = null; }
+  const lines = ((f || {}).lines || []).filter(l => l && l.k && l.v);
+  if (!lines.length) return "";
+  const row = l => `<div class="crf"><span class="crf-k">${esc(l.k)}</span>`
+    + `<span class="crf-v">${esc(l.v)}</span></div>`;
+  const site = lines.filter(l => l.g !== "agent"), agent = lines.filter(l => l.g === "agent");
+  return site.map(row).join("") + (agent.length
+    ? `<p class="detn">아래는 에이전트용 파일·표식입니다. 있는지 없는지만 적습니다. 없다고 문제가 아니고, `
+      + `기회 목록에 올리지 않습니다.</p>` + agent.map(row).join("") : "");
+}
+
 function renderCrawl(d) {
   CR_D = d; CR_N = CR_PAGE;
   CR_KIND = d.crawl_kinds || {};   // 이름표의 정본은 서버(collect_crawl.ISSUE_KIND)다
@@ -1793,6 +1823,9 @@ function renderCrawl(d) {
       hint("줄을 누르면 왜 문제이고 무엇을 고치면 되는지가 나옵니다. 고친 뒤 다시 크롤하면 해결된 것에 쌓입니다.");
   // 걸린 게 없으면 칩·표를 안 만든다 — 회차 비교(직전 대비)는 이 섹션의 결론이라 남긴다.
   $("cr-diff").innerHTML = has ? CR_diff(d) : "";
+  const facts = has ? CR_facts(d) : "";
+  $("cr-facts").innerHTML = facts;
+  $("cr-facts-wrap").hidden = !facts;
   $("cr-chips").innerHTML = has && crn ? CR_chips(d) : "";
   if (!(has && crn)) stTools("cr-tools", "");
   // 빈 상태의 행동은 보조 톤이다 — 주요는 위 다음 걸음 띠 하나가 든다.

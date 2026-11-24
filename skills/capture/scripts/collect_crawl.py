@@ -20,9 +20,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import re
+import socket
+import ssl
 import sys
 import time
+import uuid
 import xml.etree.ElementTree as ET
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
@@ -34,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import collect_page  # noqa: E402
 import collector  # noqa: E402
+import crawl_site  # noqa: E402
 import db  # noqa: E402
 import fanout  # noqa: E402
 import http_adapter  # noqa: E402
@@ -51,6 +56,14 @@ MAX_HOPS = 2              # 리다이렉트 홉이 이 수 이상이면 redirect
 MAX_SITEMAPS = 20         # sitemap index 에서 따라갈 하위 사이트맵 수
 MAX_SITEMAP_URLS = 5000   # 사이트맵에서 읽어 들일 URL 상한 (limit 이 다시 자른다)
 ANCHOR_MAX = 200          # 앵커 텍스트 저장 길이
+# 속도 제한(429·430·503 — crawl_site.RATE_STATUS)에 걸린 장은 물러섰다가 다시 묻는다.
+RETRY_MAX = 2             # 다시 묻는 횟수
+RETRY_WAIT = 2.0          # 첫 대기(초). 다음은 두 배. Retry-After 가 있으면 그 값(상한까지)
+RETRY_WAIT_MAX = 30.0
+RATE_GIVE_UP = 10         # 연달아 이만큼 속도 제한이면 더 기다리지 않는다(사이트가 통째로 막는 중이다)
+CRAWL_DELAY_MAX = 10.0    # robots.txt Crawl-delay 를 따르는 상한(초) — 그보다 크면 이 값으로 돈다
+ROBOTS_RETRY_WAIT = 2.0   # robots.txt 가 5xx 면 한 번 더 묻기 전에 쉬는 시간
+_sleep = time.sleep       # 검사가 갈아끼운다 — 물러서기를 실제로 기다리지 않게
 
 # 갈래 이름·왜 문제인지의 정본. 화면(site.html 의 CR_KIND)과 요청문(brief) 둘 다
 # 이것을 쓴다 — 한국어 라벨이 화면 JS 안에만 있던 동안, 요청문은 같은 갈래를
@@ -103,6 +116,86 @@ ISSUE_KIND = {
     "intl_schema_lang": ["구조화 데이터 언어 불일치",
                          "다른 언어 페이지의 업체 이름·주소(구조화 데이터)가 사이트 기본 언어로 "
                          "적혀 있습니다. 그 언어 검색의 업체 정보에 그대로 쓰입니다."],
+    # ── 다국어 판 사이 동등성 (crawl_site.intl_more) ──
+    "intl_same_body": ["번역 안 된 본문",
+                       "다른 언어 판의 본문이 기본 언어 판과 같습니다. 구글은 둘을 "
+                       "중복으로 접고, 그 언어로 찾는 사람은 못 읽습니다."],
+    "intl_no_inlanguage": ["inLanguage 없음",
+                           "글 마크업에 어느 언어인지가 없습니다. 언어 판이 여럿이면 판마다 적어 "
+                           "두는 편이 안전합니다."],
+    "intl_parity": ["언어 판 사이 분량 차이",
+                    "다른 언어 판이 기본 판보다 구간(H2)·이미지가 절반 이하입니다. 옮기다 빠진 "
+                    "구간이 있는지 보세요."],
+    "intl_stale": ["원문보다 오래된 번역",
+                   "원문을 고친 뒤 번역 판은 그대로입니다. 바뀐 내용이 그 언어에는 안 전해졌습니다."],
+    "intl_legal_missing": ["로케일 법적 고지 없음",
+                           "그 언어권에서 사업자 사이트에 요구되는 고지 페이지가 안 보입니다."],
+    "intl_format": ["원문 순서 그대로인 날짜",
+                    "그 언어가 쓰지 않는 순서(월/일/년)의 숫자 날짜가 남았습니다. 읽는 사람이 "
+                    "날과 달을 바꿔 읽습니다."],
+    # ── 사이트 단위 (crawl_site) — robots·사이트맵 파일·호스트·탐침·여러 장을 맞댄 것 ──
+    "robots_5xx": ["robots.txt 서버 오류",
+                   "robots.txt 가 5xx 를 돌려줍니다. 규칙을 지키는 크롤러는 이 상태에서 사이트 "
+                   "전체를 멈춥니다(구글은 처음 12시간 크롤을 멈추고 30일까지 마지막 사본을 씁니다)."],
+    "robots_unknown": ["robots.txt 판정 불가",
+                       "robots.txt 를 받지 못했습니다(429·응답 없음). 막힌 것인지 열린 것인지 이번 "
+                       "회차로는 말할 수 없습니다."],
+    "sitemap_unreadable": ["읽히지 않는 사이트맵",
+                           "사이트맵 파일이 열리지 않거나 형식이 깨졌습니다. 그 안의 주소는 "
+                           "검색엔진에도 안 전해집니다."],
+    "sitemap_hygiene": ["사이트맵 규격 밖",
+                        "사이트맵에 규격 밖의 것이 있습니다(한도 초과·다른 호스트·추적 파라미터·"
+                        "겹친 주소)."],
+    "sitemap_lastmod": ["믿기 어려운 lastmod",
+                        "구글은 lastmod 가 일관되게 정확할 때만 씁니다. 틀린 값이 섞이면 전부 안 "
+                        "믿습니다."],
+    "sitemap_bad_url": ["사이트맵에 넣으면 안 되는 주소",
+                        "사이트맵은 색인해 달라는 목록입니다. 리다이렉트·오류·noindex·canonical 이 "
+                        "다른 주소는 빼세요."],
+    "not_in_sitemap": ["사이트맵에 빠진 페이지",
+                       "색인될 수 있는 페이지인데 사이트맵에 없습니다. 일부러 뺀 것이 아니면 넣으세요."],
+    "sitemap_news": ["뉴스 사이트맵 규칙 밖",
+                     "뉴스 사이트맵은 한 파일에 1,000개까지, 최근 2일 기사만 싣습니다."],
+    "rate_limited": ["속도 제한으로 못 본 페이지",
+                     "서버가 429·503 으로 답해 이번 회차에 못 봤습니다. 그 페이지의 결함이 아니라 "
+                     "판정하지 않았습니다."],
+    "soft_404": ["없는 주소에 200",
+                 "없는 주소를 열어도 200 이 옵니다(소프트 404). 지운 페이지가 색인에서 안 빠지고 "
+                 "깨진 링크도 안 드러납니다."],
+    "host_http": ["http 주소가 그대로",
+                  "http 판이 https 로 영구 리다이렉트되지 않습니다. 같은 페이지가 두 주소로 "
+                  "색인될 수 있습니다."],
+    "host_dup": ["www 와 비www 가 둘 다 열림",
+                 "www 가 붙은 주소와 안 붙은 주소가 둘 다 열립니다. 한쪽으로 301 하세요."],
+    "cert_expiring": ["인증서 만료 임박",
+                      "TLS 인증서가 곧 만료됩니다. 만료되면 브라우저와 크롤러가 사이트를 못 엽니다."],
+    "url_hygiene": ["주소 꼴",
+                    "색인될 주소에 파라미터·대문자·밑줄·이중 슬래시가 있습니다. 급하지 않습니다 — "
+                    "새 주소부터 맞추세요."],
+    "canonical_bad_target": ["canonical 대상이 잘못됨",
+                             "canonical 이 리다이렉트·오류이거나 다시 다른 주소를 가리킵니다. 구글은 "
+                             "그 말을 버리고 대표 주소를 스스로 고릅니다."],
+    "hreflang_bad_target": ["hreflang 대상이 잘못됨",
+                            "hreflang 이 리다이렉트·오류·noindex·canonical 이 다른 주소를 "
+                            "가리킵니다. 그 짝은 버려집니다."],
+    "hreflang_mixed": ["hreflang 주소 꼴이 섞임",
+                       "한 묶음 안에서 http/https 나 끝 슬래시가 엇갈립니다. 되받는 주소와 글자가 "
+                       "달라 짝이 안 맞습니다."],
+    "hreflang_bad_code": ["hreflang 값이 코드가 아님",
+                          "언어는 ISO 639-1, 지역은 ISO 3166-1 Alpha 2 입니다. 명단에 없는 값은 "
+                          "통째로 무시됩니다."],
+    "template_thin": ["같은 틀의 거의 같은 본문",
+                      "같은 주소 꼴의 페이지들이 이름만 바꾼 같은 글입니다. 구글은 이런 묶음을 "
+                      "도어웨이로 봅니다."],
+    "meta_template": ["틀에서 나온 설명",
+                      "meta description 이 손으로 쓴 문장이 아니라 제목을 되풀이한 틀입니다. 검색 "
+                      "결과에서 제목과 같은 말이 두 번 보입니다."],
+    "trust_missing": ["신뢰 페이지가 안 보임",
+                      "연락처·개인정보처리방침·약관·후기 중 크롤이 못 찾은 것이 있습니다. 있다면 "
+                      "꼬리말에서 링크하세요."],
+    "locator_uncrawlable": ["매장 찾기를 못 읽음",
+                            "매장 찾기·지점 목록 페이지를 크롤러가 읽지 못합니다. 지점 페이지로 가는 "
+                            "길이 여기뿐이면 지점이 색인에서 빠집니다."],
 }
 
 SEVERITY = {
@@ -114,6 +207,19 @@ SEVERITY = {
     "intl_untranslated": "warn", "intl_lang_leak": "warn",
     "intl_missing_translation": "info", "intl_no_switch_link": "warn",
     "intl_xdefault": "warn", "intl_desc_repeat": "warn", "intl_schema_lang": "info",
+    "intl_same_body": "warn", "intl_no_inlanguage": "info", "intl_parity": "info",
+    "intl_stale": "info", "intl_legal_missing": "info", "intl_format": "info",
+    # 사이트 단위 — 'bad' 는 기회 목록(scoring.crawl_gaps)으로 올라간다. robots.txt 5xx 하나뿐이다:
+    # 나머지는 한 줄이 사이트 전체를 말하거나(틀) 급하지 않아 [사이트 점검] 표에서 본다.
+    "robots_5xx": "bad", "robots_unknown": "info",
+    "sitemap_unreadable": "warn", "sitemap_hygiene": "warn", "sitemap_lastmod": "info",
+    "sitemap_bad_url": "warn", "not_in_sitemap": "info", "sitemap_news": "warn",
+    "rate_limited": "info", "soft_404": "warn",
+    "host_http": "warn", "host_dup": "warn", "cert_expiring": "warn", "url_hygiene": "info",
+    "canonical_bad_target": "warn",
+    "hreflang_bad_target": "warn", "hreflang_mixed": "warn", "hreflang_bad_code": "warn",
+    "template_thin": "warn", "meta_template": "warn",
+    "trust_missing": "info", "locator_uncrawlable": "warn",
 }
 
 # 다국어 갈래 — 전부 사이트 여러 장을 맞대야 나온다(요청문 brief.SITE_ONLY_ISSUES 가 이것을 가리킨다).
@@ -167,6 +273,10 @@ class _CrawlPage(collect_page._Page):
         self.alts: list[str] = []             # 비지 않은 img alt — 다국어 검사가 글자 체계를 본다
         self._a: list | None = None
         self._roles: list[int] = []           # role=navigation 등이 열린 스택 깊이
+        self._main: list[str] = []            # 틀(메뉴·머리말·꼬리말) 밖 글자 — 본문 지문의 재료
+        self.links_main = 0                   # 틀 밖 링크 수
+        self.maps = 0                         # 지도 임베드(iframe) 수
+        self.webmcp = False                   # WebMCP 표식(form toolname · modelContext)
 
     def handle_starttag(self, tag, attrs):
         super().handle_starttag(tag, attrs)
@@ -175,6 +285,10 @@ class _CrawlPage(collect_page._Page):
             self._roles.append(len(self._stack))
         if tag == "img" and a0.get("alt", "").strip() and len(self.alts) < 300:
             self.alts.append(a0["alt"].strip())
+        if tag == "iframe" and crawl_site.MAP_EMBED.search(a0.get("src", "")):
+            self.maps += 1
+        elif tag == "form" and "toolname" in a0:
+            self.webmcp = True
         if tag != "a":
             return
         self._close_a()                       # <a/> 처럼 안 닫힌 것이 다음 앵커로 새지 않게
@@ -191,6 +305,11 @@ class _CrawlPage(collect_page._Page):
         super().handle_data(data)
         if self._a:
             self._a[1].append(data)
+        if not (set(self._stack) & collect_page.SKIP_TEXT):
+            if not self._roles and not self._in_chrome():
+                self._main.append(data)
+        elif "modelContext" in data and self._stack and self._stack[-1] == "script":
+            self.webmcp = True
 
     def handle_endtag(self, tag):
         super().handle_endtag(tag)
@@ -203,6 +322,7 @@ class _CrawlPage(collect_page._Page):
             return
         to, buf, nofollow, chrome = self._a
         self.links.append((to, " ".join("".join(buf).split())[:ANCHOR_MAX], nofollow, chrome))
+        self.links_main += int(not chrome)
         self._a = None
 
 
@@ -215,6 +335,8 @@ def parse_page(url: str, html: str) -> dict:
         print(f"  ! {url}: 파싱 도중 중단 ({e})", file=sys.stderr)
     p._close_a()
     text = " ".join(p._text)
+    # 틀 밖 글자 — 시맨틱 태그 없이 짠 페이지는 틀을 못 가르니 전체 글자가 그대로 본문이다
+    main = " ".join(p._main) if any(x.strip() for x in p._main) else text
     return {"title": p.title, "description": p.meta_description,
             "h1": p.h1[0] if p.h1 else None,
             "canonical": p.canonical, "robots": p.robots, "words": p.words,
@@ -234,7 +356,14 @@ def parse_page(url: str, html: str) -> dict:
                         "text": _script_bits(text, long=True),
                         "alt": _script_bits(" | ".join(p.alts))},
             "letters": sum(1 for ch in text if ch.isalpha()),
-            "ld_org": _ld_org(p.ld_blocks)}
+            "ld_org": _ld_org(p.ld_blocks),
+            # 여러 장을 맞대는 판정(crawl_site)의 재료. body_hash·modified·h2s·images 는 표에
+            # 남고(회차 비교), 지문(sketch)은 메모리에서만 쓴다.
+            "body_hash": crawl_site.body_hash(main), "sketch": crawl_site.body_sketch(main),
+            "modified": p.modified, "h2s": len(p.h2), "images": p.images,
+            "maps": p.maps, "webmcp": p.webmcp, "links_main": p.links_main,
+            "ld_inlang": crawl_site.ld_inlanguage(p.ld_blocks),
+            "num_dates": crawl_site.num_date_style(main)}
 
 
 # ── 다국어 재료 (한 장) ──────────────────────────────────────────────────────
@@ -379,14 +508,76 @@ def fetch(url: str) -> dict:
     크롤의 모양(원문+홉)만 만든다. self-check 는 이 함수를 통째로 갈아끼워 가상 사이트를
     만든다 — 그래서 반환 모양(키 이름)이 계약이다.
     """
+    r = fetch_full(url)
+    return {k: r[k] for k in _FETCH_KEYS}
+
+
+_FETCH_KEYS = ("final_url", "status", "chain", "text", "bytes", "content_type", "error")
+
+
+def fetch_full(url: str, *, accept: str | None = None) -> dict:
+    """fetch 와 같은 한 장 + headers(이름 소문자)·content(바이트)·ms(걸린 시간).
+
+    헤더는 X-Robots-Tag·Link(hreflang)·Retry-After 를, 바이트는 gzip 사이트맵을, 시간은 응답
+    지연을 보는 재료다. accept 를 주면 그 Accept 헤더로 **새로** 받는다 — 같은 주소의 HTML 응답을
+    공유받으면 Markdown 협상을 물을 수 없다.
+    """
+    t0 = time.monotonic()
     try:
-        r = http_adapter.get(url, headers=UA, timeout=serp_adapter.TIMEOUTS["page"])
+        if accept:
+            r = http_adapter.get(url, headers={**UA, "Accept": accept},
+                                 timeout=serp_adapter.TIMEOUTS["page"], fresh=True)
+        else:
+            r = http_adapter.get(url, headers=UA, timeout=serp_adapter.TIMEOUTS["page"])
     except Exception as e:
         return {"final_url": url, "status": None, "chain": [], "text": "",
-                "bytes": 0, "content_type": "", "error": f"{type(e).__name__}: {e}"[:200]}
+                "bytes": 0, "content_type": "", "error": f"{type(e).__name__}: {e}"[:200],
+                "headers": {}, "content": b"", "ms": None}
+    ms = int((time.monotonic() - t0) * 1000)
     return {"final_url": r.final_url, "status": r.status, "chain": list(r.chain),
             "text": r.text, "bytes": r.bytes,
-            "content_type": r.content_type, "error": None}
+            "content_type": r.content_type, "error": None,
+            "headers": dict(getattr(r, "headers", None) or {}),
+            # 0ms 는 받은 것이 아니라 한 런 안에서 공유받은 것이다 — 지연으로 세지 않는다
+            "content": getattr(r, "content", b""), "ms": ms or None}
+
+
+_REAL_FETCH = fetch
+
+
+def _get(url: str, accept: str | None = None) -> dict:
+    """이 모듈이 주소를 받는 한 자리. fetch 가 진짜면 헤더까지(fetch_full), 검사가 갈아끼웠으면
+    그 가짜를 부른다(가짜가 dict 에 headers·content 를 넣어 주면 그대로 쓴다). 가짜는 Accept 를
+    못 가르므로 accept 를 준 물음에는 '모름'(status None)을 돌려준다."""
+    f = globals()["fetch"]
+    if f is _REAL_FETCH:
+        return fetch_full(url, accept=accept)
+    if accept:
+        return {"final_url": url, "status": None, "chain": [], "text": "", "bytes": 0,
+                "content_type": "", "error": "accept 탐침은 가짜 fetch 로 못 묻는다"}
+    return f(url)
+
+
+def _retry_after(r: dict) -> float | None:
+    """Retry-After 헤더의 초. 날짜 꼴(HTTP-date)은 읽지 않는다 — 없는 것으로 치고 기본 대기를 쓴다."""
+    v = str((r.get("headers") or {}).get("retry-after") or "").strip()
+    return float(v) if v.isdigit() else None
+
+
+def fetch_patiently(url: str, *, retries: int = RETRY_MAX) -> dict:
+    """한 장을 받되 속도 제한(429·430·503)이면 물러섰다가 다시 묻는다.
+
+    그 응답은 "이 주소가 깨졌다"가 아니라 "지금은 그만 두드려라"다. 그대로 적으면 일부만 속도
+    제한에 걸린 날 없는 http_error 가 서고, 그게 "크롤에서 걸림" 기회가 된다."""
+    r = _get(url)
+    wait = RETRY_WAIT
+    for _ in range(retries):
+        if r.get("status") not in crawl_site.RATE_STATUS:
+            break
+        _sleep(min(_retry_after(r) or wait, RETRY_WAIT_MAX))
+        wait *= 2
+        r = _get(url)
+    return r
 
 
 def _sitemap_urls(url: str, *, follow: bool = True) -> list[str]:
@@ -420,26 +611,75 @@ def discover_seeds(home: str) -> tuple[list[str], str, robotparser.RobotFilePars
     안 했다"는 응답 옆에 **어느 Disallow 줄에 걸리는지**가 없으면, AI 가 원인
     후보를 짐작으로 세운다. 원문은 크롤 회차에 그대로 저장한다.
     """
+    d = discover(home)
+    return d["seeds"], d["seed"], d["rp"], d["robots_txt"]
+
+
+def discover(home: str) -> dict:
+    """robots.txt 와 사이트맵을 읽어 시드를 정한다 — discover_seeds 의 재료 전부.
+
+    {"seeds","seed": sitemap|home,"rp","robots_txt","robots_status","robots_state"(crawl_site.
+     robots_state),"sitemaps": crawl_site.read_sitemaps 결과|None,"entries": 사이트맵 항목(정규화한
+     주소 norm 을 단 것),"fallback": 흔한 경로에서 찾았나,"capped": 상한에서 잘랐나,"listed": 읽은 주소 수}
+
+    달라진 것 셋. ① robots.txt 가 200 이 아닐 때 '없다'(4xx)·'서버 오류'(5xx)·'모른다'(429·
+    응답 없음)를 가른다 — 예전에는 셋 다 "전부 허용"이었다. 크롤은 어느 쪽이든 돈다(내 사이트를
+    보는 일이라 멈추면 아무것도 안 남는다). 무엇이었는지는 회차에 적는다. ② Sitemap: 줄이 없으면
+    흔한 경로(crawl_site.SITEMAP_FALLBACKS)를 두드린다 — 줄이 없다고 사이트맵이 없는 것이 아니고,
+    못 찾으면 orphan·in_sitemap 근거가 통째로 사라진다. ③ 상한을 넘으면 앞에서 자르지 않고 주소
+    꼴별로 돌아가며 뽑는다(crawl_site.stratify).
+    """
     rp = robotparser.RobotFileParser()
-    rp.set_url(urljoin(home, "/robots.txt"))
-    r = fetch(urljoin(home, "/robots.txt"))
+    robots_url = urljoin(home, "/robots.txt")
+    rp.set_url(robots_url)
+    r = _get(robots_url)
+    state = crawl_site.robots_state(r.get("status"))
+    if state == "blocked":
+        # 잠깐의 오류를 '사이트 전체 차단'으로 적지 않게 한 번 더 묻는다
+        _sleep(ROBOTS_RETRY_WAIT)
+        again = _get(robots_url)
+        if crawl_site.robots_state(again.get("status")) != "blocked":
+            r, state = again, crawl_site.robots_state(again.get("status"))
+    raw_txt = r["text"] if state == "ok" and r.get("text") else ""
+    if raw_txt.lstrip()[:200].lower().startswith(("<!doctype", "<html")):
+        raw_txt, state = "", "none"       # 없는 주소를 홈으로 돌려보내는 사이트 — robots.txt 가 아니다
     # 못 읽으면 전부 허용 — robots.txt 가 없는 사이트가 흔하다. parse() 가
     # last_checked 를 세우므로 빈 목록이어도 can_fetch 가 True 를 돌려준다.
-    raw_txt = r["text"] if r.get("status") == 200 and r.get("text") else ""
     rp.parse(raw_txt.splitlines() if raw_txt else [])
 
-    seen, urls = set(), []
-    for sm in (rp.site_maps() or []):
-        for raw in _sitemap_urls(sm):
-            u = normalize(raw)
-            if u and u not in seen:
-                seen.add(u)
-                urls.append(u)
-            if len(urls) >= MAX_SITEMAP_URLS:
-                return urls, "sitemap", rp, raw_txt
-    if urls:
-        return urls, "sitemap", rp, raw_txt
-    return [normalize(home)], "home", rp, raw_txt
+    listed = list(rp.site_maps() or [])
+    sm = crawl_site.read_sitemaps(listed, _get, max_files=MAX_SITEMAPS) if listed else None
+    fallback = False
+    if not (sm and sm["entries"]):
+        for path in crawl_site.SITEMAP_FALLBACKS:
+            cand = urljoin(home, path)
+            if cand in listed:
+                continue
+            one = crawl_site.read_sitemaps([cand], _get, max_files=MAX_SITEMAPS)
+            if one["entries"]:
+                if sm:                   # Sitemap: 줄이 가리킨 (못 읽은) 파일도 기록에 남긴다
+                    one["files"] = sm["files"] + one["files"]
+                sm, fallback = one, True
+                break
+    host = scoring.host_of(home)
+    entries, seen = [], set()
+    for e in (sm or {}).get("entries") or []:
+        u = normalize(e["url"])
+        if u and u not in seen:
+            seen.add(u)
+            entries.append({**e, "norm": u})
+    # 다른 호스트의 주소는 시드로 안 쓴다(사이트맵 위생이 따로 말한다) — 남의 사이트를 두드리지 않는다
+    urls = [e["norm"] for e in entries if scoring.owns(scoring.host_of(e["norm"]), host)]
+    capped = bool(sm and sm["capped"])
+    seeds = urls
+    if len(urls) > MAX_SITEMAP_URLS:
+        seeds, capped = crawl_site.stratify(urls, MAX_SITEMAP_URLS), True
+    out = {"rp": rp, "robots_txt": raw_txt, "robots_status": r.get("status"),
+           "robots_state": state, "sitemaps": sm, "entries": entries, "fallback": fallback,
+           "capped": capped, "listed": len(urls)}
+    if seeds:
+        return {**out, "seeds": seeds, "seed": "sitemap"}
+    return {**out, "seeds": [normalize(home)], "seed": "home"}
 
 
 LLMS_HEAD = 400      # 앞부분만 남긴다 — 무엇을 소개하는 파일인지 알아볼 만큼
@@ -502,9 +742,13 @@ def crawl(seeds, home: str, *, limit: int, max_depth: int,
     def allowed(u: str) -> bool:
         return rp is None or rp.can_fetch(UA_NAME, u)
 
+    streak = {"n": 0}                         # 연달아 속도 제한에 걸린 장 수
+
     def get(u: str) -> dict:
         try:
-            return fetch(u)
+            r = fetch_patiently(u, retries=0 if streak["n"] >= RATE_GIVE_UP else RETRY_MAX)
+            streak["n"] = streak["n"] + 1 if r.get("status") in crawl_site.RATE_STATUS else 0
+            return r
         finally:
             if throttle:
                 time.sleep(throttle)
@@ -555,12 +799,19 @@ def _visit(r: dict, url: str, depth: int, *, host, max_depth, q, seen, pages, li
     parsed.add(final)
 
     row = _row(final, depth, status=r.get("status"), nbytes=r.get("bytes") or 0)
+    hdr = r.get("headers") or {}
+    # X-Robots-Tag 는 HTML 이 아닌 파일(PDF)에도 붙는다 — 그래서 본문을 읽기 전에 적는다
+    row["x_robots"] = crawl_site.x_robots_effective(hdr.get("x-robots-tag"))
+    row["fetch_ms"] = r.get("ms")
+    row["hsts"] = ("strict-transport-security" in hdr) if hdr else None
+    by_header = crawl_site.link_header_hreflang(hdr.get("link"), final)
     ctype = (r.get("content_type") or "").lower()
     if r.get("status") == 200 and (not ctype or "html" in ctype):
         got = parse_page(final, r.get("text") or "")
         out = got.pop("links")
         row.update(got)
         row["links_out"] = len(out)
+        fresh = []
         for to, anchor, nofollow, chrome in out:
             internal = scoring.owns(scoring.host_of(to), host)
             links.append({"url_from": final, "url_to": to, "anchor": anchor,
@@ -569,7 +820,15 @@ def _visit(r: dict, url: str, depth: int, *, host, max_depth, q, seen, pages, li
             if (internal and to not in seen and depth + 1 <= max_depth
                     and scoring.in_scope(to, scope)):
                 seen.add(to)
-                q.append((to, depth + 1))
+                fresh.append(to)
+        # 이 장이 새로 건 주소를 꼴별로 돌아가며 줄 세운다 — 글 목록 하나(/blog/* 500개)가 남은
+        # 상한을 다 먹지 않게. 큐 앞쪽은 안 건드리므로 미리 띄우기와 순차 BFS 가 같은 결과다.
+        q.extend((to, depth + 1) for to in crawl_site.stratify(fresh))
+    if by_header:
+        have = {(c, h) for c, h in row.get("hreflang") or []}
+        row["hreflang"] = list(row.get("hreflang") or []) + [x for x in by_header
+                                                             if (x[0], x[1]) not in have]
+        row["hreflang_src"] = {(c, h): "header" for c, h in by_header if (c, h) not in have}
     pages.append(row)
 
 
@@ -577,12 +836,15 @@ def _row(url: str, depth: int, *, status=None, redirect_to=None, nbytes=0) -> di
     return {"url": url, "status": status, "redirect_to": redirect_to, "depth": depth,
             "title": None, "description": None, "h1": None, "canonical": None,
             "robots": None, "words": None, "schema_types": None,
-            "links_in": 0, "links_out": 0, "images_no_alt": 0, "bytes": nbytes}
+            "links_in": 0, "links_out": 0, "images_no_alt": 0, "bytes": nbytes,
+            "x_robots": None, "fetch_ms": None, "tpl": crawl_site.url_template(url),
+            "body_hash": None, "modified": None, "h2s": None, "images": None, "lang": None}
 
 
 _PAGE_COLS = ("url", "status", "redirect_to", "depth", "title", "description", "h1",
               "canonical", "robots", "words", "schema_types", "links_in", "links_out",
-              "images_no_alt", "bytes")
+              "images_no_alt", "bytes",
+              "x_robots", "fetch_ms", "tpl", "body_hash", "modified", "h2s", "images", "lang")
 
 
 def save(conn, run_id: int, pages, links) -> None:
@@ -592,8 +854,9 @@ def save(conn, run_id: int, pages, links) -> None:
         f"VALUES({','.join(['?'] * (len(_PAGE_COLS) + 1))})",
         [(run_id, *[p.get(c) for c in _PAGE_COLS]) for p in pages])
     conn.executemany(
-        "INSERT INTO crawl_hreflang(run_id,url,code,href) VALUES(?,?,?,?)",
-        [(run_id, p["url"], str(c)[:35], normalize(str(h), p["url"]) or str(h)[:500])
+        "INSERT INTO crawl_hreflang(run_id,url,code,href,source) VALUES(?,?,?,?,?)",
+        [(run_id, p["url"], str(c)[:35], normalize(str(h), p["url"]) or str(h)[:500],
+          (p.get("hreflang_src") or {}).get((c, h), "html"))
          for p in pages for c, h in (p.get("hreflang") or [])[:40]])
     conn.executemany(
         "INSERT INTO crawl_links(run_id,url_from,url_to,anchor,is_internal,nofollow,in_chrome) "
@@ -608,16 +871,19 @@ def save(conn, run_id: int, pages, links) -> None:
 
 
 # ── 이슈 도출 ───────────────────────────────────────────────────────────────
+# 속도 제한(429·430·503)은 그 주소의 결함이 아니다 — 다시 물어도 같았던 장은 판정에서 뺀다.
+_RATE_SQL = "(" + ",".join(str(c) for c in sorted(crawl_site.RATE_STATUS)) + ")"
 # (kind, SQL) — SQL 은 (url, detail) 두 칸을 돌려준다. severity 는 SEVERITY 표.
 _ISSUE_SQL = (
     ("http_error",
      "SELECT url, 'HTTP ' || COALESCE(status, '응답 없음') FROM crawl_pages"
-     " WHERE run_id=:run AND (status IS NULL OR status >= 400)"),
+     " WHERE run_id=:run AND (status IS NULL OR (status >= 400 AND status NOT IN " + _RATE_SQL + "))"),
     ("broken_internal",
      "SELECT l.url_to, 'HTTP ' || COALESCE(p.status, '응답 없음') || ' · 이 곳을 가리키는 내부 링크 '"
      "       || COUNT(*) || '개 (예: ' || MIN(l.url_from) || ')'"
      " FROM crawl_links l JOIN crawl_pages p ON p.run_id = l.run_id AND p.url = l.url_to"
-     " WHERE l.run_id=:run AND l.is_internal = 1 AND (p.status IS NULL OR p.status >= 400)"
+     " WHERE l.run_id=:run AND l.is_internal = 1"
+     "   AND (p.status IS NULL OR (p.status >= 400 AND p.status NOT IN " + _RATE_SQL + "))"
      " GROUP BY l.url_to"),
     ("orphan",
      "SELECT p.url, '사이트맵에 있으나 내부 링크 0개' FROM crawl_pages p"
@@ -654,9 +920,14 @@ _ISSUE_SQL = (
      "SELECT url, '본문 ' || words || '단어 (기준 ' || :thin || ')' FROM crawl_pages"
      " WHERE run_id=:run AND status BETWEEN 200 AND 299 AND words IS NOT NULL"
      "   AND words < :thin"),
+    # meta robots 와 X-Robots-Tag 헤더는 같은 규칙의 두 자리다 — 헤더로만 건 noindex 는
+    # HTML 을 아무리 봐도 안 나온다(x_robots 는 모든 크롤러·구글에 걸리는 규칙만 담는다).
     ("noindex",
-     "SELECT url, 'meta robots: ' || robots FROM crawl_pages"
-     " WHERE run_id=:run AND LOWER(COALESCE(robots, '')) LIKE '%noindex%'"),
+     "SELECT url, CASE WHEN LOWER(COALESCE(robots, '')) LIKE '%noindex%'"
+     "   THEN 'meta robots: ' || robots ELSE 'X-Robots-Tag 헤더: ' || x_robots END"
+     " FROM crawl_pages"
+     " WHERE run_id=:run AND (LOWER(COALESCE(robots, '')) LIKE '%noindex%'"
+     "                        OR COALESCE(x_robots, '') LIKE '%noindex%')"),
     ("canonical_mismatch",
      "SELECT p.url, 'canonical → ' || p.canonical || ' (크롤한 URL 이 아닙니다)'"
      " FROM crawl_pages p WHERE p.run_id=:run AND p.canonical IS NOT NULL"
@@ -696,8 +967,11 @@ def derive_issues(conn, run_id: int, *, home: str, chains=(), extra=()) -> int:
     for hops in chains:
         rows.append((run_id, "redirect_chain", SEVERITY["redirect_chain"], hops[0],
                      f"홉 {len(hops) - 1}개: " + " → ".join(hops)))
-    for kind, url, detail in extra:
-        rows.append((run_id, kind, SEVERITY[kind], url, detail))
+    for kind, url, detail, *sev in extra:    # 넷째 칸은 심각도를 낮춰 적을 때만(비율로 가르는 갈래)
+        rows.append((run_id, kind, sev[0] if sev else SEVERITY[kind], url, detail))
+    # (kind, url) 이 이슈의 정체성이다(회차 비교) — 같은 짝이 두 번 서지 않게
+    seen: set = set()
+    rows = [r for r in rows if (r[1], r[3]) not in seen and not seen.add((r[1], r[3]))]
     conn.executemany(
         "INSERT INTO crawl_issues(run_id, kind, severity, url, detail) VALUES(?,?,?,?,?)",
         rows)
@@ -746,7 +1020,8 @@ def _path(u: str) -> str:
     return (p.path or "/") + (f"?{p.query}" if p.query else "")
 
 
-def intl_issues(pages, links, *, home: str, locales=()) -> list[tuple[str, str, str]]:
+def intl_issues(pages, links, *, home: str, locales=(), site_type=None,
+                sm_lastmod=None) -> list[tuple[str, str, str]]:
     """다국어 사이트의 언어 이음매 — (kind, url, detail). 외부 호출 0, 크롤이 받은 HTML 로만.
 
     **다국어 사이트에서만 선다**: 크롤한 페이지의 hreflang 이 두 언어 이상을 말하거나 사이트
@@ -997,9 +1272,240 @@ def intl_issues(pages, links, *, home: str, locales=()) -> list[tuple[str, str, 
                 out.append(("intl_schema_lang", rep(bad),
                             f"{nm(l)} 페이지 {len(by_lang[l])}장 중 {len(bad)}장: "
                             + " · ".join(f"{t} {f} 「{v}」" for t, f, v in seen_v[:3])))
+    # 8) 판 사이 동등성 — 같은 본문·분량·신선도·inLanguage·법적 고지·날짜 표기(crawl_site.intl_more).
+    #    언어를 가르는 일은 위에서 끝났다 — 그 결과를 그대로 넘긴다.
+    out += crawl_site.intl_more({"by_url": by_url, "lang": lang, "by_lang": by_lang,
+                                 "groups": list(groups.values()), "D": D, "nm": nm, "rep": rep,
+                                 "links": links, "site_type": site_type,
+                                 "sm_lastmod": sm_lastmod or {}})
     # (kind, url) 이 이슈의 정체성이다(회차 비교) — 같은 짝이 두 번 서지 않게.
     seen: set = set()
     return [r for r in out if (r[0], r[1]) not in seen and not seen.add((r[0], r[1]))]
+
+
+# ── 사이트 단위 점검 ────────────────────────────────────────────────────────
+# 판정은 crawl_site 가 한다(네트워크 없이). 여기서는 재료를 모아 넘기고, 탐침 요청을 보내고,
+# 화면이 그릴 '사이트 사실' 줄을 만든다.
+def cert_days_left(host: str, *, timeout: float = 5.0) -> int | None:
+    """TLS 인증서 만료까지 남은 날(지났으면 음수). 못 재면 None — 0 으로 접지 않는다."""
+    name = host.split(":")[0]
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((name, 443), timeout=timeout) as raw, \
+                ctx.wrap_socket(raw, server_hostname=name) as tls:
+            not_after = tls.getpeercert()["notAfter"]
+        return int((ssl.cert_time_to_seconds(not_after) - time.time()) // 86400)
+    except Exception:
+        return None
+
+
+def _cert_fn():
+    """인증서는 진짜 네트워크일 때만 잰다 — fetch·전송을 갈아끼운 검사가 바깥으로 나가지 않게."""
+    real = globals()["fetch"] is _REAL_FETCH and http_adapter._transport is http_adapter._real
+    return cert_days_left if real else None
+
+
+def merge_hreflang(pages, entries) -> None:
+    """페이지의 hreflang 주소를 정규화하고, 사이트맵 <xhtml:link> 로 알린 것을 그 페이지에 보탠다.
+
+    hreflang 을 알리는 길은 셋이다(<link>·HTTP Link 헤더·사이트맵). 한 길만 보면 사이트맵으로만
+    알린 사이트는 "hreflang 없음"이 되고, 상호 참조·다국어 검사가 통째로 안 선다. 어느 길로 온
+    것인지는 hreflang_src 에 남는다(crawl_hreflang.source)."""
+    by = {p["url"]: p for p in pages}
+    for p in pages:
+        if not p.get("hreflang"):
+            continue
+        src = p.get("hreflang_src") or {}
+        new, new_src = [], {}
+        for c, h in p["hreflang"]:
+            n = normalize(str(h), p["url"]) or str(h)
+            new.append([c, n])
+            if (c, h) in src:
+                new_src[(c, n)] = src[(c, h)]
+        p["hreflang"], p["hreflang_src"] = new, new_src
+    for e in entries or ():
+        p = by.get(e.get("norm"))
+        if not p or not e.get("alts"):
+            continue
+        have = {(c, h) for c, h in p.get("hreflang") or []}
+        for c, h in e["alts"]:
+            n = normalize(str(h), e["norm"]) or str(h)
+            if (c, n) not in have:
+                have.add((c, n))
+                p["hreflang"] = list(p.get("hreflang") or []) + [[c, n]]
+                p.setdefault("hreflang_src", {})
+                p["hreflang_src"] = {**(p.get("hreflang_src") or {}), (c, n): "sitemap"}
+
+
+def site_checks(pages, links, *, disc: dict, home: str, rp=None, site_type=None, scope=None,
+                today=None, crawl_delay=None) -> tuple[dict, list]:
+    """사이트 단위로 한 번 보는 것 전부 — (사실, 이슈 줄). 탐침 요청이 여기서 나간다.
+
+    이슈는 crawl_issues 로(회차 비교가 된다), 사실은 crawl_runs.facts_json 으로(화면의 '사이트 사실'
+    줄). 에이전트용 발견 파일·Markdown 협상·RSL 은 사실에만 적는다 — 기회가 아니다."""
+    rows: list = []
+    robots_url = urljoin(home, "/robots.txt")
+    st = disc.get("robots_status")
+    if disc.get("robots_state") == "blocked":
+        rows.append(("robots_5xx", robots_url,
+                     f"robots.txt 가 HTTP {st} 를 돌려줍니다(다시 물어도 같았습니다)"))
+    elif disc.get("robots_state") == "unknown":
+        rows.append(("robots_unknown", robots_url,
+                     "robots.txt: " + (f"HTTP {st}" if st else "응답 없음")))
+    sm = disc.get("sitemaps")
+    entries = [e for e in disc.get("entries") or [] if scoring.in_scope(e["norm"], scope)]
+    if sm:
+        rows += crawl_site.sitemap_file_issues(sm, home)
+        rows += crawl_site.lastmod_issue(entries, pages, home, today=today)
+        if site_type == "publisher":      # 뉴스 발행 사이트에만 — 다른 사이트에 뉴스 규칙은 군말이다
+            rows += crawl_site.news_issue(sm, home, today=today)
+        rows += crawl_site.sitemap_vs_crawl([e["norm"] for e in entries], pages,
+                                            capped=bool(disc.get("capped")))
+    limited = [p["url"] for p in pages
+               if p.get("status") in crawl_site.RATE_STATUS and not p.get("redirect_to")]
+    if limited:
+        rows.append(("rate_limited", home,
+                     f"{len(limited)}장이 속도 제한(429·503)으로 답했습니다 — 다시 물어도 같았습니다. "
+                     "예: " + ", ".join(_path(u) for u in limited[:3])))
+    rows += crawl_site.url_hygiene(pages)
+    rows += crawl_site.canonical_targets(pages, _get, home=home)
+    rows += crawl_site.hreflang_issues(pages)
+    rows += crawl_site.template_thin(pages)
+    rows += crawl_site.meta_template_issue(pages, home)
+    trust, t_rows = crawl_site.trust_pages(pages, links, home)
+    rows += t_rows
+    rows += crawl_site.locator_issues(
+        pages, links, thin=THIN_WORDS,
+        allowed=(lambda u: rp.can_fetch(UA_NAME, u)) if rp is not None else None)
+
+    # ── 탐침 — 요청이 나간다(크롤이 끝난 뒤, 한 번씩) ──
+    soft = crawl_site.probe_soft404(home, _get, uuid.uuid4().hex[:12])
+    if soft["soft"] == 1:
+        went = normalize(soft.get("final") or "") or ""
+        rows.append(("soft_404", home,
+                     f"없는 주소 {_path(soft['url'])} 에 HTTP {soft['status']} 가 옵니다"
+                     + (f" ({_path(went)} 로 넘어갑니다)" if went and went != soft["url"] else "")))
+    host, h_rows = crawl_site.host_checks(home, _get, cert_days=_cert_fn())
+    rows += h_rows
+    wk = crawl_site.probe_well_known(home, _get)
+    sample = next((p["url"] for p in pages if p.get("status") == 200 and p.get("depth")
+                   and p.get("title") is not None and not urlsplit(p["url"]).query), None)
+    md = crawl_site.probe_markdown(home, _get, sample)
+
+    by = {p["url"]: p for p in pages}
+    h, hops = normalize(home), 0
+    while by.get(h, {}).get("redirect_to") and hops < 10:
+        h, hops = by[h]["redirect_to"], hops + 1
+    ms = [p["fetch_ms"] for p in pages if p.get("fetch_ms") and p.get("status") == 200
+          and p.get("title") is not None]
+    facts = {
+        "robots": {"status": st, "state": disc.get("robots_state"), "crawl_delay": crawl_delay,
+                   "rsl": crawl_site.rsl_license(disc.get("robots_txt") or "")},
+        "sitemap": {"files": (sm or {}).get("files") or [], "listed": disc.get("listed") or 0,
+                    "seeds": len(disc["seeds"]) if disc.get("seed") == "sitemap" else 0,
+                    "fallback": bool(disc.get("fallback")), "capped": bool(disc.get("capped"))},
+        "host": {**host, "hsts": by.get(h, {}).get("hsts")},
+        "soft404": soft, "rate_limited": len(limited), "trust": trust,
+        "latency": {"p50": crawl_site.percentile(ms, 0.5), "p95": crawl_site.percentile(ms, 0.95),
+                    "n": len(ms)},
+        "maps": sum(1 for p in pages if p.get("maps")),
+        "webmcp": sum(1 for p in pages if p.get("webmcp")),
+        "well_known": wk, "markdown": md,
+    }
+    facts["lines"] = fact_lines(facts)
+    return facts, rows
+
+
+def _sec(ms) -> str:
+    return f"{ms / 1000:.1f}초"
+
+
+def fact_lines(f: dict) -> list[dict]:
+    """사실 → 화면이 그대로 그리는 줄 [{"g","k","v"}]. 문구의 정본은 여기다(화면은 그리기만 한다).
+
+    g="site" 는 크롤이 사이트에 대해 한 번 본 것, g="agent" 는 에이전트용 발견 파일류다 —
+    있나 없나만 적는 정보고 없다고 결함이 아니다. '확인 못 함'(None)과 '없음'(0)은 다른 말이다."""
+    L: list[dict] = []
+
+    def add(g, k, v):
+        if v:
+            L.append({"g": g, "k": k, "v": v})
+
+    rb = f.get("robots") or {}
+    st = rb.get("status")
+    add("site", "robots.txt", {
+        "ok": "읽었습니다",
+        "none": f"없습니다(HTTP {st}) — 규칙 없음, 전부 허용으로 봅니다",
+        "blocked": f"서버 오류(HTTP {st}) — 규칙을 지키는 크롤러는 이 상태에서 사이트 전체를 멈춥니다",
+        "unknown": ("판정 불가(" + (f"HTTP {st}" if st else "응답 없음") + ") — 막혔는지 열렸는지 모릅니다"),
+    }.get(rb.get("state") or "", ""))
+    if rb.get("crawl_delay"):
+        d = float(rb["crawl_delay"])
+        add("site", "Crawl-delay",
+            f"{d:g}초 — 그 간격으로 한 줄씩 돌았습니다" if d <= CRAWL_DELAY_MAX
+            else f"{d:g}초 — 상한 {CRAWL_DELAY_MAX:g}초 간격으로 돌았습니다")
+    sm = f.get("sitemap") or {}
+    files = sm.get("files") or []
+    if sm.get("seeds"):
+        good = [x for x in files if x.get("format")]
+        how = ("흔한 경로에서 찾았습니다(robots.txt 에 Sitemap: 줄이 없습니다)" if sm.get("fallback")
+               else "robots.txt 의 Sitemap: 줄")
+        v = f"파일 {len(good)}개 · 주소 {sm.get('listed') or 0:,}개 — {how}"
+        if sm.get("capped"):
+            v += (f". 상한에서 잘랐습니다: {sm['seeds']:,}개를 주소 꼴별로 골라 돌았습니다"
+                  "(전수가 아닙니다)")
+        add("site", "사이트맵", v)
+    else:
+        add("site", "사이트맵", "찾지 못했습니다 — 홈에서 내부 링크를 따라 돌았습니다"
+            + (f"(읽히지 않은 파일 {len(files)}개)" if files else ""))
+    lat = f.get("latency") or {}
+    if lat.get("p50"):
+        add("site", "응답 지연", f"중앙값 {_sec(lat['p50'])} · 느린 5% {_sec(lat['p95'])} 이상 "
+                                f"(HTML {lat.get('n') or 0:,}장)")
+    host = f.get("host") or {}
+    http = host.get("http")
+    add("site", "http → https",
+        "301 로 넘어갑니다" if http == "redirect"
+        else "그대로 열립니다(https 로 안 넘어감)" if http == "open"
+        else f"넘어가지만 영구 리다이렉트가 아닙니다(HTTP {http.split('_')[1]})"
+        if (http or "").startswith("redirect_") else "")
+    add("site", "www · 비www", {"dup": "둘 다 200 으로 열립니다", "redirect": "한쪽으로 넘어갑니다"}
+        .get(host.get("alt_host") or "", ""))
+    if host.get("hsts") is not None:
+        add("site", "HSTS", "헤더가 있습니다" if host["hsts"] else "헤더가 없습니다")
+    if host.get("cert_days") is not None:
+        add("site", "TLS 인증서", f"만료까지 {host['cert_days']}일" if host["cert_days"] >= 0
+            else "만료됐습니다")
+    soft = f.get("soft404") or {}
+    if soft.get("soft") is not None:
+        add("site", "없는 주소", "200 을 줍니다(소프트 404)" if soft["soft"]
+            else f"없다고 답합니다(HTTP {soft.get('status')})")
+    if f.get("rate_limited"):
+        add("site", "속도 제한", f"{f['rate_limited']:,}장을 못 봤습니다(429·503)")
+    trust = f.get("trust") or {}
+    if trust:
+        add("site", "신뢰 페이지", " · ".join(
+            f"{crawl_site.TRUST_PAGES[k][0]} {_path(u) if u else '못 찾음'}"
+            for k, u in trust.items() if k in crawl_site.TRUST_PAGES))
+    add("site", "지도 임베드", f"{f['maps']:,}장" if f.get("maps") else "")
+    # ── 에이전트용 — 있나 없나만 ──
+    wk = f.get("well_known") or []
+    if wk:
+        have = [x["name"] for x in wk if x.get("found") == 1]
+        unk = sum(1 for x in wk if x.get("found") is None)
+        no = sum(1 for x in wk if x.get("found") == 0)
+        add("agent", "/.well-known 발견 파일",
+            (("있음: " + " · ".join(have) + " / ") if have else "")
+            + f"없음 {no}종" + (f" · 확인 못 함 {unk}종" if unk else ""))
+    add("agent", "WebMCP 표식", f"{f['webmcp']:,}장" if f.get("webmcp") else "없음")
+    md = f.get("markdown") or {}
+    tri = lambda v, yes, no: "확인 못 함" if v is None else (yes if v else no)
+    add("agent", "Markdown 협상",
+        "Accept: text/markdown → " + tri(md.get("accept"), "markdown 으로 답합니다", "HTML 로 답합니다")
+        + " · .md 형제 → " + tri(md.get("sibling"), "있음", "없음"))
+    add("agent", "RSL 라이선스",
+        f"robots.txt 의 License: 줄 — {rb['rsl']}" if rb.get("rsl") else "robots.txt 에 License: 줄 없음")
+    return L
 
 
 # ── 회차 비교 ───────────────────────────────────────────────────────────────
@@ -1070,7 +1576,8 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
                   " — 사이트맵이 있으면 사이트맵 수만큼 더")
             return st.noop(rows=0)
 
-        seeds, seed, rp, robots_txt = discover_seeds(home)
+        disc = discover(home)
+        seeds, seed, rp, robots_txt = disc["seeds"], disc["seed"], disc["rp"], disc["robots_txt"]
         scope = scoring.scopes_of([sc for _, sc in db.site_markets(conn, p["id"])])
         if scope:
             # 사이트맵은 도메인 전체다 — 범위 안 주소만 시드로. 하나도 없으면 범위들의 첫 화면에서.
@@ -1091,38 +1598,74 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
                   f"더 봅니다 (이번 상한 {len(seeds) + limit}개)")
             limit = len(seeds) + limit
 
+        disc["seeds"], disc["seed"] = seeds, seed
+        # robots.txt 의 Crawl-delay 는 사이트 주인이 정한 간격이다 — 그 간격으로, 한 줄씩 돈다.
+        # (구글은 이 줄을 안 읽지만 우리는 신원을 밝히고 도는 크롤러라 지킨다.)
+        try:
+            delay = rp.crawl_delay(UA_NAME)
+        except Exception:
+            delay = None
+        pace, workers = st.throttle, None
+        if delay:
+            pace, workers = max(st.throttle, min(float(delay), CRAWL_DELAY_MAX)), 1
+            print(f"  robots.txt Crawl-delay {delay}초 — {pace:g}초 간격으로 한 줄씩 돕니다")
+        if disc["capped"]:
+            print(f"  사이트맵이 상한을 넘습니다 — 읽은 {disc['listed']}개 중 주소 꼴별로 골라 돕니다")
+
         run_id = conn.execute(
-            "INSERT INTO crawl_runs(project_id, seed, started_at, robots_txt) VALUES(?,?,?,?)",
-            (p["id"], seed, db.now(), robots_txt or None)).lastrowid
+            "INSERT INTO crawl_runs(project_id, seed, started_at, robots_txt, robots_status,"
+            " robots_state, discovery_capped) VALUES(?,?,?,?,?,?,?)",
+            (p["id"], seed, db.now(), robots_txt or None, disc["robots_status"],
+             disc["robots_state"], int(bool(disc["capped"])))).lastrowid
         # 사이트맵이 시드였으면 그 목록 자체가 사실이다 — "이 주소가 사이트맵에
         # 있나" 는 색인 막힘 요청문이 매번 묻는 것인데 지금까지 아무 데도 안 남았다.
+        # 시드로 고른 것만이 아니라 읽은 목록 전부(범위 안·내 호스트)를 lastmod·출처 파일과 함께.
         if seed == "sitemap":
-            db.write_sitemap_urls(conn, run_id, seeds)
+            own = scoring.host_of(home)
+            db.write_sitemap_entries(conn, run_id, [
+                {"url": e["norm"], "lastmod": e.get("lastmod"), "source": e.get("source")}
+                for e in disc["entries"] if scoring.in_scope(e["norm"], scope)
+                and scoring.owns(scoring.host_of(e["norm"]), own)])
         with st.record("crawl") as r:
             pages, links, chains = crawl(seeds, home, limit=limit, max_depth=depth,
-                                         rp=rp, throttle=st.throttle, scope=scope)
+                                         rp=rp, throttle=pace, workers=workers, scope=scope)
             # 모든 주소가 막혔으면(응답 없음·403·429) 적지 않는다 — 적으면 막힌 홈이
             # http_error 이슈 → "크롤에서 걸림" 기회로 선다. 없는 결함이다.
-            if pages and all(collect_page.blocked(x["status"]) for x in pages):
+            if pages and all(collect_page.blocked(x["status"])
+                             or x["status"] in crawl_site.RATE_STATUS for x in pages):
                 conn.execute("UPDATE crawl_runs SET finished_at=?, pages=0, issues=0 WHERE id=?",
                              (db.now(), run_id))
                 conn.commit()
                 r.notes = f"seed={seed} blocked={len(pages)}"
                 return st.skip(collect_page.blocked_note(
                     home.split("/")[2], len(pages)))
+            merge_hreflang(pages, disc["entries"])
             save(conn, run_id, pages, links)
             # robots.txt 를 받은 김에 /llms.txt 도 한 번 — 크롤 뒤에 받는 이유는 순서다:
             # 시드가 홈일 때 robots.txt 다음 요청은 홈이어야 한다(자체점검이 못 박는다).
             db.write_llms_txt(conn, run_id, probe_llms_txt(home))
+            site_type = p["type"] if "type" in p.keys() else None
             intl = intl_issues(pages, links, home=home,
-                               locales=db.site_locales(conn, p["id"]))
-            n_issues = derive_issues(conn, run_id, home=home, chains=chains, extra=intl)
+                               locales=db.site_locales(conn, p["id"]), site_type=site_type,
+                               sm_lastmod={e["norm"]: e.get("lastmod") for e in disc["entries"]})
+            facts, site_rows = site_checks(pages, links, disc=disc, home=home, rp=rp,
+                                           site_type=site_type, scope=scope, crawl_delay=delay)
+            n_issues = derive_issues(conn, run_id, home=home, chains=chains,
+                                     extra=[*intl, *site_rows])
             fetched = sum(1 for x in pages if x["redirect_to"] is None)
-            conn.execute("UPDATE crawl_runs SET finished_at=?, pages=?, issues=? WHERE id=?",
-                         (db.now(), fetched, n_issues, run_id))
+            conn.execute(
+                "UPDATE crawl_runs SET finished_at=?, pages=?, issues=?, latency_p50_ms=?,"
+                " latency_p95_ms=?, facts_json=? WHERE id=?",
+                (db.now(), fetched, n_issues, facts["latency"]["p50"], facts["latency"]["p95"],
+                 json.dumps(facts, ensure_ascii=False), run_id))
             conn.commit()
             r.api_calls = fetched
-            r.notes = f"seed={seed} pages={fetched} links={len(links)} issues={n_issues}"
+            r.notes = (f"seed={seed} pages={fetched} links={len(links)} issues={n_issues}"
+                       + (" robots_error=1" if disc["robots_state"] == "blocked" else "")
+                       + (" robots_unknown=1" if disc["robots_state"] == "unknown" else "")
+                       + (" sitemap_capped=1" if disc["capped"] else "")
+                       + (f" rate_limited={facts['rate_limited']}" if facts["rate_limited"] else "")
+                       + (f" crawl_delay={delay}" if delay else ""))
 
         diff = compare(conn, p["id"], run_id)
         print(f"saved {fetched} pages · {len(links)} links · {n_issues} issues")
@@ -1180,7 +1723,8 @@ def _site(*, sitemap: bool = True) -> dict:
                   '<a href="/private">막힌 곳</a><a href="/old">옛 주소</a>')
     return {
         "https://site.kr/robots.txt": (200, robots, "text/plain"),
-        "https://site.kr/sitemap.xml": (200, _SITEMAP, "application/xml"),
+        # 사이트맵이 없는 사이트는 파일도 없다 — Sitemap: 줄만 지우면 흔한 경로 폴백이 찾아낸다
+        **({"https://site.kr/sitemap.xml": (200, _SITEMAP, "application/xml")} if sitemap else {}),
         "https://site.kr/": (200, _html("홈", tail=home_links), "text/html"),
         # /a 는 /b 를 hreflang 짝으로 선언하는데 /b 는 되받지 않는다 — 한 장만
         # 봐서는 /a 가 멀쩡해 보인다. 전수 크롤만 잡을 수 있는 종류다.
@@ -1216,6 +1760,13 @@ def _fake_fetch(site: dict, log: list, redirects: dict | None = None):
         return {"final_url": cur, "status": status, "chain": chain, "text": text,
                 "bytes": len(text.encode()), "content_type": ctype, "error": None}
     return f
+
+
+def _crawled(log) -> list[str]:
+    """가져온 것 중 크롤한 장만 — robots.txt·사이트맵·사이트 단위 탐침(site_checks)은 뺀다."""
+    return [u for u in log if not (u.endswith((".txt", ".xml", ".md")) or "/.well-known/" in u
+                                   or "seo-miner-probe-" in u or u.startswith("http://")
+                                   or "//www." in u)]
 
 
 def _selfcheck() -> None:
@@ -1364,7 +1915,14 @@ def _selfcheck() -> None:
         r, log = run(site=_site(sitemap=False))
         seed = conn.execute("SELECT seed FROM crawl_runs WHERE id=?", (run2 + 1,)).fetchone()
         assert seed["seed"] == "home", dict(seed)
-        assert log[1] == "https://site.kr/", log        # robots.txt 다음이 홈
+        # robots.txt(와 사이트맵 찾기) 다음 첫 장이 홈
+        assert log[0].endswith("/robots.txt") and _crawled(log)[0] == "https://site.kr/", log
+        # Sitemap: 줄은 없는데 파일은 있다 — 흔한 경로에서 찾아 시드로 쓴다(없다고 접지 않는다)
+        hidden = _site(sitemap=False)
+        hidden["https://site.kr/sitemap_index.xml"] = (200, _SITEMAP, "application/xml")
+        _r, log_h = run(site=hidden)
+        seed_h = conn.execute("SELECT seed FROM crawl_runs ORDER BY id DESC LIMIT 1").fetchone()
+        assert seed_h["seed"] == "sitemap" and "https://site.kr/orphan" in log_h, (dict(seed_h), log_h)
         assert "https://site.kr/orphan" not in log, log  # 링크가 없으니 못 닿는다
 
         # 깊이 상한 — 0이면 시드만 본다
@@ -1391,13 +1949,13 @@ def _selfcheck() -> None:
         # 가져오고(시드가 먼저 큐에 선다), 남은 여유로 링크로만 걸린 /dead 까지 본다.
         r, log = run(limit=2)
         sm = {"https://site.kr/", "https://site.kr/a", "https://site.kr/b", "https://site.kr/orphan"}
-        pages = [u for u in log if not u.endswith((".txt", ".xml"))]
+        pages = _crawled(log)
         assert sm <= set(log), f"사이트맵을 상한에서 잘랐다: 빠짐 {sm - set(log)}"
         assert "https://site.kr/dead" in log, f"사이트맵 밖 링크 대상을 여유 안에서 안 봤다: {log}"
         assert len(pages) <= len(sm) + 2, f"사이트맵 수 + 설정값을 넘겨 가져왔다: {pages}"
         # 사이트맵이 없으면(홈 BFS) 상한은 설정값 그대로다
         r, log = run(site=_site(sitemap=False), limit=2)
-        assert len([u for u in log if not u.endswith((".txt", ".xml"))]) == 2, log
+        assert len(_crawled(log)) == 2, log
 
         _intl_selfcheck(conn, orig_fetch)
     finally:
@@ -1545,7 +2103,9 @@ def _intl_selfcheck(conn, orig_fetch) -> None:
             ("intl_xdefault", f"{H}/"), ("intl_desc_repeat", f"{H}/es/"),
             ("intl_schema_lang", f"{H}/en/svc")}
     assert set(intl) == want, (f"더 섬 {sorted(set(intl) - want)} · 안 섬 {sorted(want - set(intl))}")
-    assert {k for k, _ in intl} == set(INTL_KINDS), "다국어 갈래 중 가상 사이트에서 안 서는 것이 있다"
+    # 판 사이 동등성 갈래(crawl_site.INTL_MORE_KINDS)는 이 사이트에서 안 선다 — test_crawl_site 가 본다
+    assert {k for k, _ in intl} == set(INTL_KINDS) - set(crawl_site.INTL_MORE_KINDS), \
+        "다국어 갈래 중 가상 사이트에서 안 서는 것이 있다"
     det = {k: v["detail"] for k, v in intl.items()}
     assert all(v["severity"] == SEVERITY[k[0]] for k, v in intl.items())
     # 번역 안 된 글자: 남은 것(alt·설명·주소)은 서고, 풀이(괄호)·언어 단추 '한국어'·두 글자 '기미'는 안 선다
