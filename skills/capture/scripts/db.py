@@ -3475,6 +3475,114 @@ def rank_before_after(conn: sqlite3.Connection, project_id: int, day: str,
     return out
 
 
+def _json_list(s) -> list:
+    try:
+        v = json.loads(s) if s else []
+    except (TypeError, ValueError):
+        return []
+    return v if isinstance(v, list) else []
+
+
+def page_observations(conn: sqlite3.Connection, project_id: int, urls) -> dict[str, dict]:
+    """주소마다 날짜별 관측 — 페이지 감사(page_audits)와 사이트 크롤(crawl_pages)을 한 꼴로.
+
+    반환: url_key → {"audit": [관측…], "crawl": [관측…]} (날짜 오름차순). 관측이 하나도 없는
+    주소는 키가 없다. 관측 꼴은 scoring.page_field_changes 가 읽는 그것이다. 주소 표기는
+    출처마다 달라(스킴·www·끝 슬래시) scoring.url_key 로 짝짓는다 — 표에 있는 표기를 먼저
+    모아 그 표기로만 행을 읽는다(사이트 전체를 싣지 않는다)."""
+    import scoring
+    want = {scoring.url_key(u) for u in urls if u}
+    out: dict[str, dict] = {}
+    if not want:
+        return out
+
+    def slot(k):
+        return out.setdefault(k, {"audit": [], "crawl": []})
+
+    spell = [r[0] for r in conn.execute(
+        "SELECT DISTINCT url FROM page_audits WHERE project_id=?", (int(project_id),))
+        if scoring.url_key(r[0]) in want]
+    for i in range(0, len(spell), 400):
+        ch = spell[i:i + 400]
+        for r in conn.execute(
+                f"""SELECT checked_date, url, status, title, h1_json, canonical, robots, schema_json
+                      FROM page_audits WHERE project_id=? AND url IN ({','.join('?' * len(ch))})
+                     ORDER BY checked_date""", (int(project_id), *ch)):
+            slot(scoring.url_key(r["url"]))["audit"].append({
+                "date": str(r["checked_date"])[:10], "src": "audit", "status": r["status"],
+                "title": r["title"], "h1": _json_list(r["h1_json"]), "canonical": r["canonical"],
+                "robots": r["robots"], "schema": _json_list(r["schema_json"])})
+    runs = {r["id"]: sql_ts(r["finished_at"])[:10] for r in conn.execute(
+        "SELECT id, finished_at FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL",
+        (int(project_id),))}
+    if runs:
+        ph = ",".join("?" * len(runs))
+        cspell = [r[0] for r in conn.execute(
+            f"SELECT DISTINCT url FROM crawl_pages WHERE run_id IN ({ph})", tuple(runs))
+            if scoring.url_key(r[0]) in want]
+        for i in range(0, len(cspell), 400):
+            ch = cspell[i:i + 400]
+            for r in conn.execute(
+                    f"""SELECT run_id, url, status, title, h1, canonical, robots, schema_types
+                          FROM crawl_pages WHERE run_id IN ({ph})
+                           AND url IN ({','.join('?' * len(ch))}) ORDER BY run_id""",
+                    (*runs, *ch)):
+                slot(scoring.url_key(r["url"]))["crawl"].append(_crawl_obs(r, runs[r["run_id"]]))
+        for v in out.values():
+            v["crawl"].sort(key=lambda o: o["date"])
+    return out
+
+
+def _crawl_obs(r, day: str) -> dict:
+    """crawl_pages 한 줄 → 관측. H1 은 한 칸(문자열), schema 유형은 콤마로 이은 문자열이다."""
+    return {"date": day, "src": "crawl", "status": r["status"], "title": r["title"],
+            "h1": [r["h1"]] if r["h1"] else [], "canonical": r["canonical"],
+            "robots": r["robots"],
+            "schema": [t for t in str(r["schema_types"] or "").split(",") if t]}
+
+
+def _watch_page_diffs(conn: sqlite3.Connection, project_id: int, rows: list[dict]) -> None:
+    """관찰 행마다 page_diff 를 단다 — 완료(since) 전 마지막 관측과 그 뒤 최신 관측 사이에 그
+    검색어의 페이지가 바뀌었나. "고친 게 배포됐나"의 근거다.
+
+    page_diff = {page, src, from, to, changes} 또는 None. None 은 모름이다: 그 검색어의 페이지를
+    모르거나, 완료 뒤에 그 페이지를 다시 읽은 적이 없다. changes 가 빈 목록이면 다시 읽었는데
+    title·H1·canonical·noindex·구조화 데이터 유형이 그대로라는 뜻이다(본문만 고친 일은 여기 안
+    잡힌다 — 화면이 그렇게 말한다)."""
+    import scoring
+    for r in rows:
+        r["page_diff"] = None
+    if not rows:
+        return
+    pages = scoring.pages_by_query(conn, project_id, [r["target"] for r in rows], top=1)
+    page_of = {r["target"]: (r["target"] if str(r["target"]).startswith("http")
+                             else ((pages.get(r["target"]) or [{}])[0].get("page")))
+               for r in rows}
+    series = page_observations(conn, project_id, [u for u in page_of.values() if u])
+    for r in rows:
+        u = page_of.get(r["target"])
+        r["page_diff"] = page_diff_since(series.get(scoring.url_key(u)) if u else None,
+                                         u, r["since"])
+
+
+def page_diff_since(series: dict | None, page: str | None, since: str) -> dict | None:
+    """고친 날(since) 앞의 마지막 관측과 그날부터의 최신 관측을 견준다 — 같은 출처끼리.
+
+    앞은 since **전날까지**, 뒤는 since 당일부터다: 같은 날의 관측이 배포 앞인지 뒤인지 모르는데,
+    그걸 '앞'으로 잡으면 이미 고친 값이 기준이 되어 영영 '그대로'로 남는다. 뒤는 최신 관측이라
+    당일 관측이 배포 전 것이었어도 다음 관측에서 바로잡힌다. 짝이 없으면 None."""
+    import scoring
+    if not (series and page and since):
+        return None
+    for src in ("audit", "crawl"):
+        before = [o for o in series.get(src) or [] if o["date"] < since]
+        after = [o for o in series.get(src) or [] if o["date"] >= since]
+        if before and after:
+            return {"page": page, "src": src, "from": before[-1]["date"], "to": after[-1]["date"],
+                    "changes": scoring.page_field_changes(before[-1], after[-1])}
+    return None
+
+
 def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
     """완료된 검색어 기회의 전·후 — 상태를 늘리지 않고 조회로 관찰을 만든다.
 
@@ -3549,6 +3657,7 @@ def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:
                     "done_at": o["status_at"], "since": day, "before": before, "after": after,
                     "source": source, "runs_since": int(runs), "stalled": bool(stalled),
                     "until": until if watching else None})
+    _watch_page_diffs(conn, project_id, out)
     return out
 
 

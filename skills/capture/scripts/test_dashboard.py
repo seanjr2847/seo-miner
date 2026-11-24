@@ -321,7 +321,7 @@ def test_crawl_compare_first_run_has_no_baseline():
     conn, pid = _brain("cr1")
     r1 = _run(conn, pid, D, [("orphan", "warn", "/x", "링크 0")])
     cmp_ = dashboard.crawl_compare(conn, pid, r1)
-    assert cmp_ == {"prev_run_id": None, "new": [], "fixed": []}, cmp_
+    assert cmp_ == {"prev_run_id": None, "new": [], "fixed": [], "changed": []}, cmp_
     conn.close()
 
 

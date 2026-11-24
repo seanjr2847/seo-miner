@@ -2585,7 +2585,47 @@ def _ev_decay(o, ctx, pages):
                      "이어지는지 봅니다. 이어지지 않으면 '안 바꿈'이 답입니다.")
     L += _pages_table(pages)
     dk = _decay_page_lines(_decay_of(o, ctx), pages, ctx)
-    return L + ([""] if L and dk else []) + dk
+    cx = _decay_context_lines(o, ctx, pages)
+    return L + ([""] if L and dk else []) + dk + ([""] if (L or dk) and cx else []) + cx
+
+
+def _decay_context_lines(o: dict, ctx: dict, pages: list[dict]) -> list[str]:
+    """떨어진 기간 그 페이지에서 바뀐 것 + 그 기간과 겹치는 구글 공지 — 원인 가설의 재료.
+
+    방어형 기회는 원인을 잘못 짚으면 멀쩡한 페이지를 고친다. 재료는 dashboard._decay_context
+    한 벌(ctx["decay_context"])이고 여기는 글로 옮기기만 한다:
+      diff None      견줄 관측이 없다 → [확인 필요] (없는 변화를 '없음'이라고 하지 않는다)
+      changes []     두 날에 읽은 값이 그대로다 → 그렇게 말한다(본문 변화는 이 표가 못 본다)
+      ledger         겹치는 공지가 있을 때만. 문장은 scoring.ledger_lines 한 벌이다."""
+    c = (ctx.get("decay_context") or {}).get(str(o.get("target") or ""))
+    if not c:
+        return []
+    page = c.get("page")
+    head = (f"떨어진 기간 그 페이지에서 바뀐 것 (구글 실적 {c.get('prev')} → {c.get('at')}"
+            + (f", {page}" if page else "") + "):")
+    L = [head]
+    d = c.get("diff")
+    src = {"audit": "페이지 감사", "crawl": "사이트 크롤"}
+    if not page:
+        L.append("- [확인 필요] 이 검색어로 걸린 내 페이지를 몰라 견줄 관측이 없습니다.")
+    elif d is None:
+        L.append("- [확인 필요] 그 기간의 앞·뒤로 이 페이지를 읽은 기록이 한 짝이 안 됩니다. 배포 "
+                 "기록(커밋·CMS 수정 이력)에서 그 기간에 title·H1·canonical·noindex·구조화 "
+                 "데이터를 건드렸는지 직접 확인합니다.")
+    elif not d.get("changes"):
+        L.append(f"- {src.get(d.get('src'), d.get('src'))} {d.get('from')}과 {d.get('to')}에 읽은 "
+                 "title·H1·canonical·noindex·구조화 데이터 유형·응답 상태가 그대로입니다. 본문 "
+                 "문단의 변화는 이 비교에 안 잡힙니다.")
+    else:
+        L += _table(["바뀐 것", f"{d.get('from')}", f"{d.get('to')}"],
+                    [[ch.get("label"), ch.get("before") if ch.get("before") is not None else "(없음)",
+                      ch.get("after") if ch.get("after") is not None else "(없음)"]
+                     for ch in d["changes"]])
+        L.append(f"- 출처: {src.get(d.get('src'), d.get('src'))}. 이 변화가 하락의 원인이라고 "
+                 "단정하지 않습니다 — 의도한 변경인지부터 확인하고, 의도가 아니면 되돌리는 것이 "
+                 "본문을 고치는 것보다 먼저입니다.")
+    led = scoring.ledger_lines(c.get("ledger"))
+    return L + ([""] + led if led else [])
 
 
 def _decay_page_lines(dk: dict, pages: list[dict], ctx: dict) -> list[str]:
@@ -2811,7 +2851,27 @@ def _ev_coverage(o, ctx, pages):
     if not kws:
         return []
     return ["이 주제로 추적 중인데 노출도 순위도 없는 키워드:",
-            *_table(["키워드", "월 검색량"], [[k["keyword"], _n(k.get("volume"))] for k in kws[:15]])]
+            *_table(["키워드", "월 검색량"], [[k["keyword"], _n(k.get("volume"))] for k in kws[:15]]),
+            *_coverage_reinforce_lines(kws[:15])]
+
+
+def _coverage_reinforce_lines(kws: list[dict]) -> list[str]:
+    """쓰기 전 카니벌 예방 — 위 키워드 중 **새 글 말고 기존 페이지 보강**으로 돌릴 것.
+
+    판정은 scoring.prewrite_overlap(재료는 dashboard._cluster_keywords 가 싣는다): 그 키워드의
+    검색결과 상위가 이미 우리 페이지가 걸린 검색어의 검색결과와 겹친다 — 구글이 같은 문서로
+    답하는 질문이라, 새 글을 쓰면 그 페이지와 순위를 갈라 먹는다. 해당이 없으면 빈 목록."""
+    hit = [k for k in kws if k.get("reinforce")]
+    if not hit:
+        return []
+    L = ["", "이 중 새 글을 쓰지 말고 기존 페이지를 보강할 키워드 (검색결과 상위가 이미 우리 "
+             "페이지가 걸린 검색어와 겹칩니다 — 새 글을 쓰면 그 페이지와 순위를 갈라 먹습니다):"]
+    L += _table(["키워드", "보강할 페이지", "검색결과가 겹치는 검색어", "겹친 주소"],
+                [[k["keyword"], k["reinforce"]["page"], k["reinforce"]["via"],
+                  f"{k['reinforce']['shared']}/{k['reinforce']['of']}"] for k in hit])
+    L.append("- 위 키워드는 새 글 목록에서 빼고, 그 페이지에 이 키워드가 묻는 내용을 구간으로 "
+             "더하는 쪽으로 설계합니다. 남은 키워드만 새 글 대상입니다.")
+    return L
 
 
 # 엔진마다 출처를 고르는 경향 — ai-seo 스킬의 관찰이다. 경향이지 규칙이 아니라서 요청문도

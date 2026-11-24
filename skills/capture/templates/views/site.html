@@ -1742,6 +1742,16 @@ const CR_fixed = f => !f.length ? "" :
      <ul class="deta">${f.map(x => `<li>${esc(CR_label(x.kind))}:
        <span class="cr-url">${esc(x.url || "")}</span></li>`).join("")}</ul></details>`;
 
+/* 값이 바뀐 것 — 이슈 비교(새로 생긴 것·해결된 것)는 '지금 문제인 것'의 집합 차이라, 유효한
+   값끼리 바뀐 canonical·title·H1·구조화 데이터 유형은 못 본다. 판정과 이름은 서버 것이다
+   (dashboard.crawl_compare 의 changed, scoring.page_field_changes). */
+const CR_chVal = v => v == null || v === "" ? "(없음)" : String(v);
+const CR_changed = ch => !ch.length ? "" :
+  `<details style="flex-basis:100%" id="cr-changed"><summary>값이 바뀐 ${ch.length}쪽이 무엇인지 보기</summary>
+     <ul class="deta">${ch.map(x => `<li><span class="cr-url">${esc(x.url || "")}</span><ul>${
+       (x.changes || []).map(c => `<li>${esc(c.label)}: ${esc(CR_chVal(c.before))} → ${esc(CR_chVal(c.after))}</li>`).join("")
+     }</ul></li>`).join("")}</ul></details>`;
+
 // 회차 비교 — 이 섹션의 결론. 첫 바퀴에는 비교할 게 없다고 그대로 말한다.
 // 배지 두 개가 무엇에 대한 숫자인지를 앞의 라벨이 먼저 말한다(기준 없는 숫자 금지).
 function CR_diff(d) {
@@ -1750,11 +1760,12 @@ function CR_diff(d) {
     return "<span class=\"muted\">첫 크롤입니다. 다음 크롤부터 " +
            "<b>지난번 대비 새로 깨진 것</b>을 여기에 적습니다.</span>";
   const own = a => (a || []).filter(x => !CR_INTL.has(x.kind));
-  const n = own(cmp.new).length, f = own(cmp.fixed);
+  const n = own(cmp.new).length, f = own(cmp.fixed), ch = cmp.changed || [];
   return `<span class="muted">직전 크롤 대비</span>` +
          `<span class="${n ? "up" : "muted"}">새로 생긴 것 <b>${n}</b>건</span>` +
          `<span class="${f.length ? "ok" : "muted"}">해결된 것 <b>${f.length}</b>건</span>` +
-         CR_fixed(f);
+         `<span class="${ch.length ? "up" : "muted"}">값이 바뀐 것 <b>${ch.length}</b>쪽</span>` +
+         CR_fixed(f) + CR_changed(ch);
 }
 
 // 요약 카드 — 회차 비교 알약 둘과, 가장 많이 걸린 갈래 셋의 막대. 심각도는 막대 색이 말한다.

@@ -6071,6 +6071,76 @@ def test_seam_conversion_brief_and_cro_delegation():
     assert named <= set(doctor.ALL_SKILLS), f"위임 표에만 있는 스킬: {sorted(named - set(doctor.ALL_SKILLS))}"
 
 
+def test_seam_drift_ledger_and_field_changes_are_one_list():
+    """원장·필드 비교·구조 집계 이음매 — 만드는 쪽(skill_config·scoring·dashboard)과 말하는 쪽
+    (화면·요청문·점검).
+
+    - 구글 업데이트 원장은 skill_config.google_ledger 한 벌이다. 화면·요청문·다른 스크립트가 공지
+      주소(incidents/…)나 날짜를 다시 적으면 한쪽만 낡는다. 원장의 종류에는 전부 라벨이 있다.
+    - 바뀐 필드의 이름(scoring.FIELD_CHANGE_LABEL)은 서버가 실어 보낸다 — 화면이 사본을 안 갖는다.
+    - 화면이 읽는 새 페이로드 칸은 gather 가 실제로 낸다(서버를 돌려 칸 이름을 받는다).
+    - GSC 창의 지연 일수는 collect_gsc·dashboard·scoring 이 같은 수다(원장 겹침이 그 창으로 판정한다).
+    - 근거 부족 게이트·검색결과 겹침 문턱은 scoring 의 상수 하나씩이다.
+    """
+    import collections
+    import sqlite3
+    import dashboard
+    import db
+    import scoring
+    import skill_config
+    led = skill_config.CONFIG["google_ledger"]
+    assert {e["kind"] for e in led["updates"]} <= set(scoring.LEDGER_KIND_LABEL), "라벨 없는 원장 종류"
+    assert set(scoring.LEDGER_SEARCH_KINDS) <= set(scoring.LEDGER_KIND_LABEL)
+    views = SCRIPTS.parent / "templates"
+    copies = [f.name for f in [*views.rglob("*.html"), *views.rglob("*.js"),
+                               *(p for p in SCRIPTS.glob("*.py")
+                                 if p.name not in ("skill_config.py",) and not p.name.startswith("test_"))]
+              if re.search(r"status\.search\.google\.com/incidents/|webmasters/answer/6211453",
+                           f.read_text("utf-8"))]
+    assert not copies, f"원장 항목(구글 공지 주소)의 사본: {copies}"
+    tpl = "".join(f.read_text("utf-8") for f in views.rglob("*.html"))
+    for label in scoring.FIELD_CHANGE_LABEL.values():
+        assert label not in tpl, f"화면이 바뀐 필드 이름의 사본을 갖는다: {label!r}"
+    assert set(scoring.FIELD_CHANGE_SEV) == set(scoring.FIELD_CHANGE_LABEL)
+    for label in scoring.LEDGER_KIND_LABEL.values():
+        assert label not in tpl, f"화면이 원장 종류 이름의 사본을 갖는다: {label!r}"
+
+    gsc = (SCRIPTS / "collect_gsc.py").read_text("utf-8")
+    m = re.search(r"end = date\.today\(\) - timedelta\(days=(\d+)\)", gsc)
+    assert m, "collect_gsc 의 창 끝(오늘 − N일)을 못 찾았다 — 꼴이 바뀌었으면 이 검사도 옮긴다"
+    assert int(m.group(1)) == dashboard.GSC_LAG_DAYS == scoring.GSC_WINDOW_LAG_DAYS, \
+        "GSC 창의 지연 일수가 수집기·화면·원장 판정에서 어긋난다"
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(db.SCHEMA)
+    db._register_norm(conn)
+    conn.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'s','saas','s.com')")
+    p = conn.execute("SELECT * FROM projects WHERE id=1").fetchone()
+    d = dashboard.gather(conn, p)
+    read = collections.defaultdict(set)
+    for name in ("analysis", "overview", "site", "hold"):
+        src = (views / "views" / f"{name}.html").read_text("utf-8")
+        for key in ("cluster_report", "link_health", "kpi_watch"):
+            if re.search(rf"\bd\.{key}\b", src):
+                read[key].add(name)
+    assert set(read) == {"cluster_report", "link_health", "kpi_watch"}, \
+        f"화면이 새 칸을 안 읽는다: {dict(read)}"
+    for key in (*read, "decay_context", "cluster_check", "site_type_guess"):
+        assert key in d, f"gather 가 {key!r} 를 안 낸다 — 화면·요청문·점검이 빈 칸을 읽는다"
+    assert "ledger" in d["shift"], "click_shift 가 원장 칸을 안 낸다 — [클릭 변화]의 띠가 영영 안 선다"
+    assert all("tally" in g for g in d["groups"]), "묶음에 개수 칸(tally)이 없다"
+    an = (views / "views" / "analysis.html").read_text("utf-8")
+    assert "s.ledger" in an and "L.caveat" in an, "[클릭 변화]가 원장과 그 주의 문장을 서버에서 안 받는다"
+    hold = (views / "views" / "hold.html").read_text("utf-8")
+    assert "h.page_diff" in hold, "[관찰 중]이 page_diff 를 안 읽는다"
+    # 문턱은 한 벌 — 화면·점검이 숫자를 박아 두지 않고 페이로드로 받는다
+    assert d["cluster_check"]["min_shared"] == scoring.SERP_MIN_SHARED
+    assert not re.search(r"40\s*%|3곳 미만", an), "내부 링크 점검의 기준(40%·3곳)을 화면이 박아 뒀다"
+    audit = (SCRIPTS / "audit_data.py").read_text("utf-8")
+    assert "dashboard" not in re.findall(r"^import (\w+)", audit, re.M), "audit_data 가 dashboard 를 import 한다(순환)"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

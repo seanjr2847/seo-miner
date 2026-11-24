@@ -166,6 +166,10 @@
 
 /* 한 작업 — 세로 타임라인 */
 #holds .hd-wk { list-style:none; margin:0; padding:0; }
+#holds .hd-pd { margin:var(--sp-4) 0 0; padding:var(--sp-3) var(--sp-4); border-radius:var(--r-md);
+  background:var(--sunk); font-size:var(--fs-1); line-height:1.6; color:var(--sub); overflow-wrap:anywhere; }
+#holds .hd-pd > b { display:block; font-size:var(--fs-2); color:var(--ink); }
+#holds .hd-pd ul { margin:var(--sp-1) 0 0; padding-left:18px; }
 #holds .hd-wk li { position:relative; padding:0 0 var(--sp-4) 22px; font-size:var(--fs-2); line-height:1.6; }
 #holds .hd-wk li::before { content:""; position:absolute; left:0; top:8px; width:10px; height:10px;
   border-radius:50%; background:var(--accent); }
@@ -414,6 +418,19 @@ function HD_row(h, i, byId) {
       <div class="hd-ax"><span>${esc(HD_md(h.since))} 시작</span>${pct == null ? "" : `<span class="mk" style="left:${at}%">오늘</span>`}
         <span class="hd-day">${esc(HD_md(h.until))} 종료</span></div></div></div>`;
 }
+/* 고친 게 배포됐나 — 마지막 작업일 앞·뒤로 이 페이지를 읽은 값(서버 db.page_diff_since).
+   없으면(null) 모르는 것이다: 작업 뒤에 이 페이지를 다시 읽은 적이 없다. 목록이 비면 다시
+   읽었는데 title·H1·canonical·noindex·구조화 데이터 유형이 그대로다 — 본문만 고친 일은 여기
+   안 잡힌다고 같이 말한다. 이름(label)은 서버 것이다. */
+function HD_diff(pd) {
+  const v = x => x == null || x === "" ? "(없음)" : String(x);
+  if (!pd) return `<p class="hd-pd" data-pd="none"><b>배포 확인 전</b>고친 뒤에 이 페이지를 다시 읽은 기록이 없습니다. 페이지 감사나 사이트 크롤이 한 번 더 돌면 여기에 바뀐 값이 섭니다.</p>`;
+  const when = `${esc(HD_md(pd.from))} → ${esc(HD_md(pd.to))}`;
+  if (!(pd.changes || []).length)
+    return `<p class="hd-pd" data-pd="same"><b>읽은 값이 그대로입니다</b>${when} 사이에 title·H1·canonical·noindex·구조화 데이터 유형이 안 바뀌었습니다. 본문만 고쳤다면 정상이고, 아니면 배포가 안 됐을 수 있습니다.</p>`;
+  return `<div class="hd-pd" data-pd="changed"><b>고친 뒤 바뀐 값 ${pd.changes.length}가지</b><span>${when}</span>
+    <ul>${pd.changes.map(c => `<li>${esc(c.label)}: ${esc(v(c.before))} → ${esc(v(c.after))}</li>`).join("")}</ul></div>`;
+}
 // 페이지 상세 — [전·후 비교 | 한 작업] 아래에 [뺀 기회 표].
 function HD_card(h, byId, i) {
   const works = (h.works || []).map(w => `<li><span class="d">${esc(w.day)}</span><span class="kind">${esc(w.label || w.kind)}</span>
@@ -442,6 +459,7 @@ function HD_card(h, byId, i) {
       <article class="card c5"><div class="hd-ch"><div><h3 class="hd-ct">한 작업</h3>
         <p class="hd-cs">이 페이지에 기록한 수정 ${(h.works || []).length}건</p></div></div>
         <ol class="hd-wk">${works}</ol>
+        ${HD_diff(h.page_diff)}
         <p class="hd-wf"><b>${esc(HD_md(h.until))}에 관찰이 끝납니다</b>마지막으로 고친 ${esc(HD_md(h.since))}부터 ${total ? `${total}일 동안` : ""} 지켜보고, 끝나면 이 페이지의 기회가 할 일 목록으로 돌아옵니다.</p></article>
       <article class="card c12"><div class="hd-ch"><div><h3 class="hd-ct">지켜보는 동안 뺀 기회 ${opps.length}건${more > 0 ? ` · 화면 목록 밖 ${more}건` : ""}</h3>
         <p class="hd-cs">관찰이 끝나면 할 일 목록으로 돌아옵니다.</p></div>${sortBar}</div>

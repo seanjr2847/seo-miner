@@ -287,6 +287,8 @@ score = w_demand · 수요        min(1, log10(1+max(impressions, volume))/5)  �
 | saas | .20 | .20 | .15 | .45 |
 | directory | .40 | .25 | .20 | .15 |
 | commerce | .35 | .25 | .20 | .20 |
+| publisher | directory 와 같음 | | | |
+| agency | saas 와 같음 | | | |
 
 미등록 type은 saas 계수로 폴백. 프리셋별 방향(saas는 w_ai 최상향 — best-of
 리스트 인용이 전장, local_business은 w_fit 상향 — 네이버 미측정 한계는 reasoning에

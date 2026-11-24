@@ -36,3 +36,16 @@ commerce:
     - {category: 비교, t: "{brand}랑 {competitor} 중에 뭐가 나아?"}
     - {category: 브랜드, t: "{brand} {product} 어때? 살 만해?"}
   scoring_bias: "product/category demand leads; AI shopping answers (추천 목록에 브랜드가 끼는가) weigh mid"
+publisher:
+  keyword_angles: ["{topic} 뜻", "{topic} 방법", "{topic} 정리", "{year} {topic}", "{topic} 비교"]
+  ai_prompt_templates:
+    - {category: 문제해결, t: "{topic} 쉽게 설명해줘"}
+    - {category: 추천, t: "{topic} 다루는 믿을 만한 매체 추천해줘"}
+  scoring_bias: "per-article search demand leads (same weights as directory); freshness & author signals matter"
+agency:
+  keyword_angles: ["{service} 에이전시", "{service} 대행 비용", "{service} 업체 추천", "{industry} {service} 사례", "{service} 인하우스 vs 대행"]
+  ai_prompt_templates:
+    - {category: 추천, t: "{industry} {service} 잘하는 에이전시 추천해줘"}
+    - {category: 비교, t: "{service} 대행이랑 인하우스 뭐가 나아?"}
+    - {category: 문제해결, t: "{service} 에이전시 고르는 기준이 뭐야?"}
+  scoring_bias: "'best agency' list inclusion in AI answers is the battlefield (same weights as saas); case studies are the proof"

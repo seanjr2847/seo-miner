@@ -108,6 +108,31 @@
 .anverdict b { color:var(--ink); }
 /* 행동이 붙은 한 줄 안내(GA4 미연결·미분류 경고)만 여기 남는다. */
 .anthin { font-size:var(--fs-2); color:var(--sub); margin:var(--sp-4) 0 0; line-height:1.6; }
+/* 원장 띠 — 비교한 두 기간과 겹치는 구글 공지. 겹칠 때만 선다(anLedger). */
+.anled { margin-top:var(--sp-4); padding:var(--sp-3) var(--sp-4); border-radius:var(--r-md);
+  background:var(--warn-wash); font-size:var(--fs-2); line-height:1.6; }
+.anled-h { margin:0 0 var(--sp-1); font-weight:650; color:var(--ink); }
+.anled ul { margin:0; padding-left:18px; }
+.anled li { margin:2px 0; overflow-wrap:anywhere; }
+.anled .d { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+.anled-c { margin:var(--sp-2) 0 0; color:var(--sub); font-size:var(--fs-1); }
+/* 클러스터 성적표(#an-struct) — 숫자 칸만 tabular. 주소는 줄바꿈을 허용한다. */
+#an-struct { margin-top:var(--sp-5); }
+#an-struct:empty { display:none; }
+#an-struct h3 { margin:0 0 var(--sp-1); font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); }
+#an-struct .ans-sub { margin:0 0 var(--sp-3); font-size:var(--fs-1); line-height:1.6; color:var(--sub); }
+#an-struct table { width:100%; border-collapse:collapse; font-size:var(--fs-2); }
+#an-struct th { text-align:left; font-weight:600; font-size:var(--fs-1); color:var(--sub); padding:4px 10px 4px 0; }
+#an-struct td { padding:8px 10px 8px 0; border-top:1px solid var(--rule-soft); vertical-align:top; overflow-wrap:anywhere; }
+#an-struct td.n { font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* 좁은 카드(6열)에서 주제 이름이 낱자로 세로로 꺾였다 — 낱말 단위로만 꺾고, 넘치면 표가 옆으로 민다 */
+#an-struct .ans-x { overflow-x:auto; }
+#an-struct td:first-child { min-width:7em; word-break:keep-all; overflow-wrap:normal; }
+#an-struct th { white-space:nowrap; }
+#an-struct details { margin-top:var(--sp-3); font-size:var(--fs-2); }
+#an-struct details ul { margin:var(--sp-2) 0 0; padding-left:18px; color:var(--sub); font-size:var(--fs-1); line-height:1.7; }
+#an-struct li { overflow-wrap:anywhere; }
+#an-struct .ans-b { margin-top:var(--sp-4); }
 
 /* ── 맨 위: 리드 문장 + KPI 스트립. 이 절은 카드가 아니다 — KPI 하나하나가 카드다. ── */
 #an-top .anverdict { font:500 var(--fs-3)/1.6 var(--sans); color:var(--ink); max-width:none;
@@ -352,6 +377,9 @@ tr[aria-expanded="true"] .anq::before { content:"▾"; color:var(--accent); }
     <div id="an-pseo-body"></div>
   </div>
   <div id="an-cluster-body"><span class="skel box"></span></div>
+  <!-- 클러스터 성적표·내부 링크 지도·앵커 점검 — 추적 키워드의 주제와 최신 크롤 링크로 센 것
+       (서버 dashboard._axis_structure). 점수는 없다. 채우는 것은 anStruct 다. -->
+  <div id="an-struct"></div>
 </section>
 
 <section id="an-country" class="card ang" data-mode="manage">
@@ -688,6 +716,22 @@ function anTop(d, mismatch) {
 // 맞댈 수집은 있는데 두 쪽 다 클릭이 0 — "수집이 한 번뿐"이라고 하면 거짓이다.
 const AN_NO_CLICKS = `<div class="empty"><b>두 기간 모두 클릭이 없습니다</b>
   <p>클릭이 0에서 0이라 나눌 변화가 없습니다. 노출이 클릭으로 바뀌기 시작하면 여기가 채워집니다.</p></div>`;
+// 원장 띠 — 비교한 두 기간과 겹치는 구글 업데이트·서치콘솔 데이터 이상(scoring.ledger_for_pair).
+// 판정도 문구(종류 이름·주의 문장)도 서버 것이고, 겹칠 때만 선다. 원인이 아니라 가설이다 —
+// 그 말(caveat)을 띠가 늘 같이 싣는다.
+function anLedger(s) {
+  const L = s && s.ledger;
+  const ups = (L && L.updates) || [], ans = (L && L.anomalies) || [];
+  if (!ups.length && !ans.length) return "";
+  const span = e => `<span class="d">${esc(e.start)}${e.end ? (e.end !== e.start ? "~" + esc(e.end.slice(5)) : "")
+    : "~"}</span>${e.end ? "" : " 진행 중"}`;
+  const src = e => `<a href="${esc(e.url)}" target="_blank" rel="noopener">구글 공지</a>`;
+  const li = [...ups.map(u => `<li>${span(u)} <b>${esc(u.label)}</b> · ${src(u)}</li>`),
+    ...ans.map(a => `<li>${span(a)} <b>서치콘솔 데이터 이상</b> · ${esc(a.note || "")} · ${src(a)}</li>`)];
+  return `<div class="anled" id="an-ledger"><p class="anled-h">이 기간과 겹치는 구글 공지 ${li.length}건</p>
+    <ul>${li.join("")}</ul><p class="anled-c">${esc(L.caveat || "")}${L.stale
+      ? ` 이 목록은 ${esc(L.verified || "")}에 구글 공지와 마지막으로 대조했습니다. 그 뒤의 업데이트는 빠졌을 수 있습니다.` : ""}</p></div>`;
+}
 function anShift(s, mismatch, hasPrev) {
   if (s && hasPrev && !mismatch && !s.prev_clicks && !s.clicks) return AN_NO_CLICKS;
   if (!s || (!s.prev_clicks && !s.clicks))
@@ -1262,6 +1306,47 @@ function anIntent(rows, gaRows) {
     + anUnmatched(rows, "의도") + anGa4Intent(gaRows);
 }
 
+// 클러스터 성적표·내부 링크 지도·앵커 점검 — 서버(scoring.cluster_report·anchor_diversity)가 센 것을
+// 그리기만 한다. 링크 칸이 null 이면 크롤이 없는 것이다: 0 이 아니라 "크롤 전"이라고 적는다.
+function anStruct(d) {
+  const cr = d.cluster_report || {}, rows = cr.rows || [], lh = d.link_health;
+  if (!rows.length && !lh) return "";
+  const frac = x => x == null ? "크롤 전" : x.of ? `${num(x.have)}/${num(x.of)}` : "-";
+  const path = u => esc(urlPath(u || ""));
+  const tr = r => `<tr data-cl="${esc(r.cluster)}"><td>${esc(r.cluster)}</td>
+    <td class="n">${num(r.with_page)}/${num(r.keywords)}</td><td class="n">${num((r.pages || []).length)}</td>
+    <td>${r.pillar ? `<a href="${esc(r.pillar)}" target="_blank" rel="noopener">${path(r.pillar)}</a>` : "아직 없음"}</td>
+    <td class="n">${frac(r.pillar_links)}</td><td class="n">${frac(r.cross_links)}</td></tr>`;
+  const miss = rows.filter(r => (r.to_pillar_missing || []).length);
+  const edges = rows.filter(r => (r.edges || []).length);
+  let h = "";
+  if (rows.length) {
+    h += `<h3>주제별 페이지와 내부 링크</h3>
+      <p class="ans-sub">추적 중인 키워드의 주제마다, 우리 페이지가 걸린 키워드 수와 그 페이지끼리의 내부 링크를 셉니다. 대표 페이지는 그 주제에서 가장 많은 키워드가 걸린 페이지입니다.${cr.crawled ? "" : " 사이트 크롤을 한 번 돌리면 링크 칸이 채워집니다."}</p>
+      <div class="ans-x"><table id="an-struct-tb"><thead><tr><th>주제</th><th>페이지가 걸린 키워드</th><th>페이지 수</th><th>대표 페이지</th>
+        <th>대표 페이지로 링크</th><th>서로 링크</th></tr></thead><tbody>${rows.map(tr).join("")}</tbody></table></div>`;
+    if (miss.length) h += `<details id="an-struct-miss"><summary>대표 페이지로 링크를 안 건 페이지 ${
+      num(miss.reduce((a, r) => a + r.to_pillar_missing.length, 0))}쪽 보기</summary><ul>${miss.map(r =>
+        r.to_pillar_missing.map(u => `<li>${esc(r.cluster)}: ${path(u)} → ${path(r.pillar)} 링크 없음</li>`).join("")).join("")}</ul></details>`;
+    if (edges.length) h += `<details id="an-struct-map"><summary>내부 링크 지도 보기 (같은 주제 페이지 사이의 링크 ${
+      num(edges.reduce((a, r) => a + r.edges.length, 0))}개)</summary><ul>${edges.map(r =>
+        r.edges.map(e => `<li>${esc(r.cluster)}: ${path(e[0])} → ${path(e[1])}</li>`).join("")).join("")}</ul></details>`;
+  }
+  if (lh) {
+    const R = lh.rules || {}, sa = lh.same_anchor || [], fi = lh.few_inlinks || [];
+    h += `<div class="ans-b" id="an-links"><h3>내부 링크 점검</h3>
+      <p class="ans-sub">${lh.body_known
+        ? `본문 링크 ${num(R.min_links)}개 이상을 받는 페이지 가운데 같은 앵커가 ${Math.round((R.same_share || 0) * 100)}%를 넘는 곳 <b>${num(lh.same_anchor_n)}</b>쪽`
+        : "이 크롤은 메뉴 링크와 본문 링크를 가르지 못해 앵커 쏠림을 세지 않았습니다"} · 들어오는 내부 링크가 ${num(R.few_inlinks)}곳 미만인 페이지 <b>${num(lh.few_inlinks_n)}</b>쪽${lh.truncated ? " · 링크가 많아 일부만 셌습니다" : ""}</p>`
+      + (sa.length ? `<details id="an-links-same"><summary>같은 앵커가 쏠린 ${num(sa.length)}쪽 보기</summary><ul>${
+          sa.map(x => `<li>${path(x.url)}: 본문 링크 ${num(x.of)}개 중 ${num(x.n)}개가 “${esc(x.anchor)}”</li>`).join("")}</ul></details>` : "")
+      + (fi.length ? `<details id="an-links-few"><summary>들어오는 링크가 적은 ${num(fi.length)}쪽 보기</summary><ul>${
+          fi.map(x => `<li>${path(x.url)}: 링크를 건 글 ${num(x.n)}곳</li>`).join("")}</ul></details>` : "")
+      + `</div>`;
+  }
+  return h;
+}
+
 function anCluster(rows) {
   if (!rows || !rows.length)
     return `<div class="empty"><b>검색 실적이 아직 없습니다</b>
@@ -1476,7 +1561,7 @@ VIEW("analysis", function (d) {
   AN_SHIFT = d.shift || null;
   AN_MM = mismatch;
   AN_CTR_ALL = d.ctr_gaps || null;
-  $("an-shift-body").innerHTML = anShift(d.shift, mismatch, !!d.gsc_prev);
+  $("an-shift-body").innerHTML = anShift(d.shift, mismatch, !!d.gsc_prev) + anLedger(d.shift);
   $("an-movers-body").innerHTML = anMovers(d.shift, mismatch);
   // CSV 는 거른 것이 아니라 회차 전부를 내보낸다(anCsv 가 AN_SHIFT 를 읽는다) —
   // 그러니 거르개로 화면이 비어도 단추는 남는다.
@@ -1500,6 +1585,7 @@ VIEW("analysis", function (d) {
     $("an-brand-body").innerHTML = anBrand(d.brand_split, !!d.gsc_date);
     $("an-intent-body").innerHTML = anIntent(d.by_intent, d.ga4_intent);
     $("an-cluster-body").innerHTML = anCluster(d.by_cluster);
+    $("an-struct").innerHTML = anStruct(d);
     anPseoApply(d.pseo_groups);
     // 이 축만 분해 수집일을 따로 쓴다 — 언제 기준인지는 부제가 말한다.
     $("an-country-sub").textContent = "타깃 밖 나라가 노출을 먹고 있는지 봅니다."

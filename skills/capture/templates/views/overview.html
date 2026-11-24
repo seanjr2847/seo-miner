@@ -107,6 +107,15 @@ button.ovp:hover .ovp-k { background:var(--card); }
 .ovhl-list .badge { justify-content:center; }
 .ovhl-list b { display:block; font:600 var(--fs-1)/1.5 var(--sans); color:var(--sub); }
 .ovhl-list p { margin:2px 0 0; font:400 var(--fs-2)/1.6 var(--sans); color:var(--ink); overflow-wrap:anywhere; }
+/* 묶음별 상태(#ov-pulse) — 표 둘. 숫자 칸만 등폭 숫자다(한글 칸에 등폭을 걸지 않는다). */
+#ov-pulse-body { margin-top:10px; display:grid; gap:var(--sp-4); }
+#ov-pulse-body h3 { margin:0 0 6px; font:650 var(--fs-2)/1.5 var(--sans); color:var(--ink); }
+#ov-pulse-body table { width:100%; border-collapse:collapse; font-size:var(--fs-2); }
+#ov-pulse-body th { text-align:left; font-weight:600; color:var(--sub); font-size:var(--fs-1); padding:4px 8px 4px 0; }
+#ov-pulse-body td { padding:6px 8px 6px 0; border-top:1px solid var(--rule-soft); vertical-align:top; overflow-wrap:anywhere; }
+#ov-pulse-body td.n { font-variant-numeric:tabular-nums; white-space:nowrap; }
+#ov-pulse-body .ovp-d { color:var(--sub); font-size:var(--fs-1); margin-left:4px; }
+#ov-pulse-body .ovp-note { margin:6px 0 0; font-size:var(--fs-1); line-height:1.6; color:var(--sub); }
 @media (max-width:560px) { .ov-health { padding:12px 16px; } }
 
 /* ── 일별 추이: 한 번에 하나만(클릭 | 노출) — 자릿수가 다른 두 선을 한 축에 겹치지 않는다 ── */
@@ -152,6 +161,16 @@ button.ovp:hover .ovp-k { background:var(--card); }
         <span class="ovhl-sev" id="ov-health-sev"></span>
         <span class="ovhl-h">수집·판정이 이상하게 돈 자리입니다. 펼쳐서 봅니다.</span></summary>
       <ul class="ovhl-list" id="ov-health-list"></ul>
+    </details>
+
+    <!-- 묶음별 나쁨·주의 개수와 다음 분기에 확인할 숫자 — 합성 점수(0~100)는 만들지 않는다.
+         개수·증감·근거 부족 판정은 서버(dashboard._group_tallies · _kpi_watch)가 낸다. 접힌 채로 서고
+         안을 채우는 것은 OV_pulse 다. 셀 것이 없으면(수집 전) 띠째 안 선다. -->
+    <details class="card ov-health" id="ov-pulse" hidden>
+      <summary><span class="ovhl-t">묶음별 상태</span>
+        <span class="ovhl-sev" id="ov-pulse-sum"></span>
+        <span class="ovhl-h">점수가 아니라 개수입니다. 펼치면 묶음별 증감과 다음 분기에 확인할 숫자가 나옵니다.</span></summary>
+      <div id="ov-pulse-body"></div>
     </details>
 
     <!-- 이번 달 할 일 — 지표 바로 아래, 개선 기회 위. 도구가 페이지를 읽고 만든 수정안(d.plays)이다.
@@ -569,6 +588,17 @@ function OV_watchDraw() {
     if (a > b) return `<span class="badge warn" title="순위가 ${f(a - b)}계단 내려갔습니다">↓ ${f(a - b)}위</span>`;
     return `<span class="badge muted">변동 없음</span>`;
   };
+  // 고친 게 배포됐나 — 완료 앞·뒤로 그 페이지를 읽은 값(서버 db.watch_rows 의 page_diff).
+  // 없으면 줄을 안 세운다(모름). 이름(label)은 서버 것이다.
+  const pdiff = w => {
+    const pd = w.page_diff;
+    if (!pd) return "";
+    const n = (pd.changes || []).length;
+    const tip = n ? pd.changes.map(c => `${c.label}: ${c.before == null ? "(없음)" : c.before} → ${
+      c.after == null ? "(없음)" : c.after}`).join("\n") : "본문만 고쳤다면 정상이고, 아니면 배포가 안 됐을 수 있습니다";
+    return `<div class="ovw-m" data-pd="${n ? "changed" : "same"}" title="${esc(tip)}">페이지 <span class="nw">${n
+      ? `바뀐 값 ${n}가지` : "읽은 값 그대로"}</span></div>`;
+  };
   $("watch").innerHTML = `<div class="ovw">${rows.slice(0, OV_WATCH_N).map(w => `<div class="ovw-r">
       ${SM.ui.avatar([...String(w.target || "?")][0], {size: 32, tone: "a", cls: "ov-av"})}
       <div>
@@ -578,6 +608,7 @@ function OV_watchDraw() {
         <div class="ovw-m">고친 날 <span class="nw" title="${esc(`기준일 ${w.since || ""} · 완료 ${(w.done_at || "").slice(0, 10)}`)}">${
           esc((w.since || w.done_at || "").slice(5, 10))}</span> · 그 뒤 ${w.runs_since}회 ${w.source === "rank"
           ? `<span title="서치콘솔에 이 검색어 행이 없어 순위 확인으로 잽니다">순위 확인</span>` : "측정"}</div>
+        ${pdiff(w)}
         <div class="ovw-st">${w.stalled ? (READONLY ? `<span class="st st-acked">안 올랐음</span>`
         : `<button class="go sm sec" onclick="setOpp(${w.id},'new')" title="두 번 이상 쟀는데 순위가 안 올랐습니다">다시 열기</button>`)
         // 관찰 기간 안 — '지금' 칸의 실적 창에 아직 고치기 전 날이 섞여 있다(db.watch_rows).
@@ -594,6 +625,48 @@ function OV_watchDraw() {
    서버 것이다(d.health_sev). 배지 색은 등급 id 로 고른다 — 색은 거들 뿐 글자가 정본이다.
    없으면(이상 0건·옛 페이로드) 띠째 안 선다 — "이상 없음"을 매번 한 줄 읽힐 까닭이 없다. */
 const OV_SEV_CLS = {high: "bad", mid: "warn", low: "adv"};
+/* 묶음별 상태 — 서버가 낸 개수(d.groups[].tally)와 KPI(d.kpi_watch)를 그리기만 한다.
+   tally 가 null 인 묶음(잴 단계 없음)은 줄을 안 세우고, enough 가 false 면 개수 대신
+   "근거 부족 · 단계 n/m"을 적는다 — 덜 잰 것을 0 으로 보이지 않는다. */
+function OV_pulse(d) {
+  const box = $("ov-pulse");
+  if (!box) return;
+  const gs = (d.groups || []).filter(g => g.tally), k = d.kpi_watch || {};
+  const kr = (k.rows || []).filter(r => r.now != null);
+  box.hidden = !(gs.length || kr.length);
+  if (box.hidden) return;
+  const ok = gs.filter(g => g.tally.enough);
+  const sum = (key) => ok.reduce((a, g) => a + (g.tally[key] || 0), 0);
+  const thin = gs.length - ok.length;
+  $("ov-pulse-sum").innerHTML = (ok.length ? `<span class="badge ${sum("bad") ? "bad" : "muted"}">나쁨 ${num(sum("bad"))}</span>
+    <span class="badge ${sum("warn") ? "warn" : "muted"}">주의 ${num(sum("warn"))}</span>` : "")
+    + (thin ? `<span class="badge muted">근거 부족 ${num(thin)}묶음</span>` : "");
+  const dl = v => v == null ? "" : `<span class="ovp-d">${SM.ui.sign(v, "±")}${num(Math.abs(v))}</span>`;
+  const grow = g => {
+    const t = g.tally;
+    if (!t.enough) return `<tr data-pulse="${esc(g.id)}" data-enough="0"><td>${esc(g.name)}</td>
+      <td colspan="2">근거 부족 · 잰 단계 ${num(t.measured)}/${num(t.of)}</td><td>단계를 더 재면 개수가 섭니다.</td></tr>`;
+    return `<tr data-pulse="${esc(g.id)}" data-enough="1"><td>${esc(g.name)}</td>
+      <td class="n">${num(t.bad)}${dl(t.d_bad)}</td><td class="n">${num(t.warn)}${dl(t.d_warn)}</td>
+      <td>${esc(t.basis || "")}${t.since ? ` (${esc(String(t.since).slice(5))} 이후)` : ""}</td></tr>`;
+  };
+  const fmt = (r, v) => v == null ? "-" : r.id === "ctr" ? (Math.round(v * 1000) / 10) + "%"
+    : r.id === "position" ? v + "위" : num(v);
+  const dir = r => r.dir == null ? "비교할 직전 구간 없음" : r.dir === "flat" ? "그대로"
+    // 순위는 숫자가 줄어야 오른 것이다 — "줄었음"이라고 쓰면 거꾸로 읽힌다
+    : r.id === "position" ? `${r.dir === "down" ? "↑ 올랐음" : "↓ 밀렸음"} · ${r.good ? "좋아진 방향" : "나빠진 방향"}`
+    : `${r.dir === "up" ? "↑ 늘었음" : "↓ 줄었음"} · ${r.good ? "좋아진 방향" : "나빠진 방향"}`;
+  const krow = r => `<tr data-kpi="${esc(r.id)}"><td>${esc(r.label)}</td><td class="n">${fmt(r, r.now)}</td>
+    <td class="n">${fmt(r, r.prev)}</td><td>${dir(r)}</td></tr>`;
+  $("ov-pulse-body").innerHTML = (gs.length ? `<div><h3>묶음별 나쁨·주의</h3>
+    <table><thead><tr><th>묶음</th><th>나쁨</th><th>주의</th><th>무엇을 셌나</th></tr></thead>
+    <tbody>${gs.map(grow).join("")}</tbody></table></div>` : "")
+    + (kr.length ? `<div><h3>다음 분기에 확인할 숫자</h3>
+    <table><thead><tr><th>숫자</th><th>지금</th><th>직전 구간</th><th>방향</th></tr></thead>
+    <tbody>${kr.map(krow).join("")}</tbody></table>
+    <p class="ovp-note">예측이 아닙니다. 지금 값과 직전 같은 길이 구간(${esc(k.from || "없음")} 수집분) 대비 방향만 적습니다. <span class="nw">${esc(k.check_on || "")}</span>에 같은 표를 다시 봅니다.</p></div>` : "");
+}
+
 function OV_health(d) {
   const box = $("ov-health");
   if (!box) return;
@@ -729,6 +802,7 @@ VIEW("overview", function (d) {
   // 이번 달 할 일 — 지표 바로 아래 카드. 옛 페이로드(plays 없음)면 빈 상태로 선다.
   OV_plays(d);
   OV_watch(d);
+  OV_pulse(d);
   OV_next(d);
 });
 </script>

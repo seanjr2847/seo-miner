@@ -159,7 +159,11 @@ PROJECT_TYPES = (("saas", "웹 서비스 · 앱"),
                  ("directory", "목록 · 디렉터리"),
                  # 물건을 파는 사이트 — 브랜드 공식몰(gucci.com)·편집숍·쇼핑몰. 웹 서비스(saas)로
                  # 두면 AI 계수(.45)가 상품·카테고리 수요를 누른다.
-                 ("commerce", "쇼핑몰 · 브랜드"))
+                 ("commerce", "쇼핑몰 · 브랜드"),
+                 # 글이 상품인 사이트(뉴스·매거진·블로그)와, 남의 일을 해 주는 전문 서비스(에이전시·
+                 # 컨설팅). 계수는 scoring.WEIGHTS 가 기존 프리셋을 가리킨다(새 숫자 없음).
+                 ("publisher", "매체 · 블로그"),
+                 ("agency", "에이전시 · 전문 서비스"))
 # 받는 쪽 검증이 쓰는 id 만 — 사본이 아니라 위 표에서 뽑은 것이다.
 PROJECT_TYPE_IDS = tuple(i for i, _ in PROJECT_TYPES)
 
@@ -626,13 +630,79 @@ def crawl_compare(conn, pid: int, run_id: int) -> dict:
                         " AND finished_at IS NOT NULL ORDER BY id DESC LIMIT 1",
                         (pid, run_id)).fetchone()
     if not prev:
-        return {"prev_run_id": None, "new": [], "fixed": []}
+        return {"prev_run_id": None, "new": [], "fixed": [], "changed": []}
     def keys(rid):
         return {(r["kind"], r["url"] or "") for r in
                 conn.execute("SELECT kind, url FROM crawl_issues WHERE run_id=?", (rid,))}
     now, was = keys(run_id), keys(prev["id"])
     fmt = lambda s: [{"kind": k, "url": u} for k, u in sorted(s)][:100]
-    return {"prev_run_id": prev["id"], "new": fmt(now - was), "fixed": fmt(was - now)}
+    return {"prev_run_id": prev["id"], "new": fmt(now - was), "fixed": fmt(was - now),
+            "changed": _crawl_changed(conn, prev["id"], run_id)}
+
+
+CRAWL_CHANGED_MAX = 100
+
+
+def _crawl_changed(conn, prev_id: int, run_id: int) -> list[dict]:
+    """두 회차에 다 있는 주소에서 필드 값이 바뀐 것 — canonical·noindex·title·H1·schema 유형,
+    열리던 페이지가 4xx/5xx. 판정은 scoring.page_field_changes 한 벌이다.
+
+    이슈 비교(new·fixed)는 '지금 문제인 것'의 집합 차이라, 유효한 값끼리 바뀐 것은 못 본다 —
+    canonical 이 A 에서 B 로 바뀌어도 둘 다 멀쩡한 주소면 어느 쪽 회차에도 이슈가 없다.
+    반환: [{url, changes:[…]}], 심한 것부터 CRAWL_CHANGED_MAX 줄."""
+    cols = "url, status, title, h1, canonical, robots, schema_types"
+    was = {r["url"]: r for r in conn.execute(
+        f"SELECT {cols} FROM crawl_pages WHERE run_id=?", (prev_id,))}
+    out = []
+    for r in conn.execute(f"SELECT {cols} FROM crawl_pages WHERE run_id=? ORDER BY url",
+                          (run_id,)):
+        b = was.get(r["url"])
+        if b is None:
+            continue
+        ch = scoring.page_field_changes(db._crawl_obs(b, ""), db._crawl_obs(r, ""))
+        if ch:
+            out.append({"url": r["url"], "changes": ch})
+    out.sort(key=lambda x: (min(scoring._SEV_RANK[c["sev"]] for c in x["changes"]), x["url"]))
+    return out[:CRAWL_CHANGED_MAX]
+
+
+def _decay_context(conn, pid: int, opps: list[dict], page_of: dict) -> dict:
+    """순위 하락 기회마다 떨어진 구간의 원인 가설 재료 — 요청문(brief._decay_context_lines)이 읽는다.
+
+    대상 → {prev, at, page, ledger, diff}.
+      prev·at  떨어지기 전·떨어진 스냅샷(scoring.decay_state — 자동 해소·근거 문장과 같은 짝).
+               짝을 못 믿으면 그 기회는 싣지 않는다.
+      ledger   그 두 창과 겹치는 구글 업데이트·서치콘솔 데이터 이상(scoring.ledger_for_pair)
+      diff     그 구간에 그 페이지에서 바뀐 필드(scoring.page_diff_between). None = 견줄 관측 없음
+    page_of: 대상 → 손댈 페이지(brief.page_of 의 결과 — 호출부가 넘긴다)."""
+    decays = [o for o in opps if o.get("kind") == "rank_decay" and o.get("id")]
+    if not decays:
+        return {}
+    run_of = _decay_runs(conn, decays)
+    cache: dict = {}
+    pairs = {}
+    for o in decays:
+        st = scoring.decay_state(conn, pid, run_of.get(o["id"]), str(o["target"]), cache=cache)
+        if st:
+            pairs[str(o["target"])] = st
+    if not pairs:
+        return {}
+    period = scoring.snapshot_pair(conn, pid)[2]
+    series = db.page_observations(conn, pid, [page_of.get(t) for t in pairs])
+    out = {}
+    for t, st in pairs.items():
+        page = page_of.get(t)
+        per = conn.execute("SELECT MAX(period_days) FROM gsc_snapshots WHERE project_id=?"
+                           " AND snapshot_date=?", (pid, st["at"])).fetchone()[0] or period
+        w0, w1 = scoring.gsc_window(st["prev"], per)[0], scoring.gsc_window(st["at"], per)[1]
+        s = series.get(scoring.url_key(page)) if page else None
+        led = scoring.ledger_for_pair(st["at"], st["prev"], per)
+        out[t] = {"prev": st["prev"], "at": st["at"], "page": page,
+                  "ledger": led if scoring.ledger_hit(led) else None,
+                  # 뒤 관측은 떨어진 수집일까지 — 창은 수집일 3일 전에 끝나지만 그 사이에 읽은
+                  # 페이지도 '떨어진 뒤의 모습'이다
+                  "diff": scoring.page_diff_between(s, w0, max(w1, st["at"])) if s else None}
+    return out
 
 
 # 수집일과 창 끝의 거리 — collect_gsc 가 창을 (수집일 − 3일)에서 끝낸다(구글 실적 지연).
@@ -1781,7 +1851,13 @@ def _axis_hold(conn, pid: int, at: str | None, opps_d: dict, qp: dict,
                                        > last - timedelta(days=scoring.OBSERVE_DAYS)],
                              # 페이지 전체(검색어별 합)의 고치기 전·지금 — 관찰 중에 볼 것이 이것이다
                              "perf": db.before_after(conn, pid, last.isoformat(), page=page),
+                             "page_diff": None,     # 아래에서 채운다(고친 게 배포됐나)
                              "opp_ids": []}
+    # 고친 게 배포됐나 — 마지막 작업일 앞·뒤로 그 페이지를 읽은 값이 바뀌었는지(db.page_diff_since).
+    # None 은 모름(작업 뒤에 다시 읽은 적 없음), changes 가 비면 다시 읽었는데 그대로라는 뜻이다.
+    _series = db.page_observations(conn, pid, list(watched)) if watched else {}
+    for page, h in watched.items():
+        h["page_diff"] = db.page_diff_since(_series.get(scoring.url_key(page)), page, h["since"])
     held: dict[int, dict] = {}
     for o in pool:
         page = brief.page_of(o, ctx)
@@ -1808,6 +1884,199 @@ def _axis_hold(conn, pid: int, at: str | None, opps_d: dict, qp: dict,
             "opps_total": max(0, int(opps_d.get("opps_total") or 0) - held_new)}
 
 
+# 구조 축이 한 번에 읽는 내부 링크 수 — 넘으면 잘렸다고 표시한다(조용히 일부만 세지 않는다).
+STRUCTURE_LINK_MAX = 50000
+
+
+def _axis_structure(conn, pid: int, crawl: dict) -> dict:
+    """클러스터 성적표·내부 링크 지도·앵커 점검·클러스터 라벨 검증 — 판정은 scoring 한 벌이다.
+
+    cluster_report {rows, crawled}  rows 는 scoring.cluster_report. crawled False = 크롤이 없어
+                                    링크 칸이 모름(None)이다
+    link_health                     scoring.anchor_diversity (+ truncated). 크롤이 없으면 None
+    cluster_check                   scoring.cluster_serp_check
+    재료는 추적 중(is_active)인 키워드와 최신 크롤 한 회차다. 점수는 없다 — 개수와 목록뿐이다."""
+    kws = [r[0] for r in conn.execute(
+        "SELECT keyword FROM keywords WHERE project_id=? AND is_active=1", (pid,))]
+    facts = scoring._surface_facts(conn, pid, kws) if kws else {}
+    run = (crawl or {}).get("run")
+    links = health = None
+    if run:
+        raw = [{"from": r[0], "to": r[1], "anchor": r[2], "chrome": r[3]} for r in conn.execute(
+            "SELECT url_from, url_to, anchor, in_chrome FROM crawl_links"
+            " WHERE run_id=? AND is_internal=1 AND url_from <> url_to LIMIT ?",
+            (run["id"], STRUCTURE_LINK_MAX + 1))]
+        truncated = len(raw) > STRUCTURE_LINK_MAX
+        raw = raw[:STRUCTURE_LINK_MAX]
+        links = {(scoring.url_key(l["from"]), scoring.url_key(l["to"])) for l in raw}
+        pages = q(conn, "SELECT url, depth, status, robots FROM crawl_pages WHERE run_id=?",
+                  (run["id"],))
+        health = {**scoring.anchor_diversity(raw, pages), "truncated": truncated,
+                  "rules": {"same_share": scoring.ANCHOR_SAME_SHARE,
+                            "min_links": scoring.ANCHOR_MIN_LINKS,
+                            "few_inlinks": scoring.FEW_INLINKS}}
+    rows = scoring.cluster_report(facts, links)
+    return {"site_type_guess": _site_type_guess(conn, pid, run),
+            "cluster_report": {"rows": rows[:scoring.STRUCTURE_LIST_MAX], "n": len(rows),
+                               "crawled": bool(run)},
+            "link_health": health,
+            "cluster_check": {**scoring.cluster_serp_check(facts),
+                              "min_shared": scoring.SERP_MIN_SHARED}}
+
+
+def _site_type_guess(conn, pid: int, run) -> dict | None:
+    """홈 신호로 사이트 종류를 추정한다(scoring.guess_site_type) — 제안일 뿐 projects.type 은 안 바꾼다.
+    재료는 최신 크롤: 홈(깊이 0)의 구조화 데이터 유형과 열린 페이지들의 유형. 크롤이 없거나
+    근거가 없으면 None. 이름표는 정본(PROJECT_TYPES)에서 같이 싣는다 — 점검이 사본을 안 갖는다."""
+    if not run:
+        return None
+    types = lambda s: [t for t in str(s or "").split(",") if t]
+    home, pages = [], []
+    for r in conn.execute("SELECT url, depth, status, schema_types FROM crawl_pages WHERE run_id=?",
+                          (run["id"],)):
+        if not (isinstance(r["status"], int) and 200 <= r["status"] < 300):
+            continue
+        pages.append(types(r["schema_types"]))
+        if r["depth"] == 0:
+            home += types(r["schema_types"])
+    g = scoring.guess_site_type({"schema_types": home, "page_types": pages})
+    if not g:
+        return None
+    labels = dict(PROJECT_TYPES)
+    cur = conn.execute("SELECT type FROM projects WHERE id=?", (pid,)).fetchone()
+    return {**g, "label": labels.get(g["type"], g["type"]),
+            "current_label": labels.get(cur[0], cur[0]) if cur else None}
+
+
+# 다음 분기에 확인할 숫자 — 예측이 아니다. 지금 값과 방향(직전 같은 길이 구간 대비)만 싣는다.
+KPI_CHECK_DAYS = 90
+# (id, 이름, 숫자가 작을수록 좋은가)
+KPI_ROWS = (("clicks", "클릭", False), ("impressions", "노출", False),
+            ("ctr", "클릭률", False), ("position", "평균 순위", True))
+
+
+def _kpi_watch(conn, pid: int, at: str | None, today: str | None = None) -> dict:
+    """KPI — '다음 분기에 확인할 숫자'. 지금 값(now)·직전 구간 값(prev)·방향(dir)·좋아졌나(good).
+
+    직전 구간은 지금 창과 **안 겹치는** 같은 길이 구간이다(_gsc_prev_period) — 없으면 방향을
+    말하지 않는다(dir None). 얼마가 될지는 말하지 않는다: 3·6·12개월 예상치는 측정이 아니다.
+    check_on = 오늘 + KPI_CHECK_DAYS(그날 같은 표를 다시 본다)."""
+    from datetime import datetime, timezone
+    day0 = date.fromisoformat(today) if today else datetime.now(timezone.utc).date()
+    cur, _prev, period, _mm = scoring.snapshot_pair(conn, pid, at)
+    out = {"rows": [], "from": None, "to": cur, "period": period,
+           "check_on": str(day0 + timedelta(days=KPI_CHECK_DAYS))}
+    if not cur:
+        return out
+    r = conn.execute(
+        f"""SELECT SUM(clicks) c, SUM(impressions) i, {scoring.POS_SQL} p FROM gsc_snapshots
+             WHERE project_id=? AND snapshot_date=? AND period_days=?""",
+        (pid, cur, period)).fetchone()
+    c, i = int(r["c"] or 0), int(r["i"] or 0)
+    now = {"clicks": c, "impressions": i, "ctr": round(c / i, 4) if i else None,
+           "position": round(r["p"], 1) if r["p"] is not None else None}
+    was = _gsc_prev_period(conn, pid, cur, period) or {}
+    out["from"] = was.get("date")
+    for kid, label, lower_better in KPI_ROWS:
+        a, b = now.get(kid), was.get(kid)
+        d = None if a is None or b is None else "up" if a > b else "down" if a < b else "flat"
+        out["rows"].append({"id": kid, "label": label, "now": a, "prev": b, "dir": d,
+                            "good": None if d in (None, "flat") else (d == "down") == lower_better})
+    return out
+
+
+def _group_tallies(conn, pid: int, groups: list[dict]) -> None:
+    """묶음마다 나쁨·주의 **개수**와 지난 회차 대비 증감을 단다(g["tally"]). 합성 점수는 없다.
+
+    근거 부족 게이트: 그 묶음의 단계 중 성공 기록이 있는 것이 scoring.EVIDENCE_GATE(4/7)에 못
+    미치면 개수를 싣지 않는다 — {enough: False, measured, of}. 잴 단계가 없는 묶음은 None.
+    세는 것(basis 가 화면에 그대로 말한다):
+      크롤 단계가 있는 묶음  최신 크롤의 이슈 심각도(나쁨·주의). 증감 = 직전 크롤 대비
+      그 밖                  그 묶음 화면에 서는 열린 기회 — 방어형(이미 잃는 중,
+                             scoring.is_defensive)이 나쁨, 나머지가 주의. 증감 = 그 묶음을 마지막으로
+                             잰 시각(since) 뒤에 열리고 닫힌 것"""
+    view_group = {v: g["id"] for g in groups for v in g.get("views") or ()}
+    kinds_of: dict[str, list[str]] = {}
+    for k in scoring.KINDS:
+        if k.see and k.see[0] in view_group:
+            kinds_of.setdefault(view_group[k.see[0]], []).append(k.name)
+    for g in groups:
+        stages = g.get("stages") or []
+        if not stages:
+            g["tally"] = None
+            continue
+        seen = [g["last"].get(s) for s in stages if g["last"].get(s)]
+        t = {"enough": scoring.evidence_enough(len(seen), len(stages)),
+             "measured": len(seen), "of": len(stages)}
+        if t["enough"]:
+            got = _crawl_tally(conn, pid) if "crawl" in stages \
+                else _opp_tally(conn, pid, kinds_of.get(g["id"]) or [], g["id"])
+            if got is None:
+                t["enough"] = False
+            else:
+                t.update(got)
+        g["tally"] = t
+
+
+def _crawl_tally(conn, pid: int) -> dict | None:
+    runs = conn.execute("SELECT id, finished_at FROM crawl_runs WHERE project_id=?"
+                        " AND finished_at IS NOT NULL ORDER BY id DESC LIMIT 2", (pid,)).fetchall()
+    if not runs:
+        return None
+
+    def sev(rid):
+        got = dict(conn.execute("SELECT severity, COUNT(*) FROM crawl_issues WHERE run_id=?"
+                                " GROUP BY 1", (rid,)).fetchall())
+        return int(got.get("bad") or 0), int(got.get("warn") or 0)
+
+    bad, warn = sev(runs[0]["id"])
+    out = {"bad": bad, "warn": warn, "d_bad": None, "d_warn": None,
+           "at": str(db.sql_ts(runs[0]["finished_at"]))[:10], "since": None,
+           "basis": "사이트 크롤 이슈의 심각도(나쁨·주의) 개수. 증감은 직전 크롤 대비"}
+    if len(runs) > 1:
+        b0, w0 = sev(runs[1]["id"])
+        out.update(d_bad=bad - b0, d_warn=warn - w0,
+                   since=str(db.sql_ts(runs[1]["finished_at"]))[:10])
+    return out
+
+
+def _opp_tally(conn, pid: int, kinds: list[str], gid: str) -> dict | None:
+    if not kinds:
+        return None
+    import run_all
+    # 그 묶음을 마지막으로 잰 시각 — 그 뒤에 선 기회가 '지난 회차가 바꾼 것'이다
+    stages = tuple(run_all.group_stages(gid))
+    since = None
+    for r in conn.execute(
+            f"SELECT kind, finished_at, notes, api_calls FROM runs WHERE project_id=?"
+            f" AND finished_at IS NOT NULL AND kind IN ({','.join('?' * len(stages))})"
+            " ORDER BY id DESC", (pid, *stages)):
+        if run_verdict.ok(r):
+            since = db.sql_ts(r["finished_at"])
+            break
+    ph = ",".join("?" * len(kinds))
+    rows = conn.execute(
+        f"SELECT kind, status, created_at, status_at FROM opportunities"
+        f" WHERE project_id=? AND kind IN ({ph}) AND {db.gate_sql(conn)}",
+        (pid, *kinds, *scoring.TRIAGE_KINDS)).fetchall()
+    now = {"bad": 0, "warn": 0}
+    was = {"bad": 0, "warn": 0}
+    for r in rows:
+        k = "bad" if scoring.is_defensive(r["kind"]) else "warn"
+        is_open = r["status"] in scoring.OPEN_STATUSES
+        if is_open:
+            now[k] += 1
+        if since and (db.sql_ts(r["created_at"]) or "") <= since and (
+                is_open or (db.sql_ts(r["status_at"]) or "") > since):
+            was[k] += 1
+    return {"bad": now["bad"], "warn": now["warn"],
+            "d_bad": now["bad"] - was["bad"] if since else None,
+            "d_warn": now["warn"] - was["warn"] if since else None,
+            "at": None, "since": (since or "")[:10] or None,
+            "basis": "이 묶음 화면에 서는 열린 기회 개수 — 이미 잃는 중인 것(방어형)이 나쁨, "
+                     "나머지가 주의. 증감은 마지막으로 잰 뒤의 변화"}
+
+
 def _cluster_keywords(conn, pid: int, opps: list[dict]) -> dict[str, list[dict]]:
     """coverage 기회의 근거 — 그 주제로 추적 중인 키워드와 검색량. 기회의 대상은
     'cluster:이름' 한 줄뿐이라, 요청문이 "무슨 키워드들이냐"를 말하려면 이것이 필요하다."""
@@ -1822,6 +2091,14 @@ def _cluster_keywords(conn, pid: int, opps: list[dict]) -> dict[str, list[dict]]
             """SELECT keyword, volume FROM keywords
                 WHERE project_id=? AND is_active=1 AND COALESCE(cluster,'(미분류)')=?
                 ORDER BY volume IS NULL, volume DESC, keyword LIMIT 30""", (pid, cl))
+    # 쓰기 전 카니벌 예방 — 이미 있는 우리 페이지와 검색결과가 겹치는 키워드에 reinforce 를 단다
+    # (scoring.coverage 가 판정한다). 요청문이 "새 글 말고 그 페이지 보강"을 말한다.
+    if out:
+        over = {m["keyword"]: m.get("reinforce")
+                for m in scoring.coverage(conn, pid)["keywords"] if m.get("reinforce")}
+        for rows in out.values():
+            for r in rows:
+                r["reinforce"] = over.get(r["keyword"])
     return out
 
 
@@ -2003,6 +2280,7 @@ def _axis_groups(conn, pid, now=None) -> dict:
                     "last": {s: (str(last_ts[s])[:10] if s in last_ts else None)
                              for s in clock},
                     "due": due})
+    _group_tallies(conn, pid, out)
     return {"groups": out}
 
 
@@ -2166,6 +2444,8 @@ def gather_traced(conn, p, at: str | None = None, *, gated: bool = True
                       "guide": stage.state(conn, p, p["domain"] or "")})
     led.put("cluster_keywords", {"cluster_keywords": _cluster_keywords(conn, pid, opps_d["opps"])})
     led.put("plays", _axis_plays(conn, pid))
+    led.put("structure", _axis_structure(conn, pid, crawl.get("crawl") or {}))
+    led.set("kpi_watch", "kpi_watch", _kpi_watch(conn, pid, at))
     d = led.d                       # 아래는 이 페이로드를 읽으며 쌓는다(같은 dict)
     # 요청문은 맨 마지막이다 — 위 축이 낸 행(근거 표·페이지 감사)을 그대로 읽는다.
     # 화면이 보는 숫자와 요청문이 말하는 숫자가 같은 페이로드에서 나와야 한다.
@@ -2181,6 +2461,10 @@ def gather_traced(conn, p, at: str | None = None, *, gated: bool = True
     led.set("crawl_links", "crawl_lost_inlinks", _crawl_lost_inlinks(
         conn, pid, d.get("crawl") or {},
         {brief.page_of(o, d) for o in (d.get("opps") or []) if o.get("kind") == "rank_decay"}))
+    led.set("decay_context", "decay_context", _decay_context(
+        conn, pid, d.get("opps") or [],
+        {str(o.get("target")): brief.page_of(o, d) for o in (d.get("opps") or [])
+         if o.get("kind") == "rank_decay"}))
     led.set("site_probe", "site_probe", _site_probe(conn, d.get("crawl") or {}, _pages_in_play))
     led.set("ai_referrals", "ai_referrals_in_play",
             _ai_referrals_in_play(conn, pid, _pages_in_play))
