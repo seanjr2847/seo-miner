@@ -487,8 +487,59 @@ def r_setup(d, ctx, out):
               "[설정]에 적습니다", 0)
 
 
+def r_ledger(d, ctx, out):
+    """이상 띠 — 비교한 두 구글 실적 기간이 서치콘솔 데이터 이상 구간에 서로 다르게 걸쳤나
+    (scoring.ledger_for_pair 가 d.shift.ledger 로 싣는다). 그때 노출·클릭률·순위의 증감 일부는
+    사이트가 아니라 계측 탓이다. 원장 자체가 낡았으면(확인일에서 stale_days 지남) 그것도 한 줄 —
+    맞댈 기간이 있을 때만 말한다."""
+    led = (d.get("shift") or {}).get("ledger") or {}
+    for a in led.get("anomalies") or []:
+        ms = "·".join(scoring._LEDGER_METRIC_KO.get(m, m) for m in a.get("metrics") or [])
+        _find(out, "mid", "검색 성과", "gsc_anomaly",
+              f"비교한 두 기간({led.get('from')}~{led.get('to')})이 서치콘솔 데이터 이상 구간 "
+              f"{a.get('start')}~{a.get('end') or '진행 중'}에 서로 다르게 걸칩니다. {ms} 증감의 일부는 "
+              f"계측 탓일 수 있습니다 — {a.get('url')}", 1)
+    if d.get("gsc_prev"):
+        stale, verified = scoring._ledger_stale(scoring.google_ledger(), str(ctx["today"]))
+        if stale and verified:
+            _find(out, "low", "검색 성과", "ledger_stale",
+                  f"구글 업데이트 원장을 {verified}에 마지막으로 확인했습니다. 그 뒤의 업데이트는 "
+                  "원인 가설에 빠졌을 수 있습니다 (skill_config 의 google_ledger 를 갱신)", 0)
+
+
+def r_clusters(d, ctx, out):
+    """클러스터 라벨이 검색결과와 어긋나는 자리(scoring.cluster_serp_check) — 틀렸다가 아니라
+    [키워드]에서 라벨을 다시 볼 자리다."""
+    c = d.get("cluster_check") or {}
+    ap, tg = c.get("apart") or [], c.get("together") or []
+    if ap:
+        _find(out, "low", "키워드", "cluster_apart",
+              f"같은 주제로 묶였는데 검색결과가 같은 주제의 누구와도 안 겹치는 키워드 "
+              f"{c.get('apart_n', len(ap))}개: "
+              + _eg([f"{x['keyword']}({x['cluster']})" for x in ap]), c.get("apart_n", len(ap)))
+    if tg:
+        _find(out, "low", "키워드", "cluster_together",
+              f"주제가 다른데 검색결과 상위가 {c.get('min_shared', scoring.SERP_MIN_SHARED)}개 이상 "
+              f"겹치는 키워드 쌍 {c.get('together_n', len(tg))}개: "
+              + _eg([f"{x['a']}({x['cluster_a']}) ↔ {x['b']}({x['cluster_b']})" for x in tg]),
+              c.get("together_n", len(tg)))
+
+
+def r_site_type(d, ctx, out):
+    """고른 사이트 종류와 홈 구조화 데이터가 가리키는 종류가 다르다 — 종류는 점수 계수를 정한다.
+    추정(scoring.guess_site_type)은 제안이다. 사람이 고른 값을 바꾸지 않는다."""
+    g = d.get("site_type_guess") or {}
+    cur = (d.get("project") or {}).get("type")
+    if g.get("type") and cur and g["type"] != cur:
+        _find(out, "low", "설정", "site_type_mismatch",
+              f"사이트 종류가 '{g.get('current_label') or cur}'로 설정돼 있는데 "
+              f"{'; '.join(g.get('evidence') or [])} — '{g.get('label') or g['type']}'에 가깝습니다. "
+              "맞으면 [설정]에서 종류를 바꿉니다(점수 계수가 달라집니다)", 0)
+
+
 RULES = (r_runs, r_ai_health, r_opp_skew, r_aio, r_content_gap, r_opp_text, r_triage,
-         r_rank, r_rivals, r_backlinks, r_pages, r_vitals, r_groups, r_plays, r_setup)
+         r_rank, r_rivals, r_backlinks, r_pages, r_vitals, r_groups, r_plays, r_setup,
+         r_ledger, r_clusters, r_site_type)
 
 
 def audit(d: dict, ctx: dict | None = None) -> list[dict]:
@@ -708,6 +759,31 @@ def _selfcheck() -> None:
     hit("no_seeds", {}, seeds=0)
     miss("no_seeds", {}, seeds=2)
     miss("no_seeds", {"project": {"domain": "ex.com"}}, seeds=0)             # 서치콘솔 없는 사이트는 다른 길
+
+    # 이상 띠 — 두 기간이 서치콘솔 데이터 이상 구간에 다르게 걸칠 때만. 원장이 낡으면 한 줄.
+    anom = {"from": "2026-03-26", "to": "2026-05-17", "updates": [],
+            "anomalies": [{"start": "2025-05-13", "end": "2026-04-27",
+                           "metrics": ["impressions", "ctr", "position"], "url": "https://g/x"}]}
+    hit("gsc_anomaly", {"shift": {"ledger": anom}})
+    miss("gsc_anomaly", {"shift": {"ledger": {**anom, "anomalies": []}}})
+    miss("gsc_anomaly", {"shift": {"ledger": None}})
+    late = datetime(2027, 6, 1, tzinfo=timezone.utc)
+    assert "ledger_stale" in {f["code"] for f in audit({**base, "gsc_prev": "2027-05-01"}, {"now": late})}
+    assert "ledger_stale" not in {f["code"] for f in audit(dict(base), {"now": late})}   # 맞댈 기간 없음
+    miss("ledger_stale", {"gsc_prev": "2026-09-20"})
+
+    cc = {"apart": [{"cluster": "A", "keyword": "k"}], "apart_n": 1, "together": [], "together_n": 0}
+    hit("cluster_apart", {"cluster_check": cc})
+    miss("cluster_together", {"cluster_check": cc})
+    hit("cluster_together", {"cluster_check": {"apart": [], "together": [
+        {"a": "x", "b": "y", "cluster_a": "A", "cluster_b": "B", "shared": 4}], "together_n": 1}})
+    miss("cluster_apart", {"cluster_check": {"apart": [], "together": []}})
+
+    guess = {"type": "commerce", "label": "쇼핑몰", "current_label": "웹 서비스", "evidence": ["홈 Product"]}
+    typed = {"project": {**base["project"], "type": "saas"}}
+    hit("site_type_mismatch", {**typed, "site_type_guess": guess})
+    miss("site_type_mismatch", {**typed, "site_type_guess": {**guess, "type": "saas"}})
+    miss("site_type_mismatch", {**typed, "site_type_guess": None})
 
     # 터진 규칙은 삼키지 않고 한 줄 남긴다
     boom = audit({**base, "opps": "문자열"}, {"now": now})

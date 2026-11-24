@@ -4483,6 +4483,173 @@ def _fit_of_question(conn: sqlite3.Connection, project_id: int, prompt: str,
     return FIT_Q_NONE
 
 
+# ── 클러스터·내부 링크의 결정적 집계 ──────────────────────────────────────────
+# 전부 이미 쌓인 것(keywords.cluster·serp_results·crawl_links)으로 센다. 점수는 없다 —
+# 개수와 목록뿐이다. 재료 `facts` 는 _surface_facts() 의 반환(검색어 → page·serp·cluster)이다.
+# 검색결과가 '같다'의 문턱은 지면 묶기와 같은 SERP_MIN_SHARED 한 벌이다(상위 db.SERP_KEEP 개 중).
+#
+# 같은 앵커 쏠림·들어오는 링크 수의 기준(40%·3개)은 docs/borrow-from-claude-seo.md 3절
+# '내부 앵커 다양성'의 것이다. 몫은 **본문 링크**로만 낸다 — 메뉴는 모든 글에 같은 앵커로 건다.
+ANCHOR_SAME_SHARE = 0.4
+ANCHOR_MIN_LINKS = 5        # 몫을 말할 표본. 본문 링크 2개 중 1개(50%)를 쏠림이라 하지 않는다
+FEW_INLINKS = 3
+STRUCTURE_LIST_MAX = 50     # 화면·점검에 싣는 줄 수 상한
+# 클러스터에 검색결과를 잰 키워드가 이만큼은 있어야 '혼자 따로'를 말한다 — 둘뿐이면 어느 쪽이
+# 벗어난 것인지 모른다.
+CLUSTER_APART_MIN = 3
+
+
+def prewrite_overlap(facts: dict[str, dict], missing) -> dict[str, dict]:
+    """쓰기 전 카니벌 예방 — 아직 안 뜨는 키워드(missing)의 검색결과가, 이미 우리 페이지가 걸린
+    검색어의 검색결과와 SERP_MIN_SHARED 개 이상 겹치면 구글은 둘을 같은 문서로 답한다. 그 키워드에
+    새 글을 쓰면 기존 페이지와 갈라 먹는다 — 새 글이 아니라 그 페이지 보강이다.
+
+    반환: 키워드 → {page, via(겹친 검색어), shared, of}. 검색결과를 안 잰 키워드는 키가 없다(모름)."""
+    have = [(t, f) for t, f in facts.items() if f.get("page_url") and f.get("serp")]
+    out: dict[str, dict] = {}
+    for kw in missing:
+        s = (facts.get(kw) or {}).get("serp")
+        if not s:
+            continue
+        best = None
+        for t, f in have:
+            n = len(s & f["serp"])
+            if n >= SERP_MIN_SHARED and (best is None or n > best[0]):
+                best = (n, t, f)
+        if best:
+            out[kw] = {"page": best[2]["page_url"], "via": best[1], "shared": best[0], "of": len(s)}
+    return out
+
+
+def anchor_diversity(links, pages) -> dict:
+    """내부 앵커 다양성 — ① 한 페이지로 가는 본문 링크의 ANCHOR_SAME_SHARE 넘는 몫이 같은 앵커
+    ② 들어오는 내부 링크(거는 글 수)가 FEW_INLINKS 미만인 페이지.
+
+    links: [{from, to, anchor, chrome}] (chrome 1 = 메뉴·머리말·꼬리말, 0 = 본문, None = 모름)
+    pages: [{url, depth, status, robots}] — 크롤이 연 페이지. ②는 색인될 수 있는 페이지(200·noindex
+           아님)만, 홈(depth 0)은 뺀다.
+    body_known False = 틀 여부를 모르는 옛 크롤이라 ①을 말하지 않는다(메뉴 앵커가 섞인다)."""
+    by_to: dict[str, dict] = {}
+    body_known = False
+    for l in links:
+        if not l.get("to") or l.get("from") == l.get("to"):
+            continue
+        k = url_key(l["to"])
+        e = by_to.setdefault(k, {"src": set(), "anchors": {}, "body": 0})
+        e["src"].add(url_key(l["from"] or ""))
+        if l.get("chrome") is not None:
+            body_known = True
+        if l.get("chrome") == 0:
+            a = _squash(l.get("anchor")).lower()
+            e["body"] += 1
+            e["anchors"][a] = e["anchors"].get(a, 0) + 1
+    spell = {url_key(p["url"]): p["url"] for p in pages}
+    same = []
+    if body_known:
+        for k, e in by_to.items():
+            if e["body"] < ANCHOR_MIN_LINKS or k not in spell:
+                continue
+            a, n = max(e["anchors"].items(), key=lambda x: (x[1], x[0]))
+            if n / e["body"] > ANCHOR_SAME_SHARE:
+                same.append({"url": spell[k], "anchor": a or "(빈 앵커)", "n": n, "of": e["body"],
+                             "share": round(n / e["body"], 2)})
+    few = []
+    for p in pages:
+        if not _ok_status(p.get("status")) or p.get("depth") == 0 \
+                or urlsplit(p["url"]).path in ("", "/") \
+                or "noindex" in str(p.get("robots") or "").lower():
+            continue
+        n = len(by_to.get(url_key(p["url"]), {}).get("src", ()))
+        if n < FEW_INLINKS:
+            few.append({"url": p["url"], "n": n})
+    same.sort(key=lambda r: (-r["share"], -r["of"], r["url"]))
+    few.sort(key=lambda r: (r["n"], r["url"]))
+    return {"same_anchor": same[:STRUCTURE_LIST_MAX], "same_anchor_n": len(same),
+            "few_inlinks": few[:STRUCTURE_LIST_MAX], "few_inlinks_n": len(few),
+            "body_known": body_known}
+
+
+def cluster_serp_check(facts: dict[str, dict]) -> dict:
+    """클러스터 라벨을 검색결과 겹침으로 검증한다.
+
+    apart    같은 클러스터인데, 검색결과를 잰 같은 클러스터 키워드 누구와도 한 주소도 안 겹친다
+             (클러스터에 잰 키워드가 CLUSTER_APART_MIN 개 이상일 때만)
+    together 다른 클러스터인데 SERP_MIN_SHARED 개 이상 겹친다 — 구글은 같은 문서로 답한다
+    라벨은 사람이 붙인 주제이고 검색결과는 구글의 답이다. 어긋남은 '틀렸다'가 아니라 확인할 자리다."""
+    rows = sorted((t, f["cluster"], f["serp"]) for t, f in facts.items()
+                  if f.get("serp") and f.get("cluster"))
+    by_cl: dict[str, list] = {}
+    for t, cl, s in rows:
+        by_cl.setdefault(cl, []).append((t, s))
+    apart = []
+    for cl, ms in by_cl.items():
+        if len(ms) < CLUSTER_APART_MIN:
+            continue
+        for t, s in ms:
+            if all(not (s & s2) for t2, s2 in ms if t2 != t):
+                apart.append({"cluster": cl, "keyword": t})
+    together = []
+    for i, (a, ca, sa) in enumerate(rows):
+        for b, cb, sb in rows[i + 1:]:
+            if ca != cb and len(sa & sb) >= SERP_MIN_SHARED:
+                together.append({"a": a, "b": b, "cluster_a": ca, "cluster_b": cb,
+                                 "shared": len(sa & sb)})
+    together.sort(key=lambda r: (-r["shared"], r["a"], r["b"]))
+    return {"apart": apart[:STRUCTURE_LIST_MAX], "apart_n": len(apart),
+            "together": together[:STRUCTURE_LIST_MAX], "together_n": len(together),
+            "measured": len(rows)}
+
+
+def cluster_report(facts: dict[str, dict], links) -> list[dict]:
+    """클러스터 성적표 + 내부 링크 지도 — 이미 있는 클러스터와 크롤 링크로만 센다(계획 문서가 아니다).
+
+    클러스터마다: keywords(추적 키워드 수) · with_page(우리 페이지가 걸린 키워드 수) ·
+    pages(그 페이지들) · pillar(가장 많은 키워드가 걸린 페이지 — 동률이면 주소가 짧은 쪽) ·
+    pillar_links {have, of}(다른 페이지 중 필러로 링크를 건 수) · to_pillar_missing(안 건 페이지) ·
+    cross_links {have, of}(페이지끼리 방향 있는 링크) · edges([[from, to]]).
+    links: {(url_key(from), url_key(to))} — None 이면 크롤이 없다: 링크 칸은 None(모름), 0 이 아니다."""
+    by_cl: dict[str, dict] = {}
+    for t, f in facts.items():
+        cl = f.get("cluster")
+        if not cl:
+            continue
+        e = by_cl.setdefault(cl, {"n": 0, "with": 0, "pages": {}})
+        e["n"] += 1
+        if f.get("page_url"):
+            e["with"] += 1
+            k = url_key(f["page_url"])
+            pg = e["pages"].setdefault(k, {"url": f["page_url"], "kw": 0})
+            pg["kw"] += 1
+    out = []
+    for cl, e in by_cl.items():
+        pages = sorted(e["pages"].items(), key=lambda x: (-x[1]["kw"], len(x[1]["url"]), x[1]["url"]))
+        urls = [p["url"] for _, p in pages]
+        row = {"cluster": cl, "keywords": e["n"], "with_page": e["with"], "pages": urls,
+               "pillar": urls[0] if urls else None, "pillar_links": None,
+               "to_pillar_missing": [], "cross_links": None, "edges": []}
+        if links is not None and pages:
+            pk = pages[0][0]
+            others = pages[1:]
+            miss = [p["url"] for k, p in others if (k, pk) not in links]
+            edges = [[a["url"], b["url"]] for ka, a in pages for kb, b in pages
+                     if ka != kb and (ka, kb) in links]
+            row.update(pillar_links={"have": len(others) - len(miss), "of": len(others)},
+                       to_pillar_missing=miss,
+                       cross_links={"have": len(edges), "of": len(pages) * (len(pages) - 1)},
+                       edges=edges)
+        out.append(row)
+    return sorted(out, key=lambda r: (-r["keywords"], r["cluster"]))
+
+
+# 근거 부족 게이트 — 근거 요인이 4/7 에 못 미치면 개수 대신 '근거 부족'이라고 말한다
+# (docs/borrow-from-claude-seo.md 4절: 합성 점수는 버리고 이 게이트만 가져온다).
+EVIDENCE_GATE = (4, 7)
+
+
+def evidence_enough(measured: int, of: int) -> bool:
+    return of > 0 and measured * EVIDENCE_GATE[1] >= of * EVIDENCE_GATE[0]
+
+
 def coverage(conn: sqlite3.Connection, project_id: int) -> dict:
     """미커버 활성 키워드 — directory 프리셋의 최소 구현 (scoring.md 1절 coverage).
 
@@ -4516,6 +4683,16 @@ def coverage(conn: sqlite3.Connection, project_id: int) -> dict:
         # 아직 안 뜨는 키워드는 노출이 0이라 수요 신호가 없다 — 검색량이 유일한 근거다.
         # 없으면(NULL) 0으로 둔다: 모르는 것을 있다고 치지 않는다.
         vol_by_cluster[cl] = vol_by_cluster.get(cl, 0) + (r["volume"] or 0)
+    # 쓰기 전 카니벌 예방 — 안 뜨는 키워드 중 이미 있는 우리 페이지와 검색결과가 겹치는 것에
+    # reinforce 를 단다(prewrite_overlap). 개수(by_cluster)는 그대로다: 기회를 조용히 지우지 않고,
+    # 요청문이 "이 키워드는 새 글 말고 그 페이지 보강"이라고 말한다.
+    if missing:
+        active = [r[0] for r in conn.execute(
+            "SELECT keyword FROM keywords WHERE project_id=? AND is_active=1", (project_id,))]
+        over = prewrite_overlap(_surface_facts(conn, project_id, active),
+                                [m["keyword"] for m in missing])
+        for m in missing:
+            m["reinforce"] = over.get(m["keyword"])
     return {"keywords": missing, "by_cluster": by_cluster,
             "volume_by_cluster": vol_by_cluster}
 

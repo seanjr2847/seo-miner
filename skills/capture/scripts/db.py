@@ -3473,17 +3473,26 @@ def _watch_page_diffs(conn: sqlite3.Connection, project_id: int, rows: list[dict
     series = page_observations(conn, project_id, [u for u in page_of.values() if u])
     for r in rows:
         u = page_of.get(r["target"])
-        s = series.get(scoring.url_key(u)) if u else None
-        if not s:
-            continue
-        for src in ("audit", "crawl"):
-            before = [o for o in s[src] if o["date"] <= r["since"]]
-            after = [o for o in s[src] if o["date"] > r["since"]]
-            if before and after:
-                r["page_diff"] = {"page": u, "src": src, "from": before[-1]["date"],
-                                  "to": after[-1]["date"],
-                                  "changes": scoring.page_field_changes(before[-1], after[-1])}
-                break
+        r["page_diff"] = page_diff_since(series.get(scoring.url_key(u)) if u else None,
+                                         u, r["since"])
+
+
+def page_diff_since(series: dict | None, page: str | None, since: str) -> dict | None:
+    """고친 날(since) 앞의 마지막 관측과 그날부터의 최신 관측을 견준다 — 같은 출처끼리.
+
+    앞은 since **전날까지**, 뒤는 since 당일부터다: 같은 날의 관측이 배포 앞인지 뒤인지 모르는데,
+    그걸 '앞'으로 잡으면 이미 고친 값이 기준이 되어 영영 '그대로'로 남는다. 뒤는 최신 관측이라
+    당일 관측이 배포 전 것이었어도 다음 관측에서 바로잡힌다. 짝이 없으면 None."""
+    import scoring
+    if not (series and page and since):
+        return None
+    for src in ("audit", "crawl"):
+        before = [o for o in series.get(src) or [] if o["date"] < since]
+        after = [o for o in series.get(src) or [] if o["date"] >= since]
+        if before and after:
+            return {"page": page, "src": src, "from": before[-1]["date"], "to": after[-1]["date"],
+                    "changes": scoring.page_field_changes(before[-1], after[-1])}
+    return None
 
 
 def watch_rows(conn: sqlite3.Connection, project_id: int) -> list[dict]:

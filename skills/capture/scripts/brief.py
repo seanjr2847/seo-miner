@@ -2620,7 +2620,27 @@ def _ev_coverage(o, ctx, pages):
     if not kws:
         return []
     return ["이 주제로 추적 중인데 노출도 순위도 없는 키워드:",
-            *_table(["키워드", "월 검색량"], [[k["keyword"], _n(k.get("volume"))] for k in kws[:15]])]
+            *_table(["키워드", "월 검색량"], [[k["keyword"], _n(k.get("volume"))] for k in kws[:15]]),
+            *_coverage_reinforce_lines(kws[:15])]
+
+
+def _coverage_reinforce_lines(kws: list[dict]) -> list[str]:
+    """쓰기 전 카니벌 예방 — 위 키워드 중 **새 글 말고 기존 페이지 보강**으로 돌릴 것.
+
+    판정은 scoring.prewrite_overlap(재료는 dashboard._cluster_keywords 가 싣는다): 그 키워드의
+    검색결과 상위가 이미 우리 페이지가 걸린 검색어의 검색결과와 겹친다 — 구글이 같은 문서로
+    답하는 질문이라, 새 글을 쓰면 그 페이지와 순위를 갈라 먹는다. 해당이 없으면 빈 목록."""
+    hit = [k for k in kws if k.get("reinforce")]
+    if not hit:
+        return []
+    L = ["", "이 중 새 글을 쓰지 말고 기존 페이지를 보강할 키워드 (검색결과 상위가 이미 우리 "
+             "페이지가 걸린 검색어와 겹칩니다 — 새 글을 쓰면 그 페이지와 순위를 갈라 먹습니다):"]
+    L += _table(["키워드", "보강할 페이지", "검색결과가 겹치는 검색어", "겹친 주소"],
+                [[k["keyword"], k["reinforce"]["page"], k["reinforce"]["via"],
+                  f"{k['reinforce']['shared']}/{k['reinforce']['of']}"] for k in hit])
+    L.append("- 위 키워드는 새 글 목록에서 빼고, 그 페이지에 이 키워드가 묻는 내용을 구간으로 "
+             "더하는 쪽으로 설계합니다. 남은 키워드만 새 글 대상입니다.")
+    return L
 
 
 # 엔진마다 출처를 고르는 경향 — ai-seo 스킬의 관찰이다. 경향이지 규칙이 아니라서 요청문도
