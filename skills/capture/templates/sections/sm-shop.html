@@ -11,7 +11,8 @@
    display:contents 는 id 특이도가 [hidden] 을 이기므로 접힌 것에 display:none 을 따로 준다. */
 #view-competitors > #sm-shop { display:contents; }
 #view-competitors > #sm-shop[hidden] { display:none; }
-#sm-shop > .card { grid-column:1 / -1; min-width:0; margin:0; }
+/* 원본 카드는 order 로 자리를 잡는다(cp-o*) — 이 카드는 그 뒤, 화면 맨 아래다. */
+#sm-shop > .card { grid-column:1 / -1; min-width:0; margin:0; order:20; }
 #sm-shop.shp-none > .card { display:none; }
 @media print { #view-competitors > #sm-shop[hidden] { display:contents; } }
 #sm-shop h2 { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); margin:0; }

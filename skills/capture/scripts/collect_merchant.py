@@ -265,7 +265,7 @@ def collect(project: str, *,
         if not serp_adapter.has_dataforseo():
             return skip(NO_KEY)
         if not serp_adapter.dfs_supported(locale):
-            return skip(f"{serp_adapter.locale_label(locale)} 은 DataForSEO 가 조회하지 않는 지역입니다")
+            return skip(f"이 지역({serp_adapter.locale_label(locale)})은 DataForSEO 가 조회하지 않습니다")
         if max_age > 0 and conn.execute(
                 "SELECT 1 FROM merchant_prices WHERE project_id=? AND checked_date > date('now', ?)"
                 " LIMIT 1", (pid, f"-{max_age} days")).fetchone():
@@ -317,7 +317,7 @@ def collect(project: str, *,
                     rows[amz] = rows.get(amz, 0) + _put(conn, pid, today, amz, kw, got, domain)
                 st.each(kws, put, label=lambda kw: f"아마존 '{kw}'")
             else:
-                notes.append(f"{serp_adapter.locale_label(locale)} 에는 아마존 마켓이 없어 "
+                notes.append(f"이 지역({serp_adapter.locale_label(locale)})에는 아마존 마켓이 없어 "
                              "구글 쇼핑만 봅니다")
             got = tasks.wait(paths, WAIT_S) if paths else {}
             late = 0

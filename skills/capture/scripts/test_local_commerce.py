@@ -92,7 +92,7 @@ def _reviews(total, rating, ages, replied):
     return [{"reviews_count": total, "rating": {"value": rating}, "items": items}]
 
 
-def _local_post(calls):
+def _local_post(calls, own="clinic.com"):
     def post(path, body):
         b = body[0]
         calls.append((path, b))
@@ -100,7 +100,7 @@ def _local_post(calls):
             if b["keyword"] == "디아더 피부과":
                 return [{"items": [
                     _biz("디아더 의원(남의 곳)", "999", url="https://other.com/", kind="google_business_info"),
-                    _biz("디아더 피부과", "111", url="https://www.clinic.com/", rating=4.6, votes=12,
+                    _biz("디아더 피부과", "111", url=f"https://www.{own}/", rating=4.6, votes=12,
                          kind="google_business_info", category_ids=["dermatologist"],
                          is_claimed=True)]}], 0.0054
             return [{"items": None}], 0.0054
@@ -114,13 +114,13 @@ def _local_post(calls):
                      {"type": "maps_search", "title": "식별자 없는 곳"},
                      _biz("C 피부과", "203", rating=4.9, votes=90, rank=3)]
             if center:      # 소재지에서만 우리가 4위로 보인다
-                items.append(_biz("디아더 피부과", "111", url="https://clinic.com", rating=4.6,
+                items.append(_biz("디아더 피부과", "111", url=f"https://{own}", rating=4.6,
                                   votes=12, rank=4))
             return [{"items": items}], 0.002
         if path == collect_local.LISTINGS_PATH:
             assert b["categories"] == ["dermatologist"] and b["location_coordinate"] == "37.5,127.0,1", b
             return [{"items": [
-                _biz("디아더 피부과", "111", url="https://clinic.com", kind="business_listing"),
+                _biz("디아더 피부과", "111", url=f"https://{own}", kind="business_listing"),
                 _biz("D 피부과", "204", rating=4.0, votes=20, kind="business_listing")]}], 0.011
         raise AssertionError(f"모르는 엔드포인트: {path}")
     return post
@@ -297,7 +297,7 @@ def test_brief_nap_uses_measured_profile():
     assert brief.nap_deliver(ctx) == brief.NAP_DELIVER and "네이버 플레이스" in got
 
 
-def _shop_results():
+def _shop_results(own="shop.com"):
     def it(rank, title, seller, domain, price, cur="KRW", desc=None, **more):
         return {"type": "google_shopping_serp", "rank_group": rank, "title": title,
                 "seller": seller, "domain": domain, "price": price, "currency": cur,
@@ -307,7 +307,7 @@ def _shop_results():
     return [{"items": [
         {"type": "google_shopping_paid", "title": "광고 상품", "price": 1},
         it(1, "면 티셔츠 A", "쇼핑몰A", "a.com", 10000, desc=maker),
-        it(2, "면 티셔츠 우리", "우리몰", "www.shop.com", 30000, desc=maker),
+        it(2, "면 티셔츠 우리", "우리몰", f"www.{own}", 30000, desc=maker),
         it(3, "면 티셔츠 C", "쇼핑몰A", "a.com", 20000, desc="다른 설명"),
         it(4, "달러 상품", "해외몰", "x.com", 9.9, cur="USD"),
         it(5, "값 없는 상품", "쇼핑몰B", "b.com", None),
@@ -418,6 +418,151 @@ def test_task_helpers():
         {"a": "/a", "b": "/b"}, timeout_s=25, get=get, clock=lambda: t[0],
         sleep=lambda s: t.__setitem__(0, t[0] + s))
     assert out == {"a": ("done", [1]), "b": ("waiting", None)}, out
+
+
+# ── 실제 화면 ────────────────────────────────────────────────────────────────
+# [경쟁 검색어] → [전체] 탭까지 눌러 들어가 두 카드를 읽어 DOM(#__lc__)에 옮겨 적는다.
+RUN = """<script>
+(function () {
+  var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  var one = function (id) {
+    var s = document.getElementById(id), c = s.querySelector(".card"), r = c.getBoundingClientRect();
+    var typo = [].map.call(c.querySelectorAll("h2,h3,th,td,dt,dd,p,figcaption,small,span"), function (e) {
+      var st = getComputedStyle(e); return st.letterSpacing + "|" + st.textTransform; })
+      .filter(function (v) { return v !== "normal|none" && v !== "0px|none"; });
+    return {box: s.parentNode.id, disp: getComputedStyle(c).display, w: Math.round(r.width),
+            text: c.innerText.replace(/\\s+/g, " "), typo: typo, over: c.scrollWidth > c.clientWidth + 1,
+            cells: [].map.call(c.querySelectorAll(".lc-cells span"), function (x) { return x.textContent; })};
+  };
+  (async function () {
+    var out = {};
+    try {
+      await wait(2500);
+      SM.touched = true; SM.show("competitors"); await wait(400);
+      var box = document.getElementById("view-competitors");
+      box.querySelector(':scope > .vtabs [data-mode="manage"]').click(); await wait(1200);
+      out.local = one("sm-local"); out.shop = one("sm-shop");
+    } catch (e) { out.err = String(e && e.stack || e); }
+    var d = document.createElement("div"); d.id = "__lc__";
+    d.textContent = JSON.stringify(out); document.body.appendChild(d);
+  })();
+})();
+</script>"""
+
+
+def _seed_screens(tr) -> None:
+    """test_render 의 두 사이트를 지역 업체·쇼핑몰로 바꾸고 가짜 응답으로 한 바퀴 수집한다."""
+    lb, sh = tr.SITES[1], tr.SITES[0]
+    conn = db.connect()
+    try:
+        conn.execute("UPDATE projects SET type='local_business', locale='ko-KR' WHERE name=?", (lb,))
+        conn.execute("UPDATE projects SET type='commerce', locale='ko-KR' WHERE name=?", (sh,))
+        conn.commit()
+        pid = db.get_project(conn, lb)["id"]
+        db.set_project_settings(conn, pid, {"brand_aliases": ["디아더 피부과"]})
+        _kw(conn, pid, "강남 피부과", ["local_pack"], vol=900)
+        r = collect_local.collect(lb, conn=conn, post=_local_post([], f"{lb}.example"),
+                                  tasks=FakeTasks({"111": _reviews(12, 4.6, [200, 300], 0),
+                                                   "201": _reviews(300, 4.8, [1, 5], 2),
+                                                   "202": _reviews(140, 4.2, [10], 1),
+                                                   "203": _reviews(90, 4.9, [3], 1)}))
+        assert r.ok and not r.skipped, r
+        pid = db.get_project(conn, sh)["id"]
+        _kw(conn, pid, "면 티셔츠", ["shopping"], pos=3, url=f"https://{sh}.example/a", vol=500)
+        boom = lambda *a, **k: (_ for _ in ()).throw(AssertionError("한국에는 아마존 마켓이 없다"))
+        r = collect_merchant.collect(sh, conn=conn, post=boom,
+                                     tasks=FakeTasks({"면 티셔츠": _shop_results(f"{sh}.example")}))
+        assert r.ok and not r.skipped, r
+    finally:
+        conn.close()
+
+
+def _read_screen(label: str, html: str) -> dict:
+    import html as htmlmod
+    import re
+    m = re.search(r'id="__lc__"[^>]*>(.*?)</div>', html, re.S)
+    assert m, f"{label}: 화면 검사 스크립트가 결과를 못 남겼다"
+    o = json.loads(htmlmod.unescape(m.group(1)))
+    assert not o.get("err"), f"{label}: 검사 스크립트가 터졌다: {o.get('err')}"
+    for k in ("local", "shop"):
+        assert o[k]["box"] == "view-competitors", f"{label}: 섹션이 [경쟁 검색어] 화면 밖에 있다 {o[k]['box']}"
+    return o
+
+
+def _judge_local(label: str, o: dict) -> None:
+    c = o["local"]
+    assert c["disp"] != "none" and c["w"] > 300, f"{label}: 지역 업체 카드가 안 보인다 {c['disp']} {c['w']}"
+    for want in ("디아더 피부과", "02-000-0000", "강남 피부과", "4위", "A 피부과", "상위 업체 중앙값",
+                 "리뷰 게이팅", "네이버 플레이스", "9개 구역 중 1곳에서 노출", "D 피부과"):
+        assert want in c["text"], f"{label}: 지역 업체 카드에 '{want}' 이 없다: {c['text'][:400]}"
+    assert c["cells"] == ["밖"] * 4 + ["4"] + ["밖"] * 4, f"{label}: 격자가 3×3 한가운데 4위가 아니다 {c['cells']}"
+    assert not c["typo"], f"{label}: 한글 칸에 자간·대문자 변환이 걸렸다 {c['typo'][:3]}"
+    assert not c["over"], f"{label}: 지역 업체 카드가 옆으로 넘친다"
+    assert o["shop"]["disp"] == "none", f"{label}: 지역 업체 사이트에 쇼핑 카드가 섰다"
+
+
+def _judge_shop(label: str, o: dict) -> None:
+    c = o["shop"]
+    assert c["disp"] != "none" and c["w"] > 300, f"{label}: 쇼핑 카드가 안 보인다 {c['disp']} {c['w']}"
+    for want in ("구글 쇼핑", "면 티셔츠", "오가닉·쇼핑 둘 다 노출", "더 싼 상품 2개", "쇼핑몰A 2개",
+                 "같은 설명을 쓴 판매처", "25,000 KRW"):
+        assert want in c["text"], f"{label}: 쇼핑 카드에 '{want}' 이 없다: {c['text'][:400]}"
+    assert not c["typo"], f"{label}: 한글 칸에 자간·대문자 변환이 걸렸다 {c['typo'][:3]}"
+    assert o["local"]["disp"] == "none", f"{label}: 쇼핑몰 사이트에 지역 업체 카드가 섰다"
+
+
+def test_screens_in_a_real_browser():
+    """두 카드를 실제 브라우저로 — 로컬(stdlib)과 호스팅(실제 FastAPI 앱) 둘 다. 메뉴에서
+    [경쟁 검색어]로 들어가 [전체] 탭을 눌러야 보인다(그 경로를 그대로 누른다)."""
+    import gc
+    import shutil
+    import test_render as tr
+    browser = tr.find_browser()
+    if not browser:
+        print("크롬/엣지가 없어 화면 검사는 건너뜁니다")
+        return
+    import doctor
+    saved_env = dict(os.environ)
+    for k in (doctor.MODE_ENV, doctor.TOOL_ENV, doctor.TERMINAL_ENV):
+        os.environ.pop(k, None)
+    home = Path(tempfile.mkdtemp(prefix="seo-miner-local-screens-"))
+    lb, sh = tr.SITES[1], tr.SITES[0]
+    try:
+        tr.fixture(home)
+        _seed_screens(tr)
+        import dashboard
+        page = dashboard.HTML.replace(b"</head>", tr.PROBE.encode("utf-8") + b"</head>", 1)
+        page = page.replace(b"</body>", RUN.encode("utf-8") + b"</body>", 1)
+        with tr._stdlib(page) as site:
+            for name, judge in ((lb, _judge_local), (sh, _judge_shop)):
+                html = tr.dom(browser, f"{site.base}/d#{name}", home / "chrome-profile")
+                p = tr.probe(html)
+                assert not p["err"], "로컬: JS 가 터졌다:\n  " + "\n  ".join(p["err"][:6])
+                judge(f"로컬 {name}", _read_screen(f"로컬 {name}", html))
+        print("  화면(로컬): ok")
+        if (Path(tr.ROOT) / "server" / "assets" / "dash.html").exists():
+            saved = tr.ALIAS_TOUCH       # 호스팅 앱 앞 층이 ?alias_probe=1 요청에 끼우는 조각을 우리 것으로
+            tr.ALIAS_TOUCH = RUN
+            try:
+                with tr.serve_hosted(home / "hosted") as site:
+                    _seed_screens(tr)    # fixture 가 CAPTURE_HOME 을 그 유저의 brain 으로 세워 뒀다
+                    for name, judge in ((lb, _judge_local), (sh, _judge_shop)):
+                        html = tr.dom(browser, f"{site.base}/d?alias_probe=1#{name}",
+                                      home / "chrome-profile")
+                        p = tr.probe(html)
+                        assert not p["err"], "호스팅: JS 가 터졌다:\n  " + "\n  ".join(p["err"][:6])
+                        judge(f"호스팅 {name}", _read_screen(f"호스팅 {name}", html))
+                    site.after()
+                    fails = site.failures()
+            finally:
+                tr.ALIAS_TOUCH = saved
+            assert not fails, "호스팅: 서버가 본 실패 " + "; ".join(fails[:5])
+            print("  화면(호스팅): ok")
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_env)
+        gc.collect()
+        shutil.rmtree(home, ignore_errors=True)
 
 
 if __name__ == "__main__":

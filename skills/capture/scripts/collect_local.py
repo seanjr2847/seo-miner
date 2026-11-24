@@ -421,7 +421,7 @@ def collect(project: str, *,
 
         if not paid and not (fixed and use_osm):
             why = NO_KEY if not serp_adapter.has_dataforseo() else (
-                f"{serp_adapter.locale_label(locale)} 은 DataForSEO 가 조회하지 않는 지역입니다")
+                f"이 지역({serp_adapter.locale_label(locale)})은 DataForSEO 가 조회하지 않습니다")
             if not st.dry_run:
                 _note_skip(conn, pid, why)
                 conn.commit()
@@ -605,8 +605,8 @@ def collect(project: str, *,
                 except Exception as e:          # noqa: BLE001 — 무료 축의 실패가 유료 축을 안 버린다
                     st.fail(str(e), item="OSM 반경", kind=type(e).__name__)
             elif center:
-                notes.append(f"OSM 반경 경쟁 업체는 {serp_adapter.locale_label(locale)} 에서 끕니다"
-                             "(지도 데이터가 충실한 지역만 켭니다)")
+                notes.append(f"이 지역({serp_adapter.locale_label(locale)})은 OSM 반경 경쟁 업체를 "
+                             "끕니다(지도 데이터가 충실한 지역만 켭니다)")
 
             conn.commit()
             r.api_calls = calls
