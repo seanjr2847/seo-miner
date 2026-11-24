@@ -4681,6 +4681,30 @@ def test_aio_checklist_names_the_search_console_generative_ai_control():
     assert "생성형 AI" in body.split("## 이 상황에서 할 일", 1)[1].split("\n## ", 1)[0]
 
 
+def test_ai_gap_brief_splits_seen_but_unused_from_never_seen():
+    """AI 가 본 것(DataForSEO 의 search_results·fan_out_queries) — 봤는데 안 썼으면 답 블록을 고치고,
+    못 봤으면 AI 가 돌린 검색어에서 서야 한다. 수·판정·문장은 scoring.ai_tally 한 벌을 그대로 싣는다.
+    본 목록을 준 답이 없으면(옛 행) 그 줄을 안 쓴다 — 모름을 '못 봤다'로 말하지 않는다."""
+    o = _opp("ai_citation_gap", "무슨 도구가 좋아?")
+    seen = scoring.ai_seen_summary(4, 3, 1, {"best tool for x": 3, "x tool review": 1})
+    t = brief.text(o, {"ai_by_prompt": [_ai_row(**seen)]}, "ko-KR")
+    assert "보고도 인용 안 한 답 3건" in t and "아예 못 본 답 1건" in t, t
+    assert scoring.AI_SEEN_LINES["seen_unused"] in t, "판정 문장이 scoring 한 벌이 아니다"
+    assert "best tool for x(3) · x tool review(1)" in t, t
+    unseen = scoring.ai_seen_summary(4, 0, 4, {})
+    t2 = brief.text(o, {"ai_by_prompt": [_ai_row(**unseen)]}, "ko-KR")
+    assert scoring.AI_SEEN_LINES["unseen"] in t2 and "실제로 돌린 검색어(" not in t2, \
+        "AI 가 돌린 검색어가 없는데 그 줄을 썼다"
+    tie = scoring.ai_seen_summary(2, 1, 1, {})
+    assert tie["seen_verdict"] == "mixed", "동점을 '더 많다'로 판정했다"
+    assert scoring.AI_SEEN_LINES["mixed"] in brief.text(o, {"ai_by_prompt": [_ai_row(**tie)]}, "ko-KR")
+    old = brief.text(o, {"ai_by_prompt": [_ai_row()]}, "ko-KR")
+    assert "AI 가 답하며 본 페이지" not in old and "판정:" not in old, "모름(옛 행)을 판정했다"
+    src = (Path(__file__).parent / "brief.py").read_text("utf-8")
+    for line in scoring.AI_SEEN_LINES.values():
+        assert line not in src, "판정 문장의 사본이 brief.py 에 있다"
+
+
 if __name__ == "__main__":
     tests =[v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

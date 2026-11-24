@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS keywords (
   intent TEXT,                                -- info|commercial|transactional|navigational
   volume INTEGER,                             -- NULL = unknown (free pipeline)
   difficulty REAL,
-  source TEXT DEFAULT 'seed',                 -- seed|autocomplete|gsc|competitor|claude
+  source TEXT DEFAULT 'seed',                 -- seed|autocomplete|gsc|competitor|claude|ai_fanout(AI 가 답하며 돌린 검색어 — collect_ai)
   is_active INTEGER DEFAULT 0,                -- 1 = tracked set (curated by Claude+user)
   verdict_off INTEGER DEFAULT 0,              -- 1 = '무관' 판정이 is_active 를 껐다(되돌리기가 되켤 줄). 사람이 손대면 0
   active_src TEXT,                            -- is_active 를 마지막으로 정한 쪽: manual(사람) | auto(워커 자동 선택) | demoted(순위 밖이 이어져 내림 — demote_unranked). NULL = 이 칸 이전(모름 — 사람 것으로 친다)
@@ -556,8 +556,12 @@ CREATE TABLE IF NOT EXISTS ai_checks (
   citations_json TEXT,                        -- 인용된 출처 [{url, title}] — 응답에 나온 순서, URL 중복 없음.
                                               -- NULL = 이 칸 이전의 옛 행 (URL 을 모른다, 도메인만 안다).
                                               -- '[]' = 쟀는데 인용이 없었다
-  recommended INTEGER                         -- 목록 줄 안에 브랜드가 있나 (scoring.recommended_in
+  recommended INTEGER,                        -- 목록 줄 안에 브랜드가 있나 (scoring.recommended_in
                                               -- 휴리스틱). NULL = 이 칸 이전의 답 — 안 봤다
+  -- 아래 셋은 DataForSEO LLM Responses 가 주는 것(2026-11-24~). NULL = 모름(이 칸 이전·그 엔진이 안 줌)
+  fanout_json TEXT,                           -- AI 가 답하려고 실제로 돌린 검색어 ["..."]. '[]' = 검색 안 함
+  seen_json TEXT,                             -- AI 가 검색해서 본 페이지 [{url, title}] (상위 collect_ai.SEEN_KEEP 개)
+  seen_own INTEGER                            -- 본 페이지에 우리 도메인이 있었나 1/0 (scoring.seen_own)
 );
 CREATE INDEX IF NOT EXISTS idx_ai_checks_run ON ai_checks(run_id);
 CREATE TABLE IF NOT EXISTS competitors (
@@ -1308,6 +1312,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "citations_json" not in {r["name"] for r in conn.execute("PRAGMA table_info(ai_checks)")}:
         conn.execute("ALTER TABLE ai_checks ADD COLUMN citations_json TEXT")
         conn.commit()
+
+    # AI 가 돌린 검색어·본 페이지·그중 우리 것 — DataForSEO LLM Responses 가 주는 것. 옛 행은
+    # NULL(모름)이다: OpenRouter 시절 응답에는 이 정보가 없었다.
+    ac_cols = {r["name"] for r in conn.execute("PRAGMA table_info(ai_checks)")}
+    for col, typ in (("fanout_json", "TEXT"), ("seen_json", "TEXT"), ("seen_own", "INTEGER")):
+        if col not in ac_cols:
+            conn.execute(f"ALTER TABLE ai_checks ADD COLUMN {col} {typ}")
+    conn.commit()
 
     # ── 갈래 5: 키워드 언어 ──
     # locale_src — 그 로케일을 누가 정했나: gsc_country(검색한 사람의 나라) | script
@@ -3651,20 +3663,25 @@ def record_ai_check(conn: sqlite3.Connection, prompt_id: int, run_id: int | None
                     engine: str, sample_idx: int, mentioned: int, cited: int,
                     cited_domains: list, excerpt: str,
                     recommended: int | None = None,
-                    citations: list | None = None) -> int:
+                    citations: list | None = None,
+                    fanout: list | None = None, seen: list | None = None,
+                    seen_own: int | None = None) -> int:
     """AI 인용 체크 1건 (collect_ai). recommended 를 안 넘기면 NULL(안 봤다) — 0 이 아니다.
-    citations 는 [{url, title}] — 안 넘기면 NULL(URL 모름), 빈 목록이면 '[]'(인용 없음)."""
+    citations 는 [{url, title}] — 안 넘기면 NULL(URL 모름), 빈 목록이면 '[]'(인용 없음).
+    fanout·seen·seen_own 도 같은 규칙이다 — None 은 모름, [] 는 '쟀는데 없음'."""
+    dump = lambda v: None if v is None else json.dumps(v, ensure_ascii=False)  # noqa: E731
     cur = conn.execute(
         """INSERT INTO ai_checks(prompt_id, run_id, engine, sample_idx,
              mentioned, cited, cited_domains_json, answer_excerpt, recommended,
-             citations_json)
-           VALUES(?,?,?,?,?,?,?,?,?,?)""",
+             citations_json, fanout_json, seen_json, seen_own)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (prompt_id, run_id, engine, sample_idx, int(mentioned), int(cited),
          # 전문 저장 — 280자 절단 시절엔 답변 맥락(왜 인용됐/안 됐는지)을 검증할 수
          # 없었다. 8000자 상한은 비정상 폭주(무한 스트림 캡처 등) 방지 안전핀일 뿐.
          json.dumps(cited_domains or [], ensure_ascii=False), (excerpt or "")[:8000],
          None if recommended is None else int(recommended),
-         None if citations is None else json.dumps(citations, ensure_ascii=False)))
+         dump(citations), dump(fanout), dump(seen),
+         None if seen_own is None else int(seen_own)))
     conn.commit()
     return cur.lastrowid
 

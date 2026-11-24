@@ -276,7 +276,8 @@ CONFIG: dict = {
     # collector.settings() 가 읽는다: CLI > 사이트 설정 > 여기 > 코드 리터럴.
     "defaults": {
         "gsc_days": 28,
-        "ai_samples": 2,        # 비결정성 완화용 2회 샘플 — API 호출·비용 2배. 급하면 1로.
+        "ai_samples": 1,        # 질문×엔진 당 1회(2026-11-24 사용자 결정 — 2회는 비용 2배). 엔진 3곳이면
+                                # 질문당 답 3건 = scoring.AI_MIN_SAMPLES. 중요 질문은 --samples 2
         "throttle": 0.5,        # 요청 간격(초) — 자동완성·AI·SERP 공통
         "serp_depth": 10,
         "serp_device": "desktop",

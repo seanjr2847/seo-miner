@@ -309,6 +309,8 @@ const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:
   crawl_delay:"Crawl-delay(초)",
   // 경쟁사 비브랜드 발견·역할 판정(collect_gap D·E)
   nonbrand_new:"비브랜드로 찾은 경쟁사", judged:"역할 판정", ai_judge:"AI 판정(키 문제로 끔)",
+  // AI 인용 확인 — AI 가 답하며 돌린 검색어 중 새로 올린 키워드 후보(collect_ai)
+  fanout_new:"AI 검색어에서 올린 키워드 후보",
   // 검색량 API 가 못 재는 검색어(빈 문자열·길이 초과·안 받는 지역). 실패가 아니라
   // "안 보냈다"라서 errors 와 따로 센다(collect_metrics 의 unsendable). 브라우저로
   // 기록 화면을 열었을 때 이 키만 영문 그대로 서 있었다.

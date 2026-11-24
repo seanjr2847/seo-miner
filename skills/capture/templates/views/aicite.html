@@ -993,7 +993,20 @@ function AI_rowBody(r) {
   const o = oppOf(r.prompt);
   const riv = AI_riv(r);
   return `<div class="aiq-d">${READONLY ? AI_aStatic(r) : `<div class="aia" data-p="${esc(r.prompt)}"
-    aria-live="polite" aria-busy="true">${AI_aSkel()}</div>`}${o ? oppPanel(o, oppActs(o)) : AI_detail(r, riv)}</div>`;
+    aria-live="polite" aria-busy="true">${AI_aSkel()}</div>`}${AI_seen(r)}${o ? oppPanel(o, oppActs(o)) : AI_detail(r, riv)}</div>`;
+}
+// AI 가 본 것 — 봤는데 안 썼나 · 아예 못 봤나, 그리고 AI 가 돌린 검색어. 수·판정 문장은 서버
+// (scoring.ai_tally 의 seen_* · fanout)가 정한다 — 여기서 판정을 다시 하지 않는다. 본 목록을 준
+// 답이 없으면(옛 답·Gemini 만) 칸째 안 그린다(모름을 '못 봤다'로 그리지 않는다).
+function AI_seen(r) {
+  const fan = r.fanout || [];
+  if (!r.seen_checks && !fan.length) return "";
+  const nums = r.seen_checks ? `<p class="detn">AI 가 본 페이지(본 목록을 준 답 ${r.seen_checks}건) —
+    우리 페이지를 보고도 인용 안 함 <b>${r.seen_miss || 0}</b>건 · 아예 못 봄 <b>${r.unseen || 0}</b>건</p>` : "";
+  const line = r.seen_line ? `<p class="aiq-note">${esc(r.seen_line)}</p>` : "";
+  const chips = fan.length ? `<p class="detn">AI 가 답하려고 돌린 검색어</p><p class="aidoms">${fan.map(fq =>
+    `<span class="chip" title="답변 ${fq.n}건에서">${esc(fq.query)}</span>`).join("")}</p>` : "";
+  return `<div class="det aiseen">${nums}${line}${chips}</div>`;
 }
 // 저장된 보고서(박제본)에는 서버가 없어 전문을 못 받는다 — 페이로드가 실어 온 엔진별 발췌 한 토막만 보인다.
 function AI_aStatic(r) {

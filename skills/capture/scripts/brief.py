@@ -3218,6 +3218,25 @@ def _ai_rivals(r: dict) -> list[str]:
     return L
 
 
+def _ai_seen_lines(r: dict) -> list[str]:
+    """AI 가 본 것 — 봤는데 안 썼나(답 블록을 고친다) · 아예 못 봤나(AI 가 돌린 검색어에서 서야 한다).
+    수·판정·문장은 scoring.ai_tally(ai_seen_summary) 한 벌이다. 본 목록을 준 답이 없으면(옛 행·
+    Gemini 만 물은 질문) 아무 말도 안 한다 — 모름을 '못 봤다'로 말하지 않는다."""
+    L = []
+    n = r.get("seen_checks") or 0
+    if n:
+        L.append(f"- AI 가 답하며 본 페이지(본 목록을 준 답 {n}건): 우리 페이지를 보고도 인용 안 한 답 "
+                 f"{r.get('seen_miss') or 0}건 · 우리 페이지를 아예 못 본 답 {r.get('unseen') or 0}건")
+        if r.get("seen_line"):
+            L.append(f"- 판정: {r['seen_line']}")
+    fan = r.get("fanout") or []
+    if fan:
+        L.append("- AI 가 답하려고 실제로 돌린 검색어(많이 쓴 순): "
+                 + " · ".join(f"{_ext(x['query'], 80)}({x['n']})" for x in fan)
+                 + ". 이 검색어의 검색결과가 AI 가 고르는 출처 후보입니다.")
+    return L
+
+
 def _ev_ai(o, ctx, pages):
     # 기회를 세운 행(ai_gap_rows — 그 질문의 끝난 회차)이 먼저다. 최신 회차 행
     # (ai_by_prompt)은 그 회차가 끊겼으면 다른 표본이라, 근거가 기회와 다른 수를 말한다.
@@ -3236,6 +3255,7 @@ def _ev_ai(o, ctx, pages):
         L += _ai_ladder(r)
         L += _ai_engines(r)
         L += _ai_rivals(r)
+        L += _ai_seen_lines(r)
         ex = r.get("excerpts") or {}
         if ex:
             # "여기 없는 것을 우리가 답해야"는 내 페이지로 푸는 일(고치기·새 글)에서만

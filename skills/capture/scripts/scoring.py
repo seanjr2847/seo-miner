@@ -6000,7 +6000,7 @@ def ai_tally(conn: sqlite3.Connection, run_id: int,
     plats = third_party_platforms() if platforms is None else platforms
     outs = press_outlets() if outlets is None else outlets
     sql = ("SELECT prompt_id, engine, cited, mentioned, recommended, cited_domains_json,"
-           " answer_excerpt FROM ai_checks WHERE run_id=?")
+           " answer_excerpt, seen_own, fanout_json FROM ai_checks WHERE run_id=?")
     args: list = [run_id]
     if prompt_ids is not None:
         if not prompt_ids:
@@ -6010,7 +6010,15 @@ def ai_tally(conn: sqlite3.Connection, run_id: int,
     acc: dict[int, dict] = {}
     for c in conn.execute(sql + " ORDER BY id", args):
         a = acc.setdefault(c["prompt_id"], {"eng": {}, "tally": {}, "excerpts": {},
-                                            "cited_excerpts": {}})
+                                            "cited_excerpts": {}, "seen_checks": 0,
+                                            "seen_miss": 0, "unseen": 0, "fan": {}})
+        # AI 가 본 페이지에 우리가 있었나(seen_own) — NULL 은 그 엔진이 본 목록을 안 줬다(모름)
+        if c["seen_own"] is not None:
+            a["seen_checks"] += 1
+            if not c["cited"]:
+                a["seen_miss" if c["seen_own"] else "unseen"] += 1
+        for fq in _fanout_of(c["fanout_json"]):     # 답변 하나에 한 번 — 같은 검색어를 여러 번 돌려도
+            a["fan"][fq] = a["fan"].get(fq, 0) + 1
         e = a["eng"].setdefault(c["engine"], {"checks": 0, "cited": 0, "mentioned": 0,
                                               "named_only": 0, "recommended": 0,
                                               "rec_checks": 0, "misses": 0, "tally": {}})
@@ -6062,8 +6070,61 @@ def ai_tally(conn: sqlite3.Connection, run_id: int,
                              "third_party" if share > AI_PRESENCE_SHARE else
                              "press" if pshare > AI_PRESENCE_SHARE else "sites"),
                     "excerpts": a["excerpts"], "cited_excerpts": a["cited_excerpts"],
-                    "by_engine": by}
+                    "by_engine": by,
+                    **ai_seen_summary(a["seen_checks"], a["seen_miss"], a["unseen"], a["fan"])}
     return out
+
+
+# ── AI 가 본 것 — 봤는데 안 썼나, 아예 못 봤나 ──────────────────────────────────
+# DataForSEO LLM Responses 는 답과 함께 AI 가 실제로 돌린 검색어(fan_out_queries)와 검색해서 본
+# 페이지(search_results)를 준다(2026-11-24~, collect_ai.parse_llm). 인용 0 인 질문의 처방이 이것으로
+# 갈린다: 우리 페이지를 **보고도** 안 썼으면 찾기는 되는 것이라 그 페이지의 답 블록을 고치고,
+# 아예 **못 봤으면** 글을 고치기 전에 AI 가 돌린 검색어에서 상위에 서야 출처 후보가 된다.
+AI_FANOUT_TOP = 5            # 질문마다 실을 'AI 가 돌린 검색어' 수(많이 쓴 순)
+AI_SEEN_LINES = {
+    "seen_unused": ("AI 가 답하며 우리 페이지를 보고도 인용하지 않은 답이 더 많습니다 — 찾기는 됩니다. "
+                    "이 페이지의 답 블록(질문에 바로 답하는 문단, 출처를 단 수치)을 고치는 일입니다."),
+    "unseen": ("AI 가 답하며 본 페이지에 우리 페이지가 없던 답이 더 많습니다 — 글을 고치기 전에, AI 가 "
+               "돌린 검색어에서 상위에 서야 출처 후보가 됩니다."),
+    "mixed": ("AI 가 우리 페이지를 보고도 안 쓴 답과 아예 못 본 답이 같은 수입니다 — 답 블록을 고치는 일과 "
+              "AI 가 돌린 검색어에서 상위에 서는 일이 둘 다 남았습니다."),
+}
+
+
+def _fanout_of(text) -> list[str]:
+    """fanout_json → 검색어 목록(소문자·빈칸 정리, 답변 하나 안에서 중복 없음). NULL·깨진 값은 []."""
+    try:
+        got = json.loads(text) if text else []
+    except (TypeError, ValueError):
+        return []
+    out: list[str] = []
+    for q in got if isinstance(got, list) else []:
+        s = " ".join(str(q).split()).strip().lower()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def seen_own(seen, own: str) -> int | None:
+    """AI 가 본 페이지([{url}])에 우리 도메인이 있었나 1/0. 본 목록을 모르면(None) None — 0 이 아니다."""
+    if seen is None or not own:
+        return None
+    return int(any(owns(host_of(str(s.get("url") if isinstance(s, dict) else s)), own)
+                   for s in seen))
+
+
+def ai_seen_summary(seen_checks: int, seen_miss: int, unseen: int, fan: dict) -> dict:
+    """ai_tally 의 '본 것' 칸 — 판정 키·문장·많이 돌린 검색어. 문장의 정본은 AI_SEEN_LINES 한 벌이고
+    요청문(brief._ev_ai)·화면(aicite)이 이 seen_line 을 그대로 쓴다."""
+    verdict = None
+    if seen_miss or unseen:
+        # 동점에 '더 많습니다'를 쓰면 틀린 말이다 — 따로 말한다
+        verdict = ("seen_unused" if seen_miss > unseen else
+                   "unseen" if unseen > seen_miss else "mixed")
+    top = sorted(fan.items(), key=lambda kv: (-kv[1], kv[0]))[:AI_FANOUT_TOP]
+    return {"seen_checks": seen_checks, "seen_miss": seen_miss, "unseen": unseen,
+            "seen_verdict": verdict, "seen_line": AI_SEEN_LINES.get(verdict),
+            "fanout": [{"query": q, "n": n} for q, n in top]}
 
 
 def latest_ai_run(conn: sqlite3.Connection, project_id: int) -> sqlite3.Row | None:

@@ -23,6 +23,7 @@ Usage:
                        [--category 사실] [--dry-run]
 """
 import argparse
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -65,7 +66,7 @@ def estimate_usd(project: str | None) -> float:
     """이번 AI 인용 확인의 추정 비용 — 켠 질문 수(상한 안) × 표본 × 엔진 단가 합.
     사이트를 못 읽으면 상한·기본 엔진으로 잡는다(모르면 넉넉하게)."""
     gcfg = collector.config()
-    samples = int((gcfg.get("defaults") or {}).get("ai_samples") or 2)
+    samples = int((gcfg.get("defaults") or {}).get("ai_samples") or 1)
     cap = 30                              # _parser 의 --max-prompts 기본값과 같다(시장마다)
     n, chosen = cap, None
     if project:
@@ -154,6 +155,12 @@ def openrouter_ok(need: float = 0.0) -> tuple[bool, str]:
 #   · max_output_tokens 는 생각하는 모델이면 1024 이상이어야 한다(아니면 40501) — 안 보낸다(기본 2048).
 DFS_LLM_PATH = "/ai_optimization/{platform}/llm_responses/live"
 PROMPT_MAX = 500
+SEEN_KEEP = 40               # 답 하나에 남기는 'AI 가 본 페이지' 수 (실측: ChatGPT 한 답에 35개)
+# AI 가 돌린 검색어를 키워드 후보(is_active=0, source='ai_fanout')로 올리는 상한·거름.
+# 검색 연산자(site: 등)가 든 것과 너무 긴 것은 사람이 치는 검색어가 아니다.
+FANOUT_CANDIDATES_MAX = 30
+FANOUT_MAX_LEN = 80
+_FANOUT_OPERATOR = re.compile(r"\b(site|inurl|intitle|filetype|related):", re.I)
 LLM_TIMEOUT = 180            # 웹 검색까지 하면 평균 수십 초, 문서는 최대 120초 안팎이라고 한다
 # web_search_country_iso_code 를 받는 플랫폼. claude 는 정해진 나라 목록만 받는다(문서의 enum).
 _COUNTRY_ANY = frozenset({"chat_gpt", "perplexity"})
@@ -211,8 +218,30 @@ def parse_llm(result: list) -> dict:
                     cites.append(seen[u])
                 elif seen[u]["title"] is None:
                     seen[u]["title"] = title
+    # AI 가 실제로 돌린 검색어·검색해서 본 페이지 — 없는 칸(그 엔진이 안 줌: Gemini 의 본 목록)은
+    # None(모름)이고, 빈 목록은 '쟀는데 없음'이다. 본 페이지는 URL·제목만(스니펫은 남의 글이다).
+    fan = r0.get("fan_out_queries")
+    sr = r0.get("search_results")
+    seen = None
+    if isinstance(sr, list):
+        seen = [{"url": str(x.get("url")), "title": (str(x.get("title") or "").strip() or None)}
+                for x in sr if isinstance(x, dict) and x.get("url")][:SEEN_KEEP]
     return {"content": "\n\n".join(texts), "citation_urls": urls, "citations": cites,
-            "model": r0.get("model_name")}
+            "model": r0.get("model_name"),
+            "fanout": [str(q) for q in fan if str(q).strip()] if isinstance(fan, list) else None,
+            "seen": seen}
+
+
+def fanout_candidates(fan: dict) -> list[tuple]:
+    """{AI 가 돌린 검색어: 시장} → 키워드 후보 [(검색어, 시장, 'ai_fanout')]. 검색 연산자가 든 것·
+    너무 긴 것은 사람이 치는 검색어가 아니라 뺀다. 상한 FANOUT_CANDIDATES_MAX(들어온 순서)."""
+    out = []
+    for q, loc in fan.items():
+        if q and len(q) <= FANOUT_MAX_LEN and not _FANOUT_OPERATOR.search(q):
+            out.append((q, loc, "ai_fanout"))
+        if len(out) >= FANOUT_CANDIDATES_MAX:
+            break
+    return out
 
 
 def ask(e: dict, prompt: str, locale: str) -> dict:
@@ -413,6 +442,7 @@ def collect(project: str, *,
             # 끝난 회차에 행이 없으니 다음 런이 그 항목만 다시 묻는다(checked_today).
             flat = [(row, engine, sample) for row, tasks in todo for engine, sample in tasks]
             last_of = {row["id"]: (row, *tasks[-1]) for row, tasks in todo if tasks}
+            fan_seen: dict[str, str] = {}   # AI 가 돌린 검색어 → 그 질문의 시장(키워드 후보로 올린다)
 
             def ask_one(item) -> dict:
                 row, engine, _ = item
@@ -429,7 +459,11 @@ def collect(project: str, *,
                                    mentioned, cited, others, res["content"],
                                    recommended=recommended,
                                    citations=scoring.citations_of(
-                                       res.get("citations"), res["content"]))
+                                       res.get("citations"), res["content"]),
+                                   fanout=res.get("fanout"), seen=res.get("seen"),
+                                   seen_own=scoring.seen_own(res.get("seen"), own_domain))
+                for q in res.get("fanout") or []:
+                    fan_seen.setdefault(" ".join(str(q).split()), row["locale"])
                 # 도중에 Fatal 로 끊겨도 그때까지 부른 횟수·청구액이 runs 에 남게 여기서 센다
                 r.api_calls += 1
                 r.cost += float((res.get("usage") or {}).get("cost") or 0)
@@ -440,9 +474,12 @@ def collect(project: str, *,
                         label=lambda t: f"{t[1]} failed on prompt#{t[0]['id']}")
             # 모델까지 적는다 — 표의 모델을 바꾼 회차부터 인용률이 달라질 수 있고,
             # ai_checks 에는 엔진 id 만 남는다. 추세가 꺾인 자리를 여기서 찾는다.
+            # AI 가 답하려고 돌린 검색어는 사람이 칠 법한 검색어다 — 키워드 후보(꺼진 채)로 올린다.
+            # 추적할지는 사람이 고른다(/capture keywords 큐레이션). 이미 있는 검색어는 안 겹친다.
+            fan_new = db.add_keyword_candidates(conn, p["id"], fanout_candidates(fan_seen))
             r.notes = (f"engines={list(engines_d)} samples={samples} "
                        f"models={','.join(e['model'] for e in engines_d.values())} "
-                       f"{st.err_note} skipped={skipped_calls}")
+                       f"{st.err_note} skipped={skipped_calls} fanout_new={fan_new}")
             # 선택 하위 걸음 — 내 샘플 질문 밖에서 누가 인용되나(DataForSEO AI Optimization).
             # 켠 사이트만, 키가 있을 때만. 여기서 난 오류는 이 단계의 성패를 안 바꾼다.
             if s.get("ai_llm_mentions"):
@@ -499,8 +536,8 @@ def _parser() -> argparse.ArgumentParser:
     collector.add_setting(ap, "--llm-mentions", key="ai_llm_mentions", fallback=0, type=int,
                           help="1 이면 DataForSEO AI Optimization 으로 LLM 언급 집계를 받는다(유료, 30일에 한 번)")
     ap.add_argument("--engines", default=None, help="comma list; default from config")
-    # 기본 2회 샘플(skill_config ai_samples와 일치) — 비결정성 완화, 대신 호출 비용 2배.
-    collector.add_setting(ap, "--samples", key="ai_samples", fallback=2, type=int)
+    # 기본 1회 샘플(skill_config ai_samples와 일치). 2회는 비결정성을 덜지만 호출 비용 2배.
+    collector.add_setting(ap, "--samples", key="ai_samples", fallback=1, type=int)
     collector.add_setting(ap, "--max-prompts", key="limits.max_ai_prompts", fallback=30, type=int)
     ap.add_argument("--ids", help="쉼표로 구분한 ai_prompt id — 지정하면 is_active를 무시하고 이것만 실행")
     ap.add_argument("--category", help="이 카테고리의 활성 프롬프트만 실행")
@@ -560,7 +597,9 @@ def _selfcheck() -> None:
             # 429 는 그 항목 하나의 실패다 — 단계를 멈추지 않는다(serp_adapter.raise_for)
             raise requests.HTTPError("429 Client Error: Too Many Requests")
         return {"content": f"{prompt} 답 — ai.kr 추천", "citation_urls": ["https://ai.kr/x"],
-                "usage": {"cost": 0.001}}
+                "usage": {"cost": 0.001},
+                "fanout": [f"{prompt} 추천 병원", "site:ai.kr 검색"],
+                "seen": [{"url": "https://www.ai.kr/x", "title": "우리"}] if e["platform"] != "gemini" else None}
 
     conn = fanout.MainThreadOnly(db.connect())
     globals()["ask"] = fake_ask
@@ -584,6 +623,12 @@ def _selfcheck() -> None:
     assert run["api_calls"] == 34 and "errors=2" in run["notes"], dict(run)
     assert abs(run["cost_estimate_usd"] - 34 * 0.001) < 1e-9, "응답의 실청구액을 안 적었다"
     assert engines()["gemini"]["model"] in run["notes"], "물은 모델을 노트에 안 적었다"
+    # AI 가 돌린 검색어·본 페이지 — 본 목록을 준 엔진은 seen_own 1, 안 준 엔진(gemini)은 NULL(모름)
+    seen = {(r["engine"], r["seen_own"]) for r in conn.execute("SELECT engine, seen_own FROM ai_checks")}
+    assert seen == {("chatgpt", 1), ("perplexity", 1), ("gemini", None)}, seen
+    cands = {r["keyword"] for r in conn.execute("SELECT keyword FROM keywords WHERE source='ai_fanout'")}
+    assert "질문0 추천 병원" in cands and not any("site:" in c for c in cands), cands
+    assert "fanout_new=6" in run["notes"], run["notes"]
 
     # 402(Fatal) — 아직 안 보낸 질문은 보내지 않고 단계를 끝낸다
     sent: list[str] = []
@@ -630,7 +675,11 @@ def _llm_shape_check() -> None:
         raise AssertionError("500자를 넘는 질문을 보냈다 — DataForSEO 가 40501 로 거절한다")
     except ValueError:
         pass
-    result = [{"model_name": "gpt-x-2026", "items": [
+    result = [{"model_name": "gpt-x-2026",
+               "fan_out_queries": ["강남 비립종 피부과", "  강남 비립종 피부과 "],
+               "search_results": [{"title": "우리피부과", "url": "https://ai.kr/x", "snippet": "남의 글"},
+                                  {"title": "", "url": "https://other.kr/b"}, {"title": "url 없음"}],
+               "items": [
         {"type": "reasoning", "sections": [{"type": "summary_text", "text": "생각 — 답이 아니다"}]},
         {"type": "message", "sections": [{"type": "text", "text": "1. 우리피부과 — 추천", "annotations": [
             {"title": "우리피부과", "url": "https://ai.kr/x?utm_source=openai"},
@@ -642,7 +691,15 @@ def _llm_shape_check() -> None:
     assert [c["url"] for c in got["citations"]] == ["https://ai.kr/x?utm_source=openai",
                                                     "https://other.kr/a"], "같은 URL 은 한 번"
     assert got["model"] == "gpt-x-2026"
-    assert parse_llm([]) == {"content": "", "citation_urls": [], "citations": [], "model": None}
+    assert got["fanout"] == ["강남 비립종 피부과", "  강남 비립종 피부과 "]
+    assert got["seen"] == [{"url": "https://ai.kr/x", "title": "우리피부과"},
+                           {"url": "https://other.kr/b", "title": None}], "본 페이지는 URL·제목만"
+    assert "snippet" not in str(got["seen"]), "남의 글(스니펫)을 저장한다"
+    assert scoring.seen_own(got["seen"], "ai.kr") == 1 and scoring.seen_own(None, "ai.kr") is None
+    assert parse_llm([]) == {"content": "", "citation_urls": [], "citations": [], "model": None,
+                             "fanout": None, "seen": None}, "없는 칸은 None(모름)이다"
+    cands = fanout_candidates({"강남 비립종": "ko-KR", "site:x.kr 비립종": "ko-KR", "가" * 90: "ko-KR"})
+    assert cands == [("강남 비립종", "ko-KR", "ai_fanout")], cands
 
 
 def _canary_check() -> None:
@@ -700,7 +757,7 @@ def _canary_check() -> None:
         ok, msg = openrouter_ok(5.0)
         assert ok and "그대로 진행" in msg, "확인이 실패했는데 수집을 막았다"
         per = sum(e["usd"] for e in engines().values())
-        assert estimate_usd(None) == round(30 * 2 * per, 2), estimate_usd(None)
+        assert estimate_usd(None) == round(30 * 1 * per, 2), estimate_usd(None)
         assert "claude" not in engines() and set(engines(["claude", "없는엔진"])) == {"claude"}
     finally:
         requests.get = real_get

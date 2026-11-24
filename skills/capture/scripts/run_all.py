@@ -544,9 +544,12 @@ OPENROUTER_STAGES = ("plays",)
 
 
 def paid_estimate(name: str, project: str | None = None) -> float:
-    """OpenRouter 단계의 이번 회차 추정 비용($) — 잔액 카나리아가 비교할 값. 정본은 각 수집기."""
+    """추정 비용을 아는 단계의 이번 회차 추정 비용($) — 잔액 카나리아·지출 상한이 견줄 값.
+    정본은 각 수집기. ai 는 DataForSEO 잔액과, plays 는 OpenRouter 잔액과 견준다."""
     if name == "plays":
         return plays.estimate_usd()
+    if name == "ai":
+        return collect_ai.estimate_usd(project)
     return 0.0
 
 
@@ -677,6 +680,15 @@ def preflight(stages=STAGES, project: str | None = None) -> dict[str, str]:
                   f"충전: https://app.dataforseo.com")
             for n in dfs:
                 blocked[n] = f"DataForSEO 잔액 없음 (${bal:.2f})"
+        # AI 인용 확인은 추정 비용을 안다 — 잔액이 그보다 적으면 시작하지 않는다. 2026-11-24
+        # 호스팅 theotherskin: 잔액 ~$9 로 360건(추정 $16)을 시작해 242건째에 402 로 끊겼다.
+        # 잔액은 이 런을 시작할 때의 값이다(같은 런의 앞 단계 몫은 빼지 않는다).
+        elif bal is not None and "ai" in dfs:
+            need = paid_estimate("ai", project)
+            if need and bal < need:
+                msg = f"DataForSEO 잔액 ${bal:.2f} < 이번 AI 인용 확인 추정 ${need:.2f}"
+                print(f"[경고] {msg} — ai 단계를 건너뜁니다. 충전: https://app.dataforseo.com")
+                blocked["ai"] = msg
     # OpenRouter 를 쓰는 단계는 같은 키 하나를 본다 — 한 번만 묻는다.
     orr = [n for n in OPENROUTER_STAGES if n in paid]
     if orr and serp_adapter.has_openrouter():
@@ -1219,7 +1231,7 @@ def _check_preflight() -> None:
     serp_adapter.dataforseo_balance = lambda: left["dfs"]
     collect_ai.openrouter_ok = lambda need=0.0: (
         (True, "ok") if need <= left["v"] else (False, f"OpenRouter 잔액 ${left['v']:.2f}"))
-    g["paid_estimate"] = lambda n, project=None: {"plays": 1.0}.get(n, 0.0)
+    g["paid_estimate"] = lambda n, project=None: {"plays": 1.0, "ai": 12.0}.get(n, 0.0)
     try:
         both = [STAGE_BY_NAME["ai"], STAGE_BY_NAME["plays"]]
         assert "ai" not in OPENROUTER_STAGES and "ai" in DFS_STAGES, "AI 인용은 DataForSEO 로 묻는다"
@@ -1231,6 +1243,12 @@ def _check_preflight() -> None:
             assert set(preflight(both)) == {"ai"}, "DataForSEO 잔액이 없으면 AI 인용이 막힌다"
             left["v"] = 0.14
             assert set(preflight(both)) == {"ai", "plays"}
+            # 잔액이 $1 은 넘어도 이번 AI 인용 확인 추정($12)보다 적으면 시작하지 않는다
+            left["v"], left["dfs"] = 9.0, 9.04
+            got = preflight(both)
+            assert set(got) == {"ai"} and "$9.04" in got["ai"] and "$12.00" in got["ai"], got
+            left["dfs"] = 12.5
+            assert preflight(both) == {}, "잔액이 추정보다 많은데 막았다"
         # 막힌 단계는 기록이 남는다 — 건너뜀이 로그에만 있으면 왜 안 돌았는지 아무도 모른다
         c = db.connect()
         c.execute("INSERT OR IGNORE INTO projects(name, domain, locale) VALUES('pf','pf.kr','ko-KR')")
