@@ -247,6 +247,9 @@ CAPABILITIES = (
      # 선택 키 PAGESPEED_API_KEY 는 하루 한도만 키운다 — 한도에 걸린 날은 실패가 아니라
      # 그 단계만 건너뛴다(사유 문구의 정본은 collect_vitals.QUOTA_REASON). 넣었는지는
      # diagnose 의 keys["pagespeed"] 가 말한다.
+     # 같은 단계의 부수 조회 CrUX History(25주 현장 추세)는 키가 있어야만 돈다 — CRUX_API_KEY,
+     # 없으면 PAGESPEED_API_KEY 를 쓴다(그 키의 Cloud 프로젝트에 Chrome UX Report API 가 켜져
+     # 있어야 한다). 없거나 꺼져 있으면 추세만 건너뛰고 사유를 runs.notes 의 crux= 에 남긴다.
      "cost": "무료", "keys": (), "url": "", "fix": None,
      "owner": "server", "blocking": False},
 )

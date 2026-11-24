@@ -2658,8 +2658,28 @@ def _ev_coverage(o, ctx, pages):
     kws = (ctx.get("cluster_keywords") or {}).get(cl) or []
     if not kws:
         return []
+    if any(k.get("trend") for k in kws[:15]):
+        # 월별 검색량이 있는 키워드가 있으면 칸을 하나 더 — 언제 써야 하는 글인지가 여기서 갈린다
+        return ["이 주제로 추적 중인데 노출도 순위도 없는 키워드:",
+                *_table(["키워드", "월 검색량", "최근 12달"],
+                        [[k["keyword"], _n(k.get("volume")), _vol_trend(k.get("trend"))]
+                         for k in kws[:15]])]
     return ["이 주제로 추적 중인데 노출도 순위도 없는 키워드:",
             *_table(["키워드", "월 검색량"], [[k["keyword"], _n(k.get("volume"))] for k in kws[:15]])]
+
+
+def _vol_trend(t: dict | None) -> str:
+    """월별 검색량 판정(scoring.volume_trend) → 표 한 칸. 재료가 없으면 '-'."""
+    if not t:
+        return "-"
+    parts = []
+    if t.get("seasonal"):
+        parts.append(f"가장 큰 달 {t['peak'][0]}({_n(t['peak'][1])})")
+    if t.get("recent") in ("up", "down"):
+        parts.append(f"최근 3달 {t['recent_pct']:+d}%")
+    if not parts:
+        return "고르게 유지" if t.get("seasonal") is False and t.get("recent") == "flat" else "-"
+    return " · ".join(parts)
 
 
 # 엔진마다 출처를 고르는 경향 — ai-seo 스킬의 관찰이다. 경향이지 규칙이 아니라서 요청문도

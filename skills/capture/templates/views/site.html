@@ -244,16 +244,21 @@ section.sec-quiet details.why { display:none; }
   text-decoration:none; }
 /* 속도 표 아래 페이지별 진단·사이트맵 표 — 위계는 크기·굵기·색으로만(자간·대문자 없음). */
 #view-site .subh { font-size:var(--fs-2); font-weight:600; color:var(--ink); margin:var(--sp-5) 0 var(--sp-2); }
-#view-site .subh small { font:var(--micro); color:var(--sub); margin-left:var(--sp-2); }
+#view-site .subh small { font:var(--micro); color:var(--sub); }
 #view-site .vmore { border-top:1px solid var(--line); padding:var(--sp-2) 0; }
 #view-site .vmore > summary { cursor:pointer; min-height:32px; display:flex; align-items:center; }
-#view-site .vmcs { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));
+#view-site .vmcs { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   gap:var(--sp-4); padding:var(--sp-3) 0; }
 #view-site .vmc { min-width:0; }
 #view-site .vmc h4 { font-size:var(--fs-1); font-weight:600; color:var(--sub); margin:0 0 var(--sp-2); }
 #view-site .vshot { display:block; max-width:160px; max-height:240px; border:1px solid var(--line);
   border-radius:var(--r-in); margin-bottom:var(--sp-3); }
-#view-site .vdg { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
+#view-site .vdg { list-style:none; margin:0; padding:0; display:grid; gap:6px; min-width:0;
+  grid-template-columns:minmax(0, 1fr); }
+/* 좁은 화면에서 주소 칸이 한 글자씩 꺾이지 않게 — 표는 옆으로 민다(칸을 짜내지 않는다). */
+#view-site #vitals td:first-child, #view-site #ix-sitemaps td:first-child { min-width:168px; }
+#view-site #vit-more, #view-site #ix-sitemaps { min-width:0; max-width:100%; }
+#view-site .subh small { display:inline-block; margin-left:0; margin-right:var(--sp-2); }
 #view-site .vdg li { font-size:var(--fs-1); line-height:1.5; overflow-wrap:anywhere; }
 #view-site .vdg code { font-family:var(--mono); font-size:.92em; }
 #view-site .vdg .num { font-variant-numeric:tabular-nums; color:var(--ink); }
@@ -1132,9 +1137,9 @@ function renderIxSitemaps(d) {
   if (!g.rows.length)
     return box.innerHTML = `<p class="detn">서치콘솔에 제출된 사이트맵이 없습니다(${esc(g.date)} 확인).
       사이트맵을 제출하면 구글이 새 주소를 찾는 길이 하나 더 생깁니다.</p>`;
-  const dlt = v => v == null || v === 0 ? "" : ` <small class="${v > 0 ? "bad" : "ok"}">${v > 0 ? "+" : ""}${num(v)}</small>`;
+  const dlt = v => v == null || v === 0 ? "" : ` <small class="${v > 0 ? "bad" : "ok"}">${SM.ui.sign(v)}${num(Math.abs(v))}</small>`;
   const day = v => v ? esc(String(v).slice(0, 10)) : "-";
-  box.innerHTML = `<h3 class="subh">제출된 사이트맵 <small>${esc(g.date)} 서치콘솔 기준${
+  box.innerHTML = `<h3 class="subh">제출된 사이트맵 <br><small>${esc(g.date)} 서치콘솔 기준${
       g.prev_date ? ` · 증감은 ${esc(g.prev_date)} 대비` : ""}</small></h3>` +
     table(["사이트맵", ">오류?구글이 이 사이트맵을 읽으며 낸 오류 수.", ">경고", ">제출 주소",
            "구글이 읽은 날", "상태"],
@@ -1650,7 +1655,7 @@ function vitMore(d) {
     return `<details class="vmore"><summary>${stUrl(url)}</summary><div class="vmcs">${cols.join("")}</div></details>`;
   }).filter(Boolean);
   if (!out.length) return "";
-  return `<h3 class="subh">페이지별 진단 <small>구글이 연 모습 · 줄일 수 있는 시간이 큰 순 · 현장 추세</small></h3>`
+  return `<h3 class="subh">페이지별 진단 <br><small>구글이 연 모습 · 줄일 수 있는 시간이 큰 순 · 현장 추세</small></h3>`
     + out.join("");
 }
 

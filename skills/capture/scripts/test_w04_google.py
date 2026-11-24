@@ -543,6 +543,17 @@ def test_monthly_searches_are_stored_and_read_as_trend():
     assert got["old one"] == '[["2025-01", 7]]', "월별 값이 없는 응답이 지난 값을 지웠다"
     conn.close()
 
+    # 요청문 — 안 다룬 주제의 키워드 표에 계절·추세 칸이 선다(월별 값이 있는 키워드가 있을 때만)
+    kws = [{"keyword": "winter coat", "volume": 400, "trend": t},
+           {"keyword": "plain", "volume": 100, "trend": flat},
+           {"keyword": "no data", "volume": 5, "trend": None}]
+    L = "\n".join(brief._ev_coverage({"target": "cluster:coats"}, {"cluster_keywords": {"coats": kws}}, []))
+    assert "| winter coat | 400 | 가장 큰 달 2026-12(400) · 최근 3달 +123% |" in L, L
+    assert "| plain | 100 | 고르게 유지 |" in L and "| no data | 5 | - |" in L, L
+    bare = [{"keyword": "k", "volume": 1}]
+    assert "최근 12달" not in "\n".join(brief._ev_coverage(
+        {"target": "cluster:c"}, {"cluster_keywords": {"c": bare}}, [])), "재료가 없는데 칸을 세웠다"
+
 
 # ── 2절 8번 ①: GA4 전환 이벤트 미설정 ───────────────────────────────────────────
 def _ga4_site(conn, key_events=0.0):

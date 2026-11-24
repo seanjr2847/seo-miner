@@ -212,6 +212,11 @@ EMPTY_LOADS = [
                  "할 일이 없는 사이트의 [이번 달 할 일] 빈 상태에 만들기 손잡이가 없다"),
                 ("!" + re.escape(AI_VISITS_ZERO), "GA4 미연결인데 '쟀고 0' 이라고 말한다")]),
     (ZERO_SITE, [(re.escape(AI_VISITS_ZERO), "쟀고 0 인 사이트에 'AI 방문 없음' 이 안 섰다"),
+                 # GA4 — 채널 그룹(유기 스냅샷이 없어도 선다)·AI 채널 대조·전환 이벤트 미설정
+                 (r"<b>전환 이벤트 미설정\.</b>", "속성 전체 전환이 0 인데 '전환 이벤트 미설정'이라고 안 말했다"),
+                 (r'id="an-channels-body"(?:(?!</section>).)*?<span>AI Assistant</span><b>10</b>',
+                  "채널 그룹 목록이 안 섰다"),
+                 (re.escape(AI_CH_MISS) + r" 4", "GA4 는 AI 로 세는데 우리 목록에 없는 출처를 안 짚었다"),
                  ("!" + re.escape(AI_VISITS_NOGA4), "GA4 가 연결돼 쟀는데 '연결하면' 이라고 말한다"),
                  (re.escape(AN_NO_CLICKS), "두 번 재서 둘 다 클릭 0 인데 [클릭 변화]이 그렇다고 안 말한다"),
                  ("!" + re.escape(AN_ONE_RUN), "두 번 쟀는데 [클릭 변화]이 '수집이 한 번뿐'이라고 말한다"),
@@ -312,10 +317,6 @@ MUSTS = [
     (re.escape(SITEMAP_PATH), "제출된 사이트맵 목록이 안 섰다"),
     (r'id="ix-sitemaps"(?:(?!</section>).)*?<small class="bad">\+3</small>',
      "사이트맵 오류가 앞 회차 대비 늘어난 것을 안 보였다"),
-    # GA4 — 채널 그룹(유기 스냅샷이 없어도 선다)·AI 채널 대조·전환 이벤트 미설정
-    (r"<b>전환 이벤트 미설정\.</b>", "속성 전체 전환이 0 인데 '전환 이벤트 미설정'이라고 안 말했다"),
-    (r'id="an-channels-body"(?:(?!</section>).)*?<span>AI Assistant</span><b>10</b>', "채널 그룹 목록이 안 섰다"),
-    (re.escape(AI_CH_MISS) + r" 4", "GA4 는 AI 로 세는데 우리 목록에 없는 출처를 안 짚었다"),
     (r"해결된 것 <b>0</b>건|새로 생긴 것 <b>1</b>건", "크롤 회차 비교 요약이 안 나왔다"),
     (re.escape(AI_PROMPT), "AI 인용 화면이 질문 목록을 안 그렸다"),
     # 시장별 — 질문이 사이트에 한 벌(기본 시장 말)이라 시장 5개 사이트도 한국어로만 물었고
@@ -1146,24 +1147,10 @@ def _w04(conn, pid: int, d: str, vurl: str) -> None:
         {"url": vurl, "strategy": "mobile", "shot": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="}])
     db.write_crux_history(conn, pid, [(vurl, 0, "PHONE", "lcp_ms", end, v) for end, v in (
         ("2026-01-03", 2600.0), ("2026-03-07", 3100.0), ("2026-05-30", 4200.0))])
-    # 색인 — 하나는 색인됐고 하나는 못 들어갔다. 못 들어간 쪽은 구글이 찾은 길이 없다.
-    db.write_index_status(conn, pid, d, [
-        {"url": vurl, "verdict": "PASS", "coverage_state": "Submitted and indexed",
-         "referring_urls_json": json.dumps([f"https://{SITES[1]}.example/"]), "crawled_as": "MOBILE",
-         "sitemaps_json": "[]"},
-        {"url": f"https://{SITES[1]}.example/lost", "verdict": "NEUTRAL",
-         "coverage_state": "Discovered - currently not indexed", "robots_txt_state": "ALLOWED",
-         "page_fetch_state": "SUCCESSFUL", "referring_urls_json": "[]", "sitemaps_json": "[]",
-         "crawled_as": "MOBILE"}])
     sm = {"path": f"https://{SITES[1]}.example/{SITEMAP_PATH}", "type": "sitemap", "is_index": 0,
           "is_pending": 0, "last_downloaded": "2026-05-30T00:00:00Z", "warnings": 0, "submitted": 120}
     db.write_gsc_sitemaps(conn, pid, "2026-05-20", [{**sm, "errors": 2}])
     db.write_gsc_sitemaps(conn, pid, d, [{**sm, "errors": 5}])
-    # GA4 — 채널 조회만 된 사이트(유기 스냅샷 없음). 전체 세션 130 에 전환 0 = 전환 이벤트 미설정.
-    db.write_ga4_channels(conn, pid, d, 28, [("Organic Search", 30, 25, 0.0), ("Direct", 90, 70, 0.0),
-                                             ("AI Assistant", 10, 9, 0.0)], (130, 98, 0.0))
-    db.write_ga4_ai_channel(conn, pid, d, 28, [("chatgpt.com", 6, True), (AI_CH_MISS, 4, False)])
-    db.write_ga4_daily(conn, pid, [("2026-05-30", 12, 10, 0), ("2026-05-31", 18, 15, 0)])
 
 
 def _plays(conn, pid: int) -> None:
@@ -1265,6 +1252,14 @@ def zero_site(home: Path) -> None:
                      (ZERO_SITE, f"{ZERO_SITE}.example", f"sc-domain:{ZERO_SITE}.example"))
         pid = conn.execute("SELECT id FROM projects WHERE name=?", (ZERO_SITE,)).fetchone()[0]
         db.write_ga4_ai_referrals(conn, pid, "2026-06-01", 28, ["chatgpt.com"], [])
+        # GA4 채널 조회만 된 사이트(유기 스냅샷 없음). 전체 세션 130 에 전환 0 = 전환 이벤트 미설정.
+        # 공용 사이트(SITES)에 안 심는다 — 다른 화면 검사들이 그쪽을 'GA4 없는 사이트'로 전제한다.
+        db.write_ga4_channels(conn, pid, "2026-06-01", 28, [
+            ("Organic Search", 30, 25, 0.0), ("Direct", 90, 70, 0.0), ("AI Assistant", 10, 9, 0.0)],
+            (130, 98, 0.0))
+        db.write_ga4_ai_channel(conn, pid, "2026-06-01", 28, [("chatgpt.com", 6, True),
+                                                              (AI_CH_MISS, 4, False)])
+        db.write_ga4_daily(conn, pid, [("2026-05-30", 12, 10, 0), ("2026-05-31", 18, 15, 0)])
         # 두 번 쟀는데 두 번 다 클릭 0 — [클릭 변화]이 "수집이 한 번뿐"이라고 거짓말하던 판.
         for d in ("2026-05-01", "2026-06-01"):
             conn.execute("INSERT INTO gsc_snapshots(project_id,snapshot_date,period_days,"

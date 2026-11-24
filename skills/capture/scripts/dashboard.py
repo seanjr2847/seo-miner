@@ -1851,9 +1851,12 @@ def _cluster_keywords(conn, pid: int, opps: list[dict]) -> dict[str, list[dict]]
         if cl in out:
             continue
         out[cl] = q(conn,
-            """SELECT keyword, volume FROM keywords
+            """SELECT keyword, volume, monthly_json FROM keywords
                 WHERE project_id=? AND is_active=1 AND COALESCE(cluster,'(미분류)')=?
                 ORDER BY volume IS NULL, volume DESC, keyword LIMIT 30""", (pid, cl))
+        for r in out[cl]:
+            # 월별 검색량은 판정(계절성·최근 추세)만 싣는다 — 원자료 12칸을 키워드마다 실을 일은 없다
+            r["trend"] = scoring.volume_trend(r.pop("monthly_json", None))
     return out
 
 
