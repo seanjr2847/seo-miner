@@ -716,6 +716,55 @@ CREATE TABLE IF NOT EXISTS plays (
   status TEXT DEFAULT 'new'                   -- 정본 목록은 db.PLAY_STATUSES
 );
 CREATE INDEX IF NOT EXISTS idx_plays_project ON plays(project_id, status);
+-- 지역 업체(collect_local.py) — 구글 비즈니스 프로필 한 줄(role='self')과 그 곁의 경쟁 업체
+-- (role='rival'). 새 표라 IF NOT EXISTS 가 옛 Brain 에도 만든다. project_id FK 라 삭제·동기화가
+-- 저절로 이 표를 찾는다(plays 와 같다).
+CREATE TABLE IF NOT EXISTS local_places (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,                 -- YYYY-MM-DD
+  source TEXT NOT NULL,                       -- 정본 목록은 collect_local.SOURCES (gbp|maps|listings|osm)
+  role TEXT NOT NULL,                         -- self | rival
+  keyword TEXT NOT NULL DEFAULT '',           -- maps: 그 지도 검색어. 나머지는 ''
+  position INTEGER,                           -- maps: 지도 순위. 나머지는 NULL
+  place_key TEXT NOT NULL,                    -- cid(구글) 또는 osm 'node/123' — 같은 곳을 하나로
+  name TEXT, address TEXT, phone TEXT, website TEXT,
+  category TEXT,
+  rating REAL, reviews INTEGER,               -- NULL = 그 출처가 안 준 값(0 이 아니다)
+  lat REAL, lng REAL,
+  extra_json TEXT,                            -- 출처별 나머지(category_ids·is_claimed·리뷰 집계 등)
+  UNIQUE(project_id, checked_date, source, keyword, place_key)
+);
+CREATE INDEX IF NOT EXISTS idx_local_places ON local_places(project_id, checked_date);
+-- 지오그리드 — 격자점마다 그 자리에서 본 지도 순위. position NULL = 그 점의 결과에 우리가 없다.
+CREATE TABLE IF NOT EXISTS local_grid (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  keyword TEXT NOT NULL,
+  gy INTEGER NOT NULL, gx INTEGER NOT NULL,   -- 격자 칸(북→남, 서→동). 한가운데가 소재지
+  lat REAL NOT NULL, lng REAL NOT NULL,
+  position INTEGER,
+  seen INTEGER,                               -- 그 점에서 받은 업체 수(순위 밖 판정의 분모)
+  top_name TEXT,                              -- 그 점의 1위 업체
+  UNIQUE(project_id, checked_date, keyword, gy, gx)
+);
+-- 쇼핑 가격(collect_merchant.py) — 검색어·마켓별 상위 상품. 가격 분포와 판매처 몫의 재료.
+CREATE TABLE IF NOT EXISTS merchant_prices (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  market TEXT NOT NULL,                       -- 'google_shopping' 또는 아마존 마켓 도메인(amazon.de …)
+  keyword TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  title TEXT, seller TEXT, domain TEXT, url TEXT,
+  price REAL, currency TEXT,                  -- price NULL = 값을 안 준 상품(분포에서 뺀다)
+  rating REAL, reviews INTEGER,
+  description TEXT,
+  is_self INTEGER DEFAULT 0,                  -- 1 = 판매처 도메인이 우리 사이트
+  UNIQUE(project_id, checked_date, market, keyword, position)
+);
+CREATE INDEX IF NOT EXISTS idx_merchant_prices ON merchant_prices(project_id, checked_date);
 """
 
 

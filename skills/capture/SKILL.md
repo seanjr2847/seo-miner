@@ -423,6 +423,29 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 **비용:** 요청당 ~$0.024 + 행당 ~$0.000036(2026-08 가격표). 실청구액은 응답의
 `cost` 를 그대로 합산해 적는다 — dry-run 숫자는 고지용 어림이다.
 
+### /capture local {P} — 지역 업체: 프로필·지도 순위·리뷰 (DataForSEO, 유료 키 필요)
+**풀런(`/capture run`)에 포함된다** — `local` 단계다(순서의 정본은 `scripts/run_all.py` 의
+`STAGES`). 사이트 종류가 지역 비즈니스일 때만 돌고, 아니면 스스로 건너뛴다.
+1. `python scripts/collect_local.py --project {P} --dry-run` → 호출 수·비용 어림을 먼저 보여준다
+2. 승인 후 `python scripts/collect_local.py --project {P}`
+3. 적재: 구글 비즈니스 프로필 한 줄 · 소재지에서 본 지도 순위와 상위 업체 · 구역별 격자
+   (`local_grid`) · 리뷰 집계 · 같은 업종 반경 업체(`local_places` 의 `source` 로 가른다)
+- 지도 순위·격자는 **지도 칸이 선 추적 검색어**(순위 확인이 먼저 돌아야 안다) 상위 몇 개만 잰다.
+- 리뷰는 고정 기준으로 판정하지 않는다 — 같은 지도 칸 상위 업체의 중앙값 대비만 말한다.
+- 프로필을 찾으면 요청문의 이름·주소·전화 대조표에서 프로필 줄이 조회 값으로 선다. 키가 없거나
+  못 찾으면 그 줄은 [사람 확인]으로 남는다.
+- 30일 안에 이미 샀으면 다시 사지 않는다(`--max-age 0` 으로 강제).
+
+### /capture merchant {P} — 쇼핑 칸: 상품 가격 분포·노출 (DataForSEO, 유료 키 필요)
+**풀런(`/capture run`)에 포함된다** — `merchant` 단계다. 사이트 종류가 쇼핑몰·브랜드일 때만
+돌고, 아니면 스스로 건너뛴다.
+1. `python scripts/collect_merchant.py --project {P} --dry-run` → 호출 수·비용 어림
+2. 승인 후 `python scripts/collect_merchant.py --project {P}`
+3. 적재: 쇼핑 칸이 선 추적 검색어의 상위 상품(`merchant_prices`) — 구글 쇼핑, 그리고 그
+   로케일에 아마존 마켓이 있으면 그 마켓
+- 가격은 분포 대비로만 말한다(상위 상품 중 우리보다 싼 상품 수·중앙값).
+- 유료 호출 없이도 서는 판정: 쇼핑 칸이 뜨는데 우리 페이지에 Product·offers 마크업이 없음.
+
 ### /capture gaps {P} — 갭 분석 (API 호출 없음, Brain만)
 **풀런(`/capture run`)에 포함된다** — `gaps` 단계다(순서의 정본은 `run_all.STAGES`).
 그 단계가 실제로 하는 일은 `scoring.py load {P}` **하나뿐이다**(외부 호출 0건). 따로
@@ -477,6 +500,11 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
    - `backlinks` — DataForSEO 백링크. 요청당 ~$0.024 + 행당 ~$0.000036 이고,
      행 수는 `limits.backlink_limit`(기본 200)이 정한다. 키는 같은 DataForSEO
      자격이고, `backlink_max_age_days`(기본 7) 안에 이미 샀으면 다시 안 산다.
+   - `local` — 지역 비즈니스 사이트만. 프로필 조회 ~$0.0054 + 지도 조회 1건 ~$0.002
+     (검색어 × 격자점) + 리뷰 10건당 ~$0.0015. 기본값(검색어 3·격자 3×3)으로 한 바퀴
+     **~$0.09**. `local_max_age_days`(기본 30) 안에 이미 샀으면 다시 안 산다.
+   - `merchant` — 쇼핑몰·브랜드 사이트만. 검색어 하나에 구글 쇼핑 ~$0.002 + 아마존
+     ~$0.0033(그 로케일에 마켓이 있을 때). `merchant_max_age_days`(기본 30).
    키가 없는 축은 **조용히 건너뛴다** — 에러가 아니고, 키가 없다고 사용자에게
    되묻지 않는다. `competitors` 는 키가 있어도 등록된 경쟁사가 없으면 같은 톤으로
    건너뛴다.

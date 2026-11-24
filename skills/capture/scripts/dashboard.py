@@ -34,6 +34,8 @@ import audit_data  # noqa: E402  (데이터 점검 — 페이로드의 이상한
 import brief      # noqa: E402  (요청문 — 기회마다 AI 에 붙여 넣을 브리프를 세운다)
 import ai_access  # noqa: E402  (AI 크롤러 접근 판정 정본)
 import collect_crawl  # noqa: E402  (크롤 이슈 갈래 이름표 정본)
+import collect_local  # noqa: E402  (지역 업체 축 — 사이트 종류가 지역 비즈니스일 때만 선다)
+import collect_merchant  # noqa: E402  (쇼핑 가격 축 — 사이트 종류가 쇼핑몰·브랜드일 때만 선다)
 import collect_vitals  # noqa: E402  (구글이 본 SEO 점검 이름표 정본)
 import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
 import db         # noqa: E402
@@ -2464,6 +2466,10 @@ def gather_traced(conn, p, at: str | None = None, *, gated: bool = True
     led.put("plays", _axis_plays(conn, pid))
     led.put("structure", _axis_structure(conn, pid, crawl.get("crawl") or {}))
     led.set("kpi_watch", "kpi_watch", _kpi_watch(conn, pid, at))
+    # 지역 업체·쇼핑 가격 — 사이트 종류가 맞을 때만 값이 서고 아니면 None 이다(화면이 감춘다).
+    # 요청문의 NAP 절이 local 을 읽으므로 brief.attach 보다 앞이다.
+    led.put("local", collect_local.axis(conn, p))
+    led.put("merchant", collect_merchant.axis(conn, p, qp.get("page_audits")))
     d = led.d                       # 아래는 이 페이로드를 읽으며 쌓는다(같은 dict)
     # 요청문은 맨 마지막이다 — 위 축이 낸 행(근거 표·페이지 감사)을 그대로 읽는다.
     # 화면이 보는 숫자와 요청문이 말하는 숫자가 같은 페이로드에서 나와야 한다.

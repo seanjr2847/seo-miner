@@ -5902,6 +5902,69 @@ def test_seam_75_keywords_toast_reads_the_list_the_user_sees():
     assert "1순위는" not in render, "렌더에서 띠 문장을 따로 쓰면 KW_bar 와 두 벌이 된다"
 
 
+def test_seam_2071_local_and_merchant_stages_reach_the_screen_and_the_brief():
+    """2071) 지역 업체·쇼핑 가격 단계 — 수집기·단계표·묶음·화면·요청문이 한 줄로 이어진다.
+
+    사이트 종류가 맞을 때만 도는 단계라 한 곳이 빠져도 다른 사이트에서는 아무도 모른다:
+      · 수집기가 거르는 사이트 종류가 실제 종류 표(dashboard.PROJECT_TYPES)에 있다
+      · 단계가 묶음(GROUPS)에 들고, 그 묶음의 화면 view-def 가 그 단계를 stages 에 적는다
+        (그래야 화면의 [다시 재기]가 그 단계를 돌린다)
+      · 화면 섹션(sections/sm-local·sm-shop)이 읽는 페이로드 키가 서버 축(axis)이 싣는 키다 —
+        양방향. 축이 싣는데 화면도 요청문도 안 읽는 키는 죽은 값이다
+      · 요청문(brief._local_lines)이 읽는 키도 같은 축이 싣는다
+      · 로케일별 표(플랫폼·OSM·아마존 마켓)의 지역이 전부 고를 수 있는 로케일이다
+    """
+    import brief
+    import collect_local
+    import collect_merchant
+    import dashboard
+    import run_all
+    import serp_adapter
+    assert {collect_local.SITE_TYPE, collect_merchant.SITE_TYPE} <= set(dashboard.PROJECT_TYPE_IDS)
+    views = {d["id"]: d for d in dashboard.view_defs()}
+    for name in ("local", "merchant"):
+        gs = [g for g in run_all.GROUPS if name in g["stages"]]
+        assert len(gs) == 1, f"{name} 단계가 묶음 {len(gs)}곳에 있다"
+        assert any(name in views[v]["stages"] for v in gs[0]["views"]),             f"{gs[0]['name']} 묶음의 어느 화면도 {name} 단계를 stages 에 안 적었다"
+        assert name in stage.STAGE_LABELS and stage.STAGE_LABELS[name].get("run"), name
+    regions = {c.split("-")[1] for c, _ in serp_adapter.LOCALES}
+    for tbl in (collect_local.PLATFORMS_BY_REGION, collect_local.OSM_REGIONS,
+                collect_merchant.AMAZON_MARKETS):
+        assert set(tbl) <= regions, f"고를 수 없는 지역: {sorted(set(tbl) - regions)}"
+
+    conn = db.connect(Path(__import__("tempfile").mkdtemp(prefix="seam-2071-")))
+    conn.execute("INSERT INTO projects(name, domain, locale, type) VALUES('lb','lb.com','ko-KR',?)",
+                 (collect_local.SITE_TYPE,))
+    conn.execute("INSERT INTO projects(name, domain, locale, type) VALUES('sh','sh.com','ko-KR',?)",
+                 (collect_merchant.SITE_TYPE,))
+    conn.commit()
+    secs = {x["id"]: x for x in dashboard.section_defs()}
+    brief_src = inspect_src(brief._local_lines) + inspect_src(brief._gbp)
+    brief_reads = {a or b for a, b in re.findall(
+        r'loc\.get\("(\w+)"\)|\(ctx\.get\("local"\) or \{\}\)\.get\("(\w+)"\)', brief_src)}
+    assert {"gbp", "reviews", "platforms"} <= brief_reads, f"요청문이 읽는 키를 못 찾았다: {brief_reads}"
+    for sec, var, key, emitted, also in (
+            ("sm-local", "L", "local", collect_local.axis(conn, db.get_project(conn, "lb")),
+             brief_reads),
+            ("sm-shop", "M", "merchant", collect_merchant.axis(conn, db.get_project(conn, "sh")),
+             set())):
+        assert set(emitted) == {key}, emitted
+        d = secs[sec]
+        assert d.get("only") is None, f"{sec} 는 두 배포 공통이어야 한다"
+        assert f"d.{key}" in d["html"], f"{sec} 가 페이로드 d.{key} 를 안 읽는다"
+        read = set(re.findall(rf"\b{var}\.(\w+)", d["html"]))
+        have = set(emitted[key])
+        assert read, f"{sec} 에서 읽는 키를 하나도 못 찾았다 — 정규식이 틀렸다"
+        assert read <= have, f"{sec} 가 읽는데 서버 축이 안 싣는 키: {sorted(read - have)}"
+        assert also <= have, f"요청문이 읽는데 서버 축이 안 싣는 키: {sorted(also - have)}"
+        assert have <= read | also, \
+            f"서버 축이 싣는데 {sec}·요청문이 안 읽는 키: {sorted(have - read - also)}"
+    conn.close()
+    # 다른 종류의 사이트에는 축이 None 이다 — 화면이 감춘다(빈 카드를 세우지 않는다)
+    for html, cls in ((secs["sm-local"]["html"], "lc-none"), (secs["sm-shop"]["html"], "shp-none")):
+        assert f'classList.toggle("{cls}", !' in html, f"{cls}: 값이 없을 때 감추는 줄이 없다"
+
+
 def inspect_src(fn) -> str:
     import inspect
     return inspect.getsource(fn)

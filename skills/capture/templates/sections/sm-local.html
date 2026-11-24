@@ -1,0 +1,124 @@
+<script type="application/json" class="section-def">
+{"id": "sm-local", "view": "competitors", "after": "cp-gap"}
+</script>
+<!-- 지역 업체 — 사이트 종류가 지역 비즈니스일 때만 선다(페이로드 d.local 이 null 이면 감춘다).
+     두 배포 공통: 값은 전부 페이로드(collect_local.axis)에서 오고 여기서 따로 부르는 API 가 없다.
+     판정(상위 업체 대비 뒤졌나)·플랫폼 목록·경고 문장은 서버가 정해 싣는다 — 여기는 그리기만 한다.
+     접는 것은 셸의 hidden(data-mode)이라 이 섹션은 hidden 을 만지지 않고 lc-none 으로 감춘다. -->
+<style>
+/* 이 화면 상자는 12열 격자이고 원본 섹션은 display:contents 다 — 같은 꼴로 풀어 카드가 격자 칸을
+   직접 받는다. 섹션 자체는 늘 선다(빈 사이트에서도 [전체] 탭의 섹션이다) — 감추는 것은 카드다.
+   display:contents 는 id 특이도가 [hidden] 을 이기므로 접힌 것에 display:none 을 따로 준다. */
+#view-competitors > #sm-local { display:contents; }
+#view-competitors > #sm-local[hidden] { display:none; }
+/* 원본 카드는 order 로 자리를 잡는다(cp-o*) — 이 카드는 그 뒤, 화면 맨 아래다. */
+#sm-local > .card { grid-column:1 / -1; min-width:0; margin:0; order:20; }
+#sm-local.lc-none > .card { display:none; }
+@media print { #view-competitors > #sm-local[hidden] { display:contents; } }
+#sm-local h2 { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); margin:0; }
+#sm-local h3 { font:600 var(--fs-2)/1.4 var(--sans); color:var(--ink); margin:var(--sp-5) 0 var(--sp-2); }
+#sm-local .lc-s { font:400 var(--fs-1)/1.5 var(--sans); color:var(--sub); margin:2px 0 0; max-width:74ch; }
+#sm-local .lc-note { font:400 var(--fs-1)/1.6 var(--sans); color:var(--sub); margin:var(--sp-3) 0 0; max-width:74ch; }
+#sm-local .lc-nap { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:4px 16px;
+  margin:var(--sp-3) 0 0; font-size:var(--fs-1); line-height:1.6; }
+#sm-local .lc-nap dt { color:var(--sub); }
+#sm-local .lc-nap dd { margin:0; color:var(--ink); overflow-wrap:anywhere; }
+#sm-local .lc-behind td:first-child { color:var(--warn); font-weight:600; }
+/* 격자 — 숫자만 등폭(순위). 한글 라벨에는 자간·등폭을 걸지 않는다. */
+#sm-local .lc-grids { display:flex; flex-wrap:wrap; gap:16px 24px; }
+#sm-local .lc-grid figcaption { font:500 var(--fs-1)/1.4 var(--sans); color:var(--ink); margin:0 0 6px; }
+#sm-local .lc-grid { margin:0; }
+#sm-local .lc-cells { display:grid; gap:4px; width:max-content; }
+#sm-local .lc-cells span { display:flex; align-items:center; justify-content:center; width:44px; height:44px;
+  border-radius:8px; background:var(--accent-wash); color:var(--ink);
+  font:600 var(--fs-1)/1 var(--mono); font-variant-numeric:tabular-nums; }
+#sm-local .lc-cells span.out { background:var(--warn-wash); color:var(--sub); font-family:var(--sans); }
+#sm-local .lc-grid small { display:block; margin-top:6px; font:400 var(--fs-1)/1.4 var(--sans); color:var(--sub); }
+</style>
+<section id="sm-local" class="lc-none" data-mode="manage">
+  <div class="card">
+    <h2>지역 업체</h2>
+    <p class="lc-s" id="lc-sub"></p>
+    <div id="lc-body"></div>
+  </div>
+</section>
+<script>
+"use strict";
+VIEW("sm-local", d => {
+  const box = $("sm-local"), L = d.local;
+  box.classList.toggle("lc-none", !L);
+  if (!L) return;
+  const n = v => v == null ? "-" : num(v);
+  const rate = v => v == null ? "-" : Number(v).toFixed(1);
+  const table = (heads, rows) => `<div class="tw"><table class="dett"><thead><tr>${
+    heads.map(h => `<th${h[1] ? ' class="n"' : ""}>${esc(h[0])}</th>`).join("")}</tr></thead><tbody>${
+    rows.join("")}</tbody></table></div>`;
+  const others = (L.platforms || []).slice(1);
+  const plat = others.length
+    ? `<p class="lc-note">이 지역에서 같이 볼 등재·리뷰 출처: ${esc(others.join(", "))}. 이 도구는 구글만 조회합니다. 나머지는 직접 열어 이름·주소·전화가 같은지 봅니다.</p>`
+    : "";
+  $("lc-sub").textContent = L.checked
+    ? `구글 비즈니스 프로필과 지도 순위를 소재지에서 본 값입니다 · ${L.checked} 기준`
+    : "구글 비즈니스 프로필과 지도 순위를 아직 확인하지 않았습니다.";
+  if (!L.checked) {
+    $("lc-body").innerHTML =
+      (L.last_note ? `<p class="lc-note">${esc(L.last_note)}</p>` : "") + plat;
+    return;
+  }
+  let h = "";
+  const g = L.gbp;
+  h += "<h3>구글 비즈니스 프로필</h3>" + (g
+    ? `<dl class="lc-nap"><dt>이름</dt><dd>${esc(g.name || "(없음)")}</dd>` +
+      `<dt>주소</dt><dd>${esc(g.address || "(없음)")}</dd>` +
+      `<dt>전화</dt><dd>${esc(g.phone || "(없음)")}</dd>` +
+      `<dt>평점 · 리뷰</dt><dd>${rate(g.rating)} · ${n(g.reviews)}개</dd></dl>`
+    : `<p class="lc-note">프로필을 찾지 못했습니다. 요청문의 프로필 줄은 사람 확인으로 남습니다.</p>`);
+  if ((L.keywords || []).length) {
+    h += "<h3>소재지에서 본 지도 순위</h3>" + table(
+      [["검색어"], ["우리 순위", 1], ["1위 업체"]],
+      L.keywords.map(k => `<tr><td>${esc(k.keyword)}</td><td class="n">${
+        k.position == null ? "순위 밖" : n(k.position) + "위"}</td><td>${
+        esc((k.rivals[0] || {}).name || "-")}</td></tr>`));
+    const top = L.keywords[0];
+    if (top.rivals.length) {
+      h += `<h3>지도 상위 업체: ${esc(top.keyword)}</h3>` + table(
+        [["순위", 1], ["업체"], ["평점", 1], ["리뷰 수", 1]],
+        top.rivals.map(r => `<tr><td class="n">${n(r.position)}</td><td>${esc(r.name)}</td>` +
+          `<td class="n">${rate(r.rating)}</td><td class="n">${n(r.reviews)}</td></tr>`));
+    }
+  }
+  const grids = (L.grid || []).filter(x => x.total > 1);
+  if (grids.length) {
+    h += `<h3>구역별 지도 순위</h3><div class="lc-grids">` + grids.map(x =>
+      `<figure class="lc-grid"><figcaption>${esc(x.keyword)}</figcaption>` +
+      `<div class="lc-cells" style="grid-template-columns:repeat(${x.n},44px)">` +
+      x.cells.map(c => c.position == null
+        ? `<span class="out" title="이 구역 1위: ${esc(c.top || "-")}">밖</span>`
+        : `<span title="이 구역 1위: ${esc(c.top || "-")}">${c.position}</span>`).join("") +
+      `</div><small>${x.total}개 구역 중 ${x.found}곳에서 노출 · 위가 북쪽, 한가운데가 소재지</small></figure>`
+    ).join("") + "</div>";
+  }
+  const bench = (L.reviews || {}).bench || [];
+  if (bench.length) {
+    const val = b => /비율/.test(b.what) ? [Math.round(b.mine * 100) + "%", Math.round(b.median * 100) + "%"]
+      : /평점/.test(b.what) ? [rate(b.mine), rate(b.median)] : [n(b.mine), n(b.median)];
+    h += "<h3>리뷰: 같은 지도 칸 상위 업체 대비</h3>" + table(
+      [["항목"], ["우리", 1], ["상위 업체 중앙값", 1], ["견준 업체", 1]],
+      bench.map(b => `<tr${b.behind ? ' class="lc-behind"' : ""}><td>${esc(b.what)}</td>` +
+        `<td class="n">${val(b)[0]}</td><td class="n">${val(b)[1]}</td><td class="n">${b.n}곳</td></tr>`));
+    if (bench.some(b => b.behind) && L.gating) h += `<p class="lc-note">${esc(L.gating)}.</p>`;
+  }
+  const near = [["같은 업종 반경 업체", L.listings || []],
+                ["지도(OSM)의 같은 업종 반경 업체" + (L.osm ? ` · ${L.osm.category}` : ""),
+                 (L.osm || {}).rivals || []]];
+  for (const [title, rows] of near) {
+    if (!rows.length) continue;
+    h += `<h3>${esc(title)} ${rows.length}곳</h3>` + table(
+      [["업체"], ["주소"], ["평점", 1], ["리뷰 수", 1]],
+      rows.slice(0, 10).map(r => `<tr><td>${esc(r.name)}</td><td>${esc(r.address || "-")}</td>` +
+        `<td class="n">${rate(r.rating)}</td><td class="n">${n(r.reviews)}</td></tr>`));
+  }
+  if (L.last_note) h += `<p class="lc-note">${esc(L.last_note)}</p>`;
+  $("lc-body").innerHTML = h + plat;
+});
+</script>
