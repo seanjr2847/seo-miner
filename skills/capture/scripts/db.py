@@ -528,6 +528,84 @@ CREATE TABLE IF NOT EXISTS brand_mentions (   -- 우리 이름을 말한 남의 
   UNIQUE(project_id, checked_date, url)
 );
 CREATE INDEX IF NOT EXISTS idx_mentions ON brand_mentions(project_id, checked_date);
+-- 우리 페이지별 백링크 (collect_backlinks — domain_pages_summary). 링크가 몰린 페이지와
+-- 하나도 없는 페이지를 가른다: 내부 링크를 어디서 어디로 흘릴지의 재료.
+CREATE TABLE IF NOT EXISTS backlink_pages (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  url TEXT NOT NULL,
+  backlinks INTEGER, referring_domains INTEGER, rank INTEGER, spam_score INTEGER,
+  UNIQUE(project_id, checked_date, url)
+);
+-- 달별 백링크 시계열 (collect_backlinks — timeseries_summary·timeseries_new_lost_summary).
+-- month 는 그 달의 끝 날(YYYY-MM-DD). 같은 달을 다시 받으면 덮는다(이번 달은 아직 움직인다).
+CREATE TABLE IF NOT EXISTS backlink_timeseries (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  month TEXT NOT NULL,
+  backlinks INTEGER, referring_domains INTEGER,
+  new_backlinks INTEGER, lost_backlinks INTEGER,
+  new_referring_domains INTEGER, lost_referring_domains INTEGER,
+  UNIQUE(project_id, month)
+);
+-- 남의 페이지를 무료 GET 으로 열어 본 결과 (link_check). 주소마다 가장 최근 한 줄.
+CREATE TABLE IF NOT EXISTS backlink_checks (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  kind TEXT NOT NULL,                         -- mention | prospect (어느 기회의 확인인가)
+  domain TEXT NOT NULL,                       -- 기회의 대상(도메인)
+  url TEXT NOT NULL,                          -- 열어 본 주소
+  checked_at TEXT NOT NULL,                   -- UTC 'YYYY-MM-DD HH:MM:SS'
+  state TEXT NOT NULL,                        -- linked | nofollow | no_link | unknown (link_check.STATES)
+  status INTEGER,                             -- 응답 코드. NULL = 응답 없음
+  rel_nofollow INTEGER,                       -- 1 = 우리 링크가 전부 rel nofollow·ugc·sponsored. NULL = 링크를 못 봄
+  meta_nofollow INTEGER,                      -- 1 = 그 페이지가 meta robots nofollow. NULL = 페이지를 못 읽음
+  why TEXT,
+  UNIQUE(project_id, kind, url)
+);
+-- 무료 그래프 순위 (collect_backlinks 의 Common Crawl 폴백 — DataForSEO 키가 없을 때만).
+-- found=0 은 "읽은 범위(scanned 줄) 안에 없었다"일 뿐이다. 권위가 낮다는 뜻이 아니다.
+CREATE TABLE IF NOT EXISTS backlink_graph_rank (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  source TEXT NOT NULL,                       -- commoncrawl
+  release TEXT,                               -- 그래프 회차 id
+  found INTEGER NOT NULL DEFAULT 0,
+  scanned INTEGER,                            -- 읽은 줄 수(= 조화 중심성 순위 몇 위까지 봤나)
+  total INTEGER,                              -- 그 회차의 도메인 수
+  harmonic_pos INTEGER, pagerank_pos INTEGER, hosts INTEGER,
+  UNIQUE(project_id, checked_date, source)
+);
+-- ── Bing Webmaster (collect_bing.py) ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS bing_crawl_stats (  -- GetCrawlStats — 날짜별 크롤·색인
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  date TEXT NOT NULL,
+  crawled_pages INTEGER, in_index INTEGER, in_links INTEGER, crawl_errors INTEGER,
+  code_2xx INTEGER, code_301 INTEGER, code_302 INTEGER, code_4xx INTEGER, code_5xx INTEGER,
+  blocked_robots INTEGER,
+  UNIQUE(project_id, date)
+);
+CREATE TABLE IF NOT EXISTS bing_crawl_issues ( -- GetCrawlIssues — 크롤 문제가 있는 주소
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  url TEXT NOT NULL,
+  http_code INTEGER, issues INTEGER, in_links INTEGER,
+  UNIQUE(project_id, checked_date, url)
+);
+CREATE TABLE IF NOT EXISTS bing_query_stats (  -- GetQueryStats — 검색어별, 받은 기간을 합친 값
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,
+  query TEXT NOT NULL,
+  impressions INTEGER, clicks INTEGER,
+  avg_position REAL,                          -- 노출 가중 평균 순위. 노출 0 이면 NULL
+  date_from TEXT, date_to TEXT,
+  UNIQUE(project_id, checked_date, query)
+);
 
 -- ── 경쟁 분석 (collect_gap.py) ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS competitor_metrics (  -- 도메인별 유기 규모 = 트래픽 몫의 재료
@@ -760,6 +838,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "to_status" not in bl_cols:
         conn.execute("ALTER TABLE backlinks ADD COLUMN to_status INTEGER")
         conn.commit()
+    # 받아 놓고 버리던 값(spam score·TLD·국가)과 어디서 온 줄인지(source). 옛 행은 전부 NULL:
+    # spam_score NULL = 안 받았다(0 점이 아니다), source NULL = DataForSEO(그때는 그것뿐이었다).
+    for bl_tbl, bl_new in (
+            ("backlink_summary", (("spam_score", "INTEGER"), ("target_spam_score", "INTEGER"),
+                                  ("tld_json", "TEXT"), ("country_json", "TEXT"), ("source", "TEXT"))),
+            ("referring_domains", (("spam_score", "INTEGER"), ("source", "TEXT"))),
+            ("backlinks", (("spam_score", "INTEGER"), ("country", "TEXT"), ("source", "TEXT")))):
+        bl_have = {r["name"] for r in conn.execute(f"PRAGMA table_info({bl_tbl})")}
+        for bl_col, bl_decl in bl_new:
+            if bl_col not in bl_have:
+                conn.execute(f"ALTER TABLE {bl_tbl} ADD COLUMN {bl_col} {bl_decl}")
+                conn.commit()
 
     # 구글이 연 모습의 SEO 점검(collect_vitals.parse_seo) — 옛 행은 NULL(안 봤다)로 남는다.
     pv_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_vitals)")}
