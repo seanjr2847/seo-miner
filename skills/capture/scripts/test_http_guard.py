@@ -234,7 +234,7 @@ def test_allow_private_is_an_explicit_opt_in():
     inner = Site(bind="127.0.0.1")
     try:
         with guard():
-            http_adapter.ALLOW_PRIVATE = True            # SEO_MINER_ALLOW_PRIVATE_FETCH=1 과 같은 상태
+            http_adapter.ALLOW_PRIVATE = True            # SEOMINER_ALLOW_PRIVATE_FETCH=1 과 같은 상태
             assert http_adapter.get(inner.base + "/page", headers=UA, timeout=3).status == 200
     finally:
         inner.close()
@@ -248,8 +248,26 @@ def test_registration_uses_the_same_rule():
     assert ".is_global" not in body, "_site_url 에 제 판정(.is_global)이 남았다"
 
 
+def _can_bind_public_ip() -> bool:
+    """127.0.0.2 에 서버를 띄울 수 있나 — Windows·Linux 는 127/8 전체가 루프백이라 되고,
+    macOS 는 127.0.0.1 만 준다. 안 되면 '공개 사이트' 역을 세울 수 없다."""
+    try:
+        s = socket.socket()
+        s.bind((PUBLIC_IP, 0))
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    if not _can_bind_public_ip():
+        need = ("test_is_public_ip_table", "test_private_targets_are_blocked_before_connecting",
+                "test_allow_private_is_an_explicit_opt_in", "test_registration_uses_the_same_rule")
+        skipped = [t.__name__ for t in tests if t.__name__ not in need]
+        tests = [t for t in tests if t.__name__ in need]
+        print(f"  !! {PUBLIC_IP} 에 바인드할 수 없는 OS — 건너뜀: {', '.join(skipped)}")
     for t in tests:
         t()
         print(f"  ok  {t.__name__}")

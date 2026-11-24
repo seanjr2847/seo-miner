@@ -59,11 +59,11 @@ _REDIRECT_BODY_BYTES = 65_536         # 리다이렉트 응답의 본문은 여�
 #   · 로컬(사용자 PC): 주소를 정하는 사람은 PC 주인이지만, 남의 페이지가 리다이렉트로
 #     공유기 관리 화면·로컬 개발 서버에 GET 을 쏘게 할 수 있다. 측정 대상은 검색에 나오는
 #     공개 사이트라 안쪽 주소를 열 정당한 이유가 없다 — 그래서 같은 기본값이다.
-#   · 사내망·스테이징 사이트를 일부러 재려면 SEO_MINER_ALLOW_PRIVATE_FETCH=1 로 푼다
+#   · 사내망·스테이징 사이트를 일부러 재려면 SEOMINER_ALLOW_PRIVATE_FETCH=1 로 푼다
 #     (운영자가 프로세스 환경에 명시적으로 넣는 것만. 호스팅에는 넣지 않는다).
 # 프록시(HTTPS_PROXY 등)를 거치는 연결은 여기서 못 본다 — 이름을 프록시가 푼다. 그때는
 # 프록시가 경계다(호스팅은 프록시를 쓰지 않는다).
-ALLOW_PRIVATE = os.environ.get("SEO_MINER_ALLOW_PRIVATE_FETCH") == "1"
+ALLOW_PRIVATE = os.environ.get("SEOMINER_ALLOW_PRIVATE_FETCH") == "1"
 _EXTRA_PUBLIC: set = set()            # 검사 전용 — '공인'으로 쳐 줄 주소(로컬 서버를 공개 사이트 삼는다)
 _getaddrinfo = socket.getaddrinfo     # 검사 전용 — DNS 답을 갈아끼우는 자리
 
@@ -127,7 +127,7 @@ def _guard_classes():
         return _guard
     from urllib3.connection import HTTPConnection, HTTPSConnection
     from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
-    from urllib3.exceptions import NewConnectionError
+    from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
 
     class _Pinned:
         def _new_conn(self):
@@ -138,6 +138,8 @@ def _guard_classes():
                 ips = public_addrs(name, self.port)
             except socket.gaierror:
                 return super()._new_conn()            # 못 푸는 이름 — urllib3 가 제 오류로 말하게 둔다
+            if not ips:
+                return super()._new_conn()
             # 검사한 IP 로만 붙는다. _dns_host 는 '어디에 붙나'일 뿐이고, 붙은 뒤 되돌리므로
             # Host 헤더·TLS SNI·인증서 대조는 원래 이름 그대로다(connect() 가 self.host 를 쓴다).
             err = None
@@ -146,7 +148,8 @@ def _guard_classes():
                     self._dns_host = ip
                     try:
                         return super()._new_conn()
-                    except (NewConnectionError, OSError) as e:    # 다음 주소로(IPv6 길이 없는 PC 등)
+                    # 다음 주소로 — 표준 연결도 주소를 차례로 시도한다(IPv6 길이 없는 PC 등)
+                    except (NewConnectionError, ConnectTimeoutError, OSError) as e:
                         err = e
                 raise err
             finally:
