@@ -568,7 +568,7 @@ def brief_lines(audit: dict) -> list[str]:
             L.append("- 렌더 차이: 이 페이지는 자바스크립트가 돈 뒤에야 내용이 채워집니다. "
                      "원본 HTML 대 브라우저로 연 결과: " + " · ".join(bits) + ". "
                      "위의 본문·H1·구조화 데이터는 브라우저로 연 뒤의 값입니다. "
-                     "원본 HTML 만 읽는 크롤러(대부분의 AI 봇)에게는 렌더 전 값만 보입니다.")
+                     "자바스크립트를 실행하지 않는 크롤러에게는 렌더 전 값만 보입니다.")
         m = []
         if isinstance(r.get("console_errors"), int):
             m.append(f"콘솔 오류 {r['console_errors']}건")
@@ -578,7 +578,7 @@ def brief_lines(audit: dict) -> list[str]:
         if r.get("small_text_pct") is not None:
             pct = float(r["small_text_pct"])
             m.append(f"{SMALL_FONT_PX}px 미만 글자 {pct:g}%"
-                     + (f"(Lighthouse 기준 {SMALL_TEXT_FAIL_PCT:g}% 이상이면 읽기 어려움)"
+                     + (f"(Lighthouse 가 쓰던 기준으로는 {SMALL_TEXT_FAIL_PCT:g}% 이상이면 읽기 어려움)"
                         if pct >= SMALL_TEXT_FAIL_PCT else ""))
         if isinstance(r.get("targets"), int) and r["targets"]:
             m.append(f"{TARGET_MIN_PX}px 보다 작은 터치 대상 {r.get('small_targets') or 0}/"
