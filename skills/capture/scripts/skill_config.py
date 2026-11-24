@@ -110,6 +110,80 @@ CONFIG: dict = {
                        "usd": 0.10},
     },
 
+    # 구글 업데이트 원장 + 서치콘솔 데이터 이상 구간 — 순위 하락·클릭 변화의 **원인 가설**로만
+    # 쓴다(scoring.ledger_between). 방어형 기회는 원인을 잘못 짚으면 멀쩡한 페이지를 고친다:
+    # 떨어진 구간이 구글 업데이트·계측 오류와 겹치면 그 사실을 근거 표에 한 줄 적는다.
+    #
+    # **구글 공지로 확인된 것만** 넣는다. 항목마다 url(그 공지)·last_verified(그 주소를 연 날).
+    # 블로그·도구 회사의 '업데이트 감지'는 넣지 않는다. 가장 최근 확인일에서 stale_days 가
+    # 지나면 stale 이다 — 그 뒤 업데이트가 빠졌을 수 있다고 화면·요청문·점검이 말한다.
+    # 갱신: 아래 두 주소를 열어 새 줄을 더하고 last_verified 를 그날로 바꾼다.
+    #   updates       https://status.search.google.com/summary (기계가 읽는 꼴: /incidents.json)
+    #   gsc_anomalies https://support.google.com/webmasters/answer/6211453 (최근 3~16개월만 남는다)
+    # end 가 None 이면 구글이 아직 끝났다고 공지하지 않은 것이다(진행 중).
+    # kind: core | spam | discover | serving (라벨은 scoring.LEDGER_KIND_LABEL).
+    #   discover 는 디스커버 피드의 일이라 웹 검색 실적의 가설로는 안 붙인다.
+    "google_ledger": {
+        "stale_days": 30,
+        "updates": [
+            {"kind": "core", "name": "December 2025 core update",
+             "start": "2025-12-11", "end": "2025-12-29",
+             "url": "https://status.search.google.com/incidents/DsirqJ1gpPRgVQeccPRv",
+             "last_verified": "2026-11-24"},
+            {"kind": "discover", "name": "February 2026 Discover update",
+             "start": "2026-02-05", "end": "2026-02-27",
+             "url": "https://status.search.google.com/incidents/mYbNTqV1ytDc2fA8hUz4",
+             "last_verified": "2026-11-24"},
+            {"kind": "serving", "name": "Serving was experiencing an issue",
+             "start": "2026-02-25", "end": "2026-02-25",
+             "url": "https://status.search.google.com/incidents/TZF4pLmbzFdoBPP6o3iv",
+             "last_verified": "2026-11-24"},
+            {"kind": "spam", "name": "March 2026 spam update",
+             "start": "2026-03-24", "end": "2026-03-25",
+             "url": "https://status.search.google.com/incidents/VbnSXAH4SmEcxPtx4YSD",
+             "last_verified": "2026-11-24"},
+            {"kind": "core", "name": "March 2026 core update",
+             "start": "2026-03-27", "end": "2026-04-08",
+             "url": "https://status.search.google.com/incidents/7eTbAa2jWdToLkraZj5y",
+             "last_verified": "2026-11-24"},
+            {"kind": "core", "name": "May 2026 core update",
+             "start": "2026-05-21", "end": "2026-06-02",
+             "url": "https://status.search.google.com/incidents/wdAXJk6LRRihEjpzEeWE",
+             "last_verified": "2026-11-24"},
+            {"kind": "spam", "name": "June 2026 spam update",
+             "start": "2026-06-24", "end": "2026-06-26",
+             "url": "https://status.search.google.com/incidents/YUX1peHev5a4fkxLDiUQ",
+             "last_verified": "2026-11-24"},
+            {"kind": "spam", "name": "August 2026 spam update",
+             "start": "2026-08-18", "end": "2026-08-21",
+             "url": "https://status.search.google.com/incidents/LEubPCm2octf2uMqCFKE",
+             "last_verified": "2026-11-24"},
+            {"kind": "spam", "name": "September 2026 spam update",
+             "start": "2026-09-24", "end": "2026-10-08",
+             "url": "https://status.search.google.com/incidents/XhUDXP7A67iHCD2kmbVu",
+             "last_verified": "2026-11-24"},
+            # 2026-11-24 확인 시점에 구글이 종료를 공지하지 않았다("최대 2주") — end 는 비워 둔다
+            {"kind": "core", "name": "November 2026 core update",
+             "start": "2026-11-10", "end": None,
+             "url": "https://status.search.google.com/incidents/WLxcJyC6jMWMfryxsKMc",
+             "last_verified": "2026-11-24"},
+        ],
+        # 서치콘솔 '검색결과' 실적의 **검색어 단위 숫자**(gsc_snapshots)를 건드린 것만 넣는다.
+        # 같은 공지 페이지의 디스커버·생성형 AI 보고서·검색 노출 유형(FAQ·채용 공고) 항목은
+        # 우리가 읽는 숫자가 아니라 뺐다. metrics = 구글이 영향받았다고 적은 지표.
+        "gsc_anomalies": [
+            # "A logging error prevented Search Console from accurately reporting impressions
+            #  from May 13, 2025 until April 27, 2026 … Only impressions and related metrics -
+            #  CTR and average position - were affected; clicks were not affected"
+            {"start": "2025-05-13", "end": "2026-04-27",
+             "metrics": ["impressions", "ctr", "position"],
+             "note": "서치콘솔 노출 로깅 오류 — 노출과 거기서 나오는 클릭률·평균 순위가 "
+                     "부정확했고 클릭은 영향이 없었다(구글 공지)",
+             "url": "https://support.google.com/webmasters/answer/6211453",
+             "last_verified": "2026-11-24"},
+        ],
+    },
+
     # collector.settings() 가 읽는다: CLI > 사이트 설정 > 여기 > 코드 리터럴.
     "defaults": {
         "gsc_days": 28,
@@ -152,6 +226,10 @@ def _selfcheck() -> None:
         assert b["purpose"] in ("search", "user", "training"), b
     assert "chatgpt.com" in CONFIG["ai_referrers"]
     assert CONFIG["defaults"]["serp_depth"] == 10
+    led = CONFIG["google_ledger"]
+    for e in [*led["updates"], *led["gsc_anomalies"]]:
+        assert {"start", "end", "url", "last_verified"} <= set(e), e
+        assert e["url"].startswith("https://"), e
 
 
 if __name__ == "__main__":

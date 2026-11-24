@@ -158,7 +158,11 @@ PROJECT_TYPES = (("saas", "웹 서비스 · 앱"),
                  ("directory", "목록 · 디렉터리"),
                  # 물건을 파는 사이트 — 브랜드 공식몰(gucci.com)·편집숍·쇼핑몰. 웹 서비스(saas)로
                  # 두면 AI 계수(.45)가 상품·카테고리 수요를 누른다.
-                 ("commerce", "쇼핑몰 · 브랜드"))
+                 ("commerce", "쇼핑몰 · 브랜드"),
+                 # 글이 상품인 사이트(뉴스·매거진·블로그)와, 남의 일을 해 주는 전문 서비스(에이전시·
+                 # 컨설팅). 계수는 scoring.WEIGHTS 가 기존 프리셋을 가리킨다(새 숫자 없음).
+                 ("publisher", "매체 · 블로그"),
+                 ("agency", "에이전시 · 전문 서비스"))
 # 받는 쪽 검증이 쓰는 id 만 — 사본이 아니라 위 표에서 뽑은 것이다.
 PROJECT_TYPE_IDS = tuple(i for i, _ in PROJECT_TYPES)
 
@@ -625,13 +629,79 @@ def crawl_compare(conn, pid: int, run_id: int) -> dict:
                         " AND finished_at IS NOT NULL ORDER BY id DESC LIMIT 1",
                         (pid, run_id)).fetchone()
     if not prev:
-        return {"prev_run_id": None, "new": [], "fixed": []}
+        return {"prev_run_id": None, "new": [], "fixed": [], "changed": []}
     def keys(rid):
         return {(r["kind"], r["url"] or "") for r in
                 conn.execute("SELECT kind, url FROM crawl_issues WHERE run_id=?", (rid,))}
     now, was = keys(run_id), keys(prev["id"])
     fmt = lambda s: [{"kind": k, "url": u} for k, u in sorted(s)][:100]
-    return {"prev_run_id": prev["id"], "new": fmt(now - was), "fixed": fmt(was - now)}
+    return {"prev_run_id": prev["id"], "new": fmt(now - was), "fixed": fmt(was - now),
+            "changed": _crawl_changed(conn, prev["id"], run_id)}
+
+
+CRAWL_CHANGED_MAX = 100
+
+
+def _crawl_changed(conn, prev_id: int, run_id: int) -> list[dict]:
+    """두 회차에 다 있는 주소에서 필드 값이 바뀐 것 — canonical·noindex·title·H1·schema 유형,
+    열리던 페이지가 4xx/5xx. 판정은 scoring.page_field_changes 한 벌이다.
+
+    이슈 비교(new·fixed)는 '지금 문제인 것'의 집합 차이라, 유효한 값끼리 바뀐 것은 못 본다 —
+    canonical 이 A 에서 B 로 바뀌어도 둘 다 멀쩡한 주소면 어느 쪽 회차에도 이슈가 없다.
+    반환: [{url, changes:[…]}], 심한 것부터 CRAWL_CHANGED_MAX 줄."""
+    cols = "url, status, title, h1, canonical, robots, schema_types"
+    was = {r["url"]: r for r in conn.execute(
+        f"SELECT {cols} FROM crawl_pages WHERE run_id=?", (prev_id,))}
+    out = []
+    for r in conn.execute(f"SELECT {cols} FROM crawl_pages WHERE run_id=? ORDER BY url",
+                          (run_id,)):
+        b = was.get(r["url"])
+        if b is None:
+            continue
+        ch = scoring.page_field_changes(db._crawl_obs(b, ""), db._crawl_obs(r, ""))
+        if ch:
+            out.append({"url": r["url"], "changes": ch})
+    out.sort(key=lambda x: (min(scoring._SEV_RANK[c["sev"]] for c in x["changes"]), x["url"]))
+    return out[:CRAWL_CHANGED_MAX]
+
+
+def _decay_context(conn, pid: int, opps: list[dict], page_of: dict) -> dict:
+    """순위 하락 기회마다 떨어진 구간의 원인 가설 재료 — 요청문(brief._decay_context_lines)이 읽는다.
+
+    대상 → {prev, at, page, ledger, diff}.
+      prev·at  떨어지기 전·떨어진 스냅샷(scoring.decay_state — 자동 해소·근거 문장과 같은 짝).
+               짝을 못 믿으면 그 기회는 싣지 않는다.
+      ledger   그 두 창과 겹치는 구글 업데이트·서치콘솔 데이터 이상(scoring.ledger_for_pair)
+      diff     그 구간에 그 페이지에서 바뀐 필드(scoring.page_diff_between). None = 견줄 관측 없음
+    page_of: 대상 → 손댈 페이지(brief.page_of 의 결과 — 호출부가 넘긴다)."""
+    decays = [o for o in opps if o.get("kind") == "rank_decay" and o.get("id")]
+    if not decays:
+        return {}
+    run_of = _decay_runs(conn, decays)
+    cache: dict = {}
+    pairs = {}
+    for o in decays:
+        st = scoring.decay_state(conn, pid, run_of.get(o["id"]), str(o["target"]), cache=cache)
+        if st:
+            pairs[str(o["target"])] = st
+    if not pairs:
+        return {}
+    period = scoring.snapshot_pair(conn, pid)[2]
+    series = db.page_observations(conn, pid, [page_of.get(t) for t in pairs])
+    out = {}
+    for t, st in pairs.items():
+        page = page_of.get(t)
+        per = conn.execute("SELECT MAX(period_days) FROM gsc_snapshots WHERE project_id=?"
+                           " AND snapshot_date=?", (pid, st["at"])).fetchone()[0] or period
+        w0, w1 = scoring.gsc_window(st["prev"], per)[0], scoring.gsc_window(st["at"], per)[1]
+        s = series.get(scoring.url_key(page)) if page else None
+        led = scoring.ledger_for_pair(st["at"], st["prev"], per)
+        out[t] = {"prev": st["prev"], "at": st["at"], "page": page,
+                  "ledger": led if scoring.ledger_hit(led) else None,
+                  # 뒤 관측은 떨어진 수집일까지 — 창은 수집일 3일 전에 끝나지만 그 사이에 읽은
+                  # 페이지도 '떨어진 뒤의 모습'이다
+                  "diff": scoring.page_diff_between(s, w0, max(w1, st["at"])) if s else None}
+    return out
 
 
 # 수집일과 창 끝의 거리 — collect_gsc 가 창을 (수집일 − 3일)에서 끝낸다(구글 실적 지연).
@@ -2165,6 +2235,10 @@ def gather_traced(conn, p, at: str | None = None, *, gated: bool = True
     led.set("crawl_links", "crawl_lost_inlinks", _crawl_lost_inlinks(
         conn, pid, d.get("crawl") or {},
         {brief.page_of(o, d) for o in (d.get("opps") or []) if o.get("kind") == "rank_decay"}))
+    led.set("decay_context", "decay_context", _decay_context(
+        conn, pid, d.get("opps") or [],
+        {str(o.get("target")): brief.page_of(o, d) for o in (d.get("opps") or [])
+         if o.get("kind") == "rank_decay"}))
     led.set("site_probe", "site_probe", _site_probe(conn, d.get("crawl") or {}, _pages_in_play))
     led.set("ai_referrals", "ai_referrals_in_play",
             _ai_referrals_in_play(conn, pid, _pages_in_play))

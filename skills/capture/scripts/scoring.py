@@ -146,6 +146,58 @@ WEIGHTS = {
     "directory":    {"w_demand": 0.40, "w_reach": 0.25, "w_fit": 0.20, "w_ai": 0.15},
     "commerce":     {"w_demand": 0.35, "w_reach": 0.25, "w_fit": 0.20, "w_ai": 0.20},
 }
+# 매체(publisher)·에이전시(agency) — **새 숫자를 짓지 않았다.** 기존 프리셋을 그대로 가리킨다:
+#   publisher  수익이 글 하나하나의 검색 수요에서 나온다 → 수요·커버리지 우선인 directory 계수
+#   agency     여태 saas 로 등록되던 사이트다('이 분야 에이전시 추천' AI 답변의 목록이 전장) → saas 계수
+# 따로 계수를 주려면 그 종류 사이트의 실측으로 근거를 대고 위 표에 한 줄로 올린다.
+WEIGHTS["publisher"] = dict(WEIGHTS["directory"])
+WEIGHTS["agency"] = dict(WEIGHTS["saas"])
+
+# 홈·크롤의 schema.org 유형으로 사이트 종류를 **추정**한다(guess_site_type). 유형 이름은
+# schema.org 어휘라 언어와 무관하다 — 낱말 목록(슬러그·메뉴 문구)으로는 추정하지 않는다.
+# 여기 없는 종류(agency·directory)는 마크업만으로 가를 근거가 없어 추정하지 않는다.
+SITE_TYPE_SCHEMA = {
+    "commerce": ("Product", "ProductGroup", "Offer", "AggregateOffer", "OnlineStore",
+                 "Store", "OfferCatalog"),
+    "publisher": ("NewsMediaOrganization", "NewsArticle", "Periodical", "Newspaper",
+                  "Blog", "LiveBlogPosting"),
+    "saas": ("SoftwareApplication", "WebApplication", "MobileApplication"),
+    "game": ("VideoGame", "VideoGameSeries", "Game"),
+}
+# 글 유형(Article 과 그 하위)이 크롤한 페이지의 이 비율을 넘으면 매체로 본다 — 홈 한 장에는
+# 글 마크업이 없는 매체가 많다. 표본이 이보다 적으면 비율을 말하지 않는다.
+SITE_TYPE_ARTICLE_SHARE = 0.5
+SITE_TYPE_MIN_PAGES = 5
+
+
+def guess_site_type(signals: dict) -> dict | None:
+    """홈 신호 → {"type", "evidence": [...]} 또는 None(근거 없음·신호가 엇갈림).
+
+    signals: schema_types = 홈의 ld+json @type 목록, page_types = 크롤한 페이지별 @type 목록.
+    추정은 제안일 뿐이다 — 사이트 종류는 사람이 고른 값(projects.type)이 정본이고 이 함수는
+    그 값을 바꾸지 않는다. 서로 다른 종류의 신호가 같이 있으면 고르지 않는다(None)."""
+    home = {str(t) for t in signals.get("schema_types") or [] if t}
+    hits: dict[str, list[str]] = {}
+    for kind, types in SITE_TYPE_SCHEMA.items():
+        found = sorted(home & set(types))
+        if found:
+            hits[kind] = [f"홈 구조화 데이터 {', '.join(found)}"]
+    # Store 는 LocalBusiness 의 하위이기도 하다 — 위에서 commerce 로 잡힌 유형은 지역으로 또 세지 않는다
+    local = sorted((home & (schema_vocab.descendants("LocalBusiness") | {"LocalBusiness"}))
+                   - set(SITE_TYPE_SCHEMA["commerce"]))
+    if local:
+        hits["local_business"] = [f"홈 구조화 데이터 {', '.join(local)}"]
+    pages = [set(map(str, ts or [])) for ts in signals.get("page_types") or []]
+    if len(pages) >= SITE_TYPE_MIN_PAGES:
+        art = schema_vocab.descendants("Article") | {"Article"}
+        n = sum(1 for ts in pages if ts & art)
+        if n / len(pages) >= SITE_TYPE_ARTICLE_SHARE:
+            hits.setdefault("publisher", []).append(
+                f"크롤한 {len(pages)}쪽 중 {n}쪽이 글 유형(Article 계열)")
+    if len(hits) != 1:
+        return None
+    (kind, ev), = hits.items()
+    return {"type": kind, "evidence": ev}
 
 # 남의 브랜드 검색 판별용 (scoring.md 1a).
 BRAND_MODIFIERS = {
@@ -3456,6 +3508,217 @@ def _snap_agg(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
                     GROUP BY query""", (project_id, snapshot_date, period))}
 
 
+# ── 구글 업데이트 원장 · 서치콘솔 데이터 이상 구간 ────────────────────────────
+# 목록의 정본은 skill_config 의 google_ledger 다(구글 공지로 확인된 것만, 항목마다 출처).
+# 여기는 "비교한 두 창과 겹치나"만 판정한다. 겹침은 **원인 가설**이지 원인이 아니다 —
+# 붙는 자리마다 LEDGER_CAVEAT 가 같이 간다(ledger_lines).
+LEDGER_KIND_LABEL = {"core": "코어 업데이트", "spam": "스팸 업데이트",
+                     "discover": "디스커버 업데이트", "serving": "검색 제공 장애"}
+# 웹 검색 실적(gsc_snapshots)의 가설로 붙이는 종류 — 디스커버 업데이트는 다른 지면의 일이다.
+LEDGER_SEARCH_KINDS = ("core", "spam", "serving")
+LEDGER_CAVEAT = ("시기가 겹친다는 사실뿐입니다. 원인 가설일 뿐이고 원인으로 확인된 것이 아닙니다 — "
+                 "페이지를 고치기 전에 같은 기간 다른 검색어·페이지도 함께 움직였는지 먼저 봅니다.")
+# 수집일과 창 끝의 거리 — collect_gsc 가 창을 (수집일 − 3일)에서 끝낸다(구글 실적 지연).
+# dashboard.GSC_LAG_DAYS 와 같은 사실이다(test_drift 가 둘을 대조한다).
+GSC_WINDOW_LAG_DAYS = 3
+
+
+def google_ledger() -> dict:
+    try:
+        import collector
+        got = collector.config().get("google_ledger")
+    except Exception:
+        got = None
+    return got if isinstance(got, dict) else {"stale_days": 30, "updates": [], "gsc_anomalies": []}
+
+
+def gsc_window(snapshot_date: str, period: int) -> tuple[str, str]:
+    """스냅샷 하나가 덮는 날짜 창(양끝 포함) — 수집일 − 3일에서 끝나고 period 일이다."""
+    end = datetime.date.fromisoformat(str(snapshot_date)[:10]) \
+        - datetime.timedelta(days=GSC_WINDOW_LAG_DAYS)
+    return str(end - datetime.timedelta(days=int(period) - 1)), str(end)
+
+
+def _days_in(a0: str, a1: str, b0: str, b1: str | None, today: str) -> int:
+    """[a0,a1] 과 [b0,b1] 이 겹치는 날 수. b1 이 None 이면(진행 중) 오늘까지."""
+    lo, hi = max(a0, b0), min(a1, b1 or today)
+    if lo > hi:
+        return 0
+    return (datetime.date.fromisoformat(hi) - datetime.date.fromisoformat(lo)).days + 1
+
+
+def _ledger_stale(led: dict, today: str) -> tuple[bool, str | None]:
+    seen = [e.get("last_verified") for e in led.get("updates") or [] if e.get("last_verified")]
+    if not seen:
+        return True, None
+    newest = max(seen)
+    age = (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(newest)).days
+    return age > int(led.get("stale_days") or 30), newest
+
+
+def ledger_between(start: str, end: str, *, today: str | None = None) -> dict:
+    """[start, end](양끝 포함)와 겹치는 구글 업데이트 — 웹 검색 실적의 가설이 되는 종류만.
+
+    반환: {from, to, updates:[{kind,label,name,start,end,url}], anomalies:[], stale, verified,
+    caveat}. stale = 원장을 마지막으로 구글 공지와 대조한 날(verified)에서 stale_days 가 지났다 —
+    그 뒤에 난 업데이트는 이 목록에 없을 수 있다."""
+    today = today or str(datetime.date.today())
+    led = google_ledger()
+    ups = [{"kind": e["kind"], "label": LEDGER_KIND_LABEL.get(e["kind"], e["kind"]),
+            "name": e.get("name"), "start": e["start"], "end": e.get("end"), "url": e["url"]}
+           for e in led.get("updates") or []
+           if e.get("kind") in LEDGER_SEARCH_KINDS
+           and _days_in(start, end, e["start"], e.get("end"), today)]
+    stale, verified = _ledger_stale(led, today)
+    return {"from": start, "to": end, "updates": sorted(ups, key=lambda u: u["start"]),
+            "anomalies": [], "stale": stale, "verified": verified, "caveat": LEDGER_CAVEAT}
+
+
+def ledger_for_pair(cur: str | None, prev: str | None, period: int | None, *,
+                    today: str | None = None) -> dict | None:
+    """스냅샷 짝(직전 → 지금)의 원장 겹침. 짝이 없으면 None.
+
+    업데이트: 직전 창의 시작부터 지금 창의 끝까지와 겹치는 것. 두 창이 겹쳐 있어도(매일 수집이면
+    27일) 업데이트가 그 사이에 났으면 직전 창에만 있는 날은 업데이트 전, 지금 창에만 있는 날은
+    뒤다 — 그래서 합친 구간으로 본다.
+    데이터 이상: 두 창이 그 구간에 걸친 **날 수가 다를 때만** 붙인다. 둘 다 통째로 그 안이면 같은
+    오류 위에서 잰 두 수라 차이는 오류 탓이 아니다."""
+    if not (cur and prev and period):
+        return None
+    today = today or str(datetime.date.today())
+    (p0, p1), (c0, c1) = gsc_window(prev, period), gsc_window(cur, period)
+    out = ledger_between(min(p0, c0), max(p1, c1), today=today)
+    for e in google_ledger().get("gsc_anomalies") or []:
+        if _days_in(p0, p1, e["start"], e.get("end"), today) != \
+                _days_in(c0, c1, e["start"], e.get("end"), today):
+            out["anomalies"].append({"start": e["start"], "end": e.get("end"),
+                                     "metrics": list(e.get("metrics") or []),
+                                     "note": e.get("note"), "url": e["url"]})
+    return out
+
+
+def ledger_hit(led: dict | None) -> bool:
+    return bool(led and (led.get("updates") or led.get("anomalies")))
+
+
+_LEDGER_METRIC_KO = {"clicks": "클릭", "impressions": "노출", "ctr": "클릭률", "position": "평균 순위"}
+
+
+def ledger_lines(led: dict | None) -> list[str]:
+    """원장 겹침을 사람이 읽는 줄로 — 요청문 근거와 점검(audit_data)이 같은 문장을 쓴다.
+    겹치는 것이 없으면 빈 목록이다(없는 가설을 적지 않는다)."""
+    if not ledger_hit(led):
+        return []
+    span = lambda e: e["start"] + (f"~{e['end']}" if e.get("end") and e["end"] != e["start"]
+                                   else "" if e.get("end") else "~진행 중")
+    L = [f"비교한 기간({led.get('from')}~{led.get('to')})과 겹치는 구글 공지:"]
+    for u in led.get("updates") or []:
+        L.append(f"- {span(u)} {u['label']} ({u.get('name') or ''}) — 출처 {u['url']}")
+    for a in led.get("anomalies") or []:
+        ms = "·".join(_LEDGER_METRIC_KO.get(m, m) for m in a.get("metrics") or [])
+        L.append(f"- {span(a)} 서치콘솔 데이터 이상: {a.get('note') or ''}. 두 기간이 이 구간에 걸친 "
+                 f"날 수가 달라 {ms} 변화의 일부는 계측 탓일 수 있습니다 — 출처 {a['url']}")
+    L.append(f"- {led.get('caveat') or LEDGER_CAVEAT}")
+    if led.get("stale"):
+        L.append(f"- 이 원장은 {led.get('verified') or '?'}에 구글 공지와 마지막으로 대조했고 그 뒤 "
+                 f"{google_ledger().get('stale_days', 30)}일이 지났습니다. 이후에 난 업데이트는 빠졌을 "
+                 "수 있으니 https://status.search.google.com/summary 를 직접 확인합니다.")
+    return L
+
+
+# ── 회차 사이 필드 값 비교 ────────────────────────────────────────────────────
+# 원재료(page_audits·crawl_pages)는 날짜별로 쌓여 있는데 화면은 최신만 읽었다. 유효한 값끼리
+# 바뀐 canonical 은 '지금의 이슈'가 아니라서 어느 검사에도 안 잡힌다 — 두 관측을 견줘야 보인다.
+# 관측 하나의 꼴: {date, src(audit|crawl), status, title, h1[list], canonical, robots, schema[list]}
+# (db.page_observations 가 두 표를 이 꼴로 맞춘다). 별도 기준선 저장소는 없다.
+FIELD_CHANGE_LABEL = {
+    "status_broke": "열리던 페이지가 오류",
+    "noindex_added": "noindex 추가",
+    "noindex_removed": "noindex 제거",
+    "canonical_changed": "canonical 변경",
+    "title_changed": "title 변경",
+    "h1_changed": "H1 변경",
+    "schema_lost": "구조화 데이터 유형 소멸",
+    "schema_gained": "구조화 데이터 유형 추가",
+}
+# 심각도 — 검색에서 빠질 수 있는 것이 bad, 검색 결과의 겉모습·대표 주소가 바뀌는 것이 warn.
+FIELD_CHANGE_SEV = {"status_broke": "bad", "noindex_added": "bad", "canonical_changed": "warn",
+                    "title_changed": "warn", "h1_changed": "warn", "schema_lost": "warn",
+                    "noindex_removed": "info", "schema_gained": "info"}
+_SEV_RANK = {"bad": 0, "warn": 1, "info": 2}
+
+
+def _ok_status(s) -> bool:
+    return isinstance(s, int) and 200 <= s < 300
+
+
+def _squash(s) -> str:
+    return " ".join(str(s or "").split())
+
+
+def page_field_changes(a: dict, b: dict) -> list[dict]:
+    """관측 a(앞) → b(뒤) 사이에 바뀐 필드. [{kind, label, sev, before, after}], 표 순서 고정.
+
+    내용 필드(title·H1·canonical·noindex·schema)는 **둘 다 2xx 로 열렸을 때만** 견준다 — 못 연
+    페이지의 빈 값을 '지워졌다'고 하지 않는다. 2xx → 4xx/5xx 는 상태 하나만 말한다. 요청 자체가
+    실패한 관측(status None)은 모르는 것이라 아무것도 말하지 않는다."""
+    out: list[dict] = []
+
+    def add(kind, before, after):
+        out.append({"kind": kind, "label": FIELD_CHANGE_LABEL[kind],
+                    "sev": FIELD_CHANGE_SEV[kind], "before": before, "after": after})
+
+    sa, sb = a.get("status"), b.get("status")
+    if _ok_status(sa) and isinstance(sb, int) and sb >= 400:
+        add("status_broke", sa, sb)
+    if not (_ok_status(sa) and _ok_status(sb)):
+        return out
+    na, nb = "noindex" in str(a.get("robots") or "").lower(), \
+        "noindex" in str(b.get("robots") or "").lower()
+    if nb and not na:
+        add("noindex_added", _squash(a.get("robots")) or None, _squash(b.get("robots")))
+    elif na and not nb:
+        add("noindex_removed", _squash(a.get("robots")), _squash(b.get("robots")) or None)
+    ca, cb = _squash(a.get("canonical")), _squash(b.get("canonical"))
+    if (ca or cb) and (url_key(ca) if ca else "") != (url_key(cb) if cb else ""):
+        add("canonical_changed", ca or None, cb or None)
+    ta, tb = _squash(a.get("title")), _squash(b.get("title"))
+    if ta != tb:
+        add("title_changed", ta or None, tb or None)
+    ha, hb = [_squash(x) for x in a.get("h1") or [] if _squash(x)], \
+        [_squash(x) for x in b.get("h1") or [] if _squash(x)]
+    if ha != hb:
+        add("h1_changed", " / ".join(ha) or None, " / ".join(hb) or None)
+    xa, xb = {str(x) for x in a.get("schema") or [] if x}, {str(x) for x in b.get("schema") or [] if x}
+    if xa - xb:
+        add("schema_lost", ", ".join(sorted(xa - xb)), ", ".join(sorted(xb)) or None)
+    if xb - xa:
+        add("schema_gained", ", ".join(sorted(xa)) or None, ", ".join(sorted(xb - xa)))
+    return out
+
+
+def page_diff_between(series: dict, start: str, end: str) -> dict | None:
+    """한 페이지의 관측들에서 [start, end] 구간의 앞·뒤 한 짝을 골라 견준다.
+
+    앞 = start 이전(포함) 마지막 관측, 없으면 구간 안 첫 관측. 뒤 = end 이전(포함) 마지막 관측.
+    **같은 출처끼리만** 짝짓는다(감사 ↔ 감사, 크롤 ↔ 크롤) — 두 수집기는 H1·schema 를 다르게
+    적어서 섞으면 없는 변화가 생긴다. 감사 짝이 있으면 그것, 없으면 크롤 짝.
+    짝이 안 서면 None(모름) — '바뀐 것 없음'({changes: []})과 다르다.
+    반환: {src, from, to, changes}."""
+    for src in ("audit", "crawl"):
+        obs = sorted((o for o in series.get(src) or [] if o.get("date") and o["date"] <= end),
+                     key=lambda o: o["date"])
+        if len(obs) < 2:
+            continue
+        before = [o for o in obs if o["date"] <= start]
+        a, b = (before[-1] if before else obs[0]), obs[-1]
+        if a["date"] >= b["date"]:
+            continue
+        return {"src": src, "from": a["date"], "to": b["date"],
+                "changes": page_field_changes(a, b)}
+    return None
+
+
 def rank_decay(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) -> list[dict]:
     """직전 스냅샷 대비 DECAY_POS 이상 하락한 쿼리 — 방어 기회 (scoring.md 1절).
 
@@ -3477,6 +3740,11 @@ def rank_decay(conn: sqlite3.Connection, project_id: int, *, limit: int = 15) ->
             rows.append({"query": q, "pos": round(r["pos"], 1), "prev_pos": round(b["pos"], 1),
                          "dpos": dpos, "clk": r["clk"], "dclk": r["clk"] - b["clk"],
                          "imp": r["imp"]})
+    # 떨어진 구간이 구글 업데이트·계측 오류와 겹치면 행마다 그 가설을 단다(겹칠 때만).
+    led = ledger_for_pair(cur, prev, period)
+    if ledger_hit(led):
+        for r in rows:
+            r["ledger"] = led
     return sorted(rows, key=lambda x: x["dpos"])[:limit]
 
 
@@ -3595,9 +3863,12 @@ def click_shift(conn: sqlite3.Connection, project_id: int, cur: str | None,
     """
     out = {"clicks": 0, "prev_clicks": 0, "d_clicks": 0,
            "imp_effect": 0.0, "ctr_effect": 0.0, "new": 0, "lost": 0,
-           "up": [], "down": [], "thin": 0}
+           "up": [], "down": [], "thin": 0, "ledger": None}
     if not (cur and prev and period):
         return out
+    # 이 두 기간과 겹치는 구글 업데이트·서치콘솔 데이터 이상 — 원인 가설(겹칠 때만).
+    _led = ledger_for_pair(cur, prev, period)
+    out["ledger"] = _led if ledger_hit(_led) else None
     now_ = _snap_agg(conn, project_id, cur, period)
     before = _snap_agg(conn, project_id, prev, period)
     out["clicks"] = sum(r["clk"] or 0 for r in now_.values())

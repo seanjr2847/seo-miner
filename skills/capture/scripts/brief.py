@@ -2372,7 +2372,47 @@ def _ev_decay(o, ctx, pages):
                      "이어지는지 봅니다. 이어지지 않으면 '안 바꿈'이 답입니다.")
     L += _pages_table(pages)
     dk = _decay_page_lines(_decay_of(o, ctx), pages, ctx)
-    return L + ([""] if L and dk else []) + dk
+    cx = _decay_context_lines(o, ctx, pages)
+    return L + ([""] if L and dk else []) + dk + ([""] if (L or dk) and cx else []) + cx
+
+
+def _decay_context_lines(o: dict, ctx: dict, pages: list[dict]) -> list[str]:
+    """떨어진 기간 그 페이지에서 바뀐 것 + 그 기간과 겹치는 구글 공지 — 원인 가설의 재료.
+
+    방어형 기회는 원인을 잘못 짚으면 멀쩡한 페이지를 고친다. 재료는 dashboard._decay_context
+    한 벌(ctx["decay_context"])이고 여기는 글로 옮기기만 한다:
+      diff None      견줄 관측이 없다 → [확인 필요] (없는 변화를 '없음'이라고 하지 않는다)
+      changes []     두 날에 읽은 값이 그대로다 → 그렇게 말한다(본문 변화는 이 표가 못 본다)
+      ledger         겹치는 공지가 있을 때만. 문장은 scoring.ledger_lines 한 벌이다."""
+    c = (ctx.get("decay_context") or {}).get(str(o.get("target") or ""))
+    if not c:
+        return []
+    page = c.get("page")
+    head = (f"떨어진 기간 그 페이지에서 바뀐 것 (구글 실적 {c.get('prev')} → {c.get('at')}"
+            + (f", {page}" if page else "") + "):")
+    L = [head]
+    d = c.get("diff")
+    src = {"audit": "페이지 감사", "crawl": "사이트 크롤"}
+    if not page:
+        L.append("- [확인 필요] 이 검색어로 걸린 내 페이지를 몰라 견줄 관측이 없습니다.")
+    elif d is None:
+        L.append("- [확인 필요] 그 기간의 앞·뒤로 이 페이지를 읽은 기록이 한 짝이 안 됩니다. 배포 "
+                 "기록(커밋·CMS 수정 이력)에서 그 기간에 title·H1·canonical·noindex·구조화 "
+                 "데이터를 건드렸는지 직접 확인합니다.")
+    elif not d.get("changes"):
+        L.append(f"- {src.get(d.get('src'), d.get('src'))} {d.get('from')}과 {d.get('to')}에 읽은 "
+                 "title·H1·canonical·noindex·구조화 데이터 유형·응답 상태가 그대로입니다. 본문 "
+                 "문단의 변화는 이 비교에 안 잡힙니다.")
+    else:
+        L += _table(["바뀐 것", f"{d.get('from')}", f"{d.get('to')}"],
+                    [[ch.get("label"), ch.get("before") if ch.get("before") is not None else "(없음)",
+                      ch.get("after") if ch.get("after") is not None else "(없음)"]
+                     for ch in d["changes"]])
+        L.append(f"- 출처: {src.get(d.get('src'), d.get('src'))}. 이 변화가 하락의 원인이라고 "
+                 "단정하지 않습니다 — 의도한 변경인지부터 확인하고, 의도가 아니면 되돌리는 것이 "
+                 "본문을 고치는 것보다 먼저입니다.")
+    led = scoring.ledger_lines(c.get("ledger"))
+    return L + ([""] + led if led else [])
 
 
 def _decay_page_lines(dk: dict, pages: list[dict], ctx: dict) -> list[str]:
