@@ -644,7 +644,9 @@ def test_payload_shapes_are_one_set():
     p = brief.shapes_payload("ko-KR")
     assert set(p["tails"]) == set(p["intro"]) == set(p["slot"]) == set(p["labels"]) \
         == set(brief.SHAPE_NAMES)
-    assert set(p["page_state"]) == {"fix_page", "split_page", "technical", "consolidate"}
+    # 전환 점검(conversion)도 고칠 페이지가 있는 꼴이다 — 폴백이 페이지 상태를 싣는다
+    assert set(p["page_state"]) == {"fix_page", "split_page", "technical", "consolidate",
+                                    "conversion"}
     assert p["by_tag"] == brief.DELIVER_BY_TAG and p["lang"] == "한국어"
     # 진단 tag 마다 산출물이 있어야 폴백 요청문이 빈손이 안 된다
     tags = {"title", "meta description", "H1", "본문", "구조화 데이터", "robots", "canonical",
@@ -4386,6 +4388,298 @@ def test_kind_table_gaps_name_every_table_a_new_kind_must_fill():
     assert brief.kind_table_gaps() == {}
     msg = brief.kind_gap_message({"ctr_gap": ["brief.EVIDENCE: 근거 함수 필요"]})
     assert "ctr_gap" in msg and "brief.EVIDENCE" in msg
+
+
+# ── claude-seo 차용(w08): 요청문·plays ─────────────────────────────────────────
+def test_new_content_requires_one_information_gain_line():
+    """새 글 설계도는 '상위 글에 없고 우리만 쓸 수 있는 것' 한 줄을 반드시 낸다. 없으면 설계도가 상위
+    글의 목차를 합친 것에서 끝난다 — '더 자세히'는 답이 아니고, 못 찾으면 [확인 필요]다."""
+    assert brief.INFO_GAIN in brief.SHAPES["new_content"]["form"]
+    tail = brief.tails("ko-KR")["new_content"]
+    assert "Information Gain" in tail and "더 자세히" in tail
+    assert "[확인 필요]" in brief.INFO_GAIN and "지어내지" in brief.INFO_GAIN
+    # 고치기·기술 꼴의 꼬리에는 안 실린다 — 새 글의 계약이다
+    assert "Information Gain" not in brief.tails("ko-KR")["technical"]
+
+
+def test_every_brief_says_how_failure_shows():
+    """요청문마다 '실패로 볼 신호' 한 줄 — 목표·끝나는 조건은 성공만 말했다. 꼴마다 한 벌이고
+    (FAIL_SIGNAL 의 키 = SHAPE_NAMES), 이미 닫힌 기회에는 세우지 않는다."""
+    assert tuple(brief.FAIL_SIGNAL) == brief.SHAPE_NAMES
+    for kind in scoring.ALL_KINDS:
+        body = brief.build(_opp(kind, "검색어"), {"query_pages": {"검색어": _pages(URL)}}, "ko-KR")["body"]
+        assert body.count("- 실패로 볼 신호: ") == 1, (kind, body)
+        goal = body.split(brief.GOAL_HEAD, 1)[1].split("\n## ", 1)[0]
+        assert "- 실패로 볼 신호: " in goal, kind
+    closed = {**_opp("ctr_gap", "검색어"), "status": "done"}
+    assert "실패로 볼 신호" not in brief.build(closed, {"query_pages": {"검색어": _pages(URL)}}, "ko-KR")["body"]
+    # 주 수는 관찰 기간 한 벌(RECHECK_WEEKS)에서 온다 — 숫자를 따로 적지 않는다
+    first, last = brief.RECHECK_WEEKS
+    assert f"{last}주" in brief.fail_signal("fix_page") and f"{first}주" in brief.fail_signal("new_content")
+
+
+def _cluster_ctx():
+    base = "https://me.example"
+    main = f"{base}/lifting/sofwave/"
+    cands = [{"page": main, "title": "sofwave | Clinic", "h1": "Sofwave", "primary": True},
+             {"page": f"{base}/blog/sofwave-vs-ulthera/", "title": "Ulthera vs sofwave | Clinic",
+              "h1": "Ulthera vs sofwave", "primary": False},
+             {"page": f"{base}/blog/sofwave-downtime/", "title": "How long is sofwave downtime",
+              "h1": "sofwave downtime", "primary": False}]
+    ctx = {"topic_pages": {"cluster:sofwave": cands},
+           "cluster_keywords": {"sofwave": [{"keyword": "sofwave aftercare", "volume": 50},
+                                            {"keyword": "sofwave austin", "volume": 90}]},
+           "crawl_inlinks": {main: [{"from": f"{base}/blog/sofwave-vs-ulthera/", "anchor": "sofwave"}]},
+           "crawl_outlinks": {main: [f"{base}/blog/sofwave-downtime/"]}}
+    return main, ctx
+
+
+def test_coverage_lists_the_cluster_pages_that_exist_and_their_links():
+    """주제 묶음 요청문은 사이트에 실제로 있는 이 주제의 지면을 표로 싣고(빠뜨리지도 지어내지도
+    않게), 그 지면과 대상이 서로 링크하는지를 크롤 링크로 적는다. 크롤이 안 본 쪽은 '모름'이다."""
+    main, ctx = _cluster_ctx()
+    o = _opp("coverage", "cluster:sofwave")
+    b = brief.build(o, ctx, "en-US")
+    assert b["page"] == main, b["page"]
+    body = b["body"]
+    assert brief.CLUSTER_PAGES_HEAD in body
+    sec = body.split(brief.CLUSTER_PAGES_HEAD, 1)[1].split("\n## ", 1)[0]
+    assert "| https://me.example/blog/sofwave-vs-ulthera/ | Ulthera vs sofwave | 있음 | 없음 |" in sec, sec
+    assert "| https://me.example/blog/sofwave-downtime/ | sofwave downtime | 없음 | 있음 |" in sec, sec
+    assert "빠뜨리지" in sec and "지어내지" in sec
+    assert f"| {main} |" not in sec, "대상 자신은 표에 없다"
+    # 크롤이 대상을 안 봤으면(키 없음) 링크 칸은 '모름' — '없음'이라고 지어내지 않는다
+    none = brief.build(o, {**ctx, "crawl_inlinks": {}, "crawl_outlinks": {}}, "en-US")["body"]
+    sec2 = none.split(brief.CLUSTER_PAGES_HEAD, 1)[1].split("\n## ", 1)[0]
+    assert "| 모름 | 모름 |" in sec2 and "| 없음 |" not in sec2, sec2
+    # 다른 지면이 없으면 절이 안 선다
+    solo = {**ctx, "topic_pages": {"cluster:sofwave": ctx["topic_pages"]["cluster:sofwave"][:1]}}
+    assert brief.CLUSTER_PAGES_HEAD not in brief.build(o, solo, "en-US")["body"]
+
+
+def test_pseo_hub_links_come_from_the_dedicated_pages_only():
+    """템플릿 요청문의 허브 링크 목록은 근거 표에서 '(전용)'으로 판정된 주소다 — 빠뜨리지도
+    지어내지도 않는다(Site Structure Coverage Rule). 전용 페이지가 하나도 없으면 그 줄은 없다."""
+    o = _opp("pseo_pattern", "서울 세무사 추천")
+    g = _pseo_group()
+    g["values"][1].update(page=URL2, own=True)             # 부산 — 전용 페이지가 이미 있다
+    body = brief.build(o, {"query_pages": {"서울 세무사 추천": _pages(URL)},
+                           "pseo_groups": [g]}, "ko-KR")["body"]
+    assert brief.PSEO_HUB_COVER.format(n=1) in body, body
+    # 허브로 쓸 페이지 자신(씨앗의 전용 페이지)만 전용이면 걸 링크가 없다 — 그 줄은 없다
+    only_hub = brief.build(o, {"query_pages": {"서울 세무사 추천": _pages(URL)},
+                               "pseo_groups": [_pseo_group()]}, "ko-KR")["body"]
+    assert brief.PSEO_HUB_COVER.split("{")[0] not in only_hub, only_hub
+    none = brief.build(o, {"pseo_groups": [_pseo_group(seed_page=None)]}, "ko-KR")["body"]
+    assert brief.PSEO_HUB_COVER.split("{")[0] not in none
+
+
+def test_h2_table_assigns_page_queries_by_shared_words():
+    """한 페이지에 검색어 여럿 — 지금 H2 마다 어느 검색어가 낱말로 걸리는지, 어느 H2 에도 안 걸린
+    검색어가 무엇인지 싣는다. 묶음이 모두 품은 말(여기 'milia')은 가르는 낱말이 아니라 뺀다."""
+    qs = [("milia removal cost", 300), ("milia causes", 200), ("milia aftercare", 90)]
+    ctx = {"query_pages": {q: [{"page": URL, "impressions": i, "clicks": 1, "ctr": 1.0, "position": 9.0}]
+                           for q, i in qs},
+           "page_audits": {URL: _audit(h2_json='["What causes milia", "Removal cost in Seoul", "FAQ"]')}}
+    body = brief.build(_opp("striking_distance", "milia removal cost"), ctx, "en-US")["body"]
+    assert brief.H2_QUERIES_HEAD in body, body
+    sec = body.split(brief.H2_QUERIES_HEAD, 1)[1].split("\n\n", 1)[0]
+    assert "| What causes milia | milia causes |" in sec, sec
+    assert "| Removal cost in Seoul | milia removal cost |" in sec, sec
+    assert "| FAQ | - |" in sec, sec
+    assert "어느 H2 에도 안 걸린 검색어: milia aftercare" in sec, sec
+    # 검색어가 하나뿐이면 가를 것이 없다
+    one = {"query_pages": {"milia causes": _pages(URL)}, "page_audits": ctx["page_audits"]}
+    assert brief.H2_QUERIES_HEAD not in brief.build(_opp("striking_distance", "milia causes"), one,
+                                                    "en-US")["body"]
+
+
+def test_comparison_carries_the_fairness_rules():
+    """비교 글의 공정성 규칙은 한 벌(COMPARE_FAIR)이다 — 진단 [비교] 의 산출물 틀과, 비교 의도로
+    서는 새 글 요청문에 실린다. 비교가 아닌 검색어의 요청문에는 안 실린다."""
+    for w in ("확인한 날짜", "출처", "우리 것", "상대가 나은", "숨은 비용", "서로 링크"):
+        assert w in brief.COMPARE_FAIR, w
+    assert brief.COMPARE_FAIR in brief.DELIVER_BY_TAG["비교"]
+    vs = brief.build(_opp("content_gap", "notion vs obsidian", gap_kind="missing"), {}, "en-US")["body"]
+    assert brief.COMPARE_FAIR in vs
+    plain = brief.build(_opp("content_gap", "obsidian plugins", gap_kind="missing"), {}, "en-US")["body"]
+    assert brief.COMPARE_FAIR not in plain
+
+
+def _pseo_many(n):
+    g = _pseo_group()
+    return dict(g, values=g["values"] + [
+        {"value": f"동네{i}", "query": f"동네{i} 세무사 추천", "variants": [], "imp": 5, "clk": 0,
+         "pos": 30.0, "page": None, "own": False} for i in range(n)])
+
+
+def test_template_rules_carry_swap_test_and_volume_gate():
+    """템플릿 꼴의 규칙: 바꿔 끼우기 검사와 찍을 양의 문턱(표본 검토·정지). 문턱 수는 상수 한 벌이고
+    근거 절도 찍을 값이 그 수를 넘으면 같은 수로 말한다."""
+    rules = brief.tails("ko-KR")["template"].split("## 규칙")[1]
+    assert "바꿔 끼우기 검사" in rules
+    assert f"{brief.PSEO_SAMPLE_AT}장" in rules and f"{brief.PSEO_STOP_AT}장" in rules
+    assert "행 수" in rules and "갱신" in rules
+    o = _opp("pseo_pattern", "서울 세무사 추천")
+    small = brief.build(o, {"pseo_groups": [_pseo_group()]}, "ko-KR")["body"]
+    assert "찍을 값이" not in small
+    warn = brief.build(o, {"pseo_groups": [_pseo_many(brief.PSEO_SAMPLE_AT)]}, "ko-KR")["body"]
+    assert f"찍을 값이 {brief.PSEO_SAMPLE_AT + 2}개" in warn, warn
+    assert "표본" in warn.split("찍을 값이", 1)[1].split("\n", 1)[0], warn
+    stop = brief.build(o, {"pseo_groups": [_pseo_many(brief.PSEO_STOP_AT)]}, "ko-KR")["body"]
+    assert "멈춰" in stop.split("찍을 값이", 1)[1].split("\n", 1)[0], stop
+
+
+def test_featured_snippet_format_is_named_when_the_collector_knows_it():
+    """강조 스니펫이 문단·목록·표·영상 중 무엇인지 수집이 알면 그 형식을 말한다. 모르면(옛 행·
+    그 칸을 안 싣는 수집) 지금처럼 일반 문장이다 — 형식을 지어내지 않는다."""
+    assert set(brief.SNIPPET_FORMAT_HINT) == {"paragraph", "list", "table", "video"}
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit()},
+           "rank_by_kw": {"검색어": {"features": ["featured_snippet"]}}}
+    o = _opp("ctr_gap", "검색어")
+    assert brief.SERP_FORMAT_HINT["featured_snippet"] in brief.build(o, ctx, "ko-KR")["body"]
+    ctx["rank_by_kw"]["검색어"][brief.SNIPPET_FORMAT_KEY] = "table"
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    assert brief.SNIPPET_FORMAT_HINT["table"] in body
+    assert brief.SERP_FORMAT_HINT["featured_snippet"] not in body, "일반 문장과 형식 문장이 두 번 선다"
+    ctx["rank_by_kw"]["검색어"][brief.SNIPPET_FORMAT_KEY] = "carousel"     # 모르는 값
+    assert brief.SERP_FORMAT_HINT["featured_snippet"] in brief.build(o, ctx, "ko-KR")["body"]
+
+
+def test_journey_stage_follows_the_intent_axis():
+    """여정 단계는 의도 축(scoring.INTENT_WORDS 의 둘째 칸)에서 옮긴다 — 낱말 표를 또 갖지 않는다."""
+    assert brief.journey_of("notion vs obsidian") == "검토"
+    assert brief.journey_of("notion pricing") == "결정"
+    assert brief.journey_of("what is a second brain") == "인지"
+    assert brief.journey_of("notion login") is None          # 찾아가는 검색어 — 단계가 아니다
+    axes = {a for _, a, _ in scoring.INTENT_WORDS}
+    assert set(brief.JOURNEY_BY_AXIS) <= axes, set(brief.JOURNEY_BY_AXIS) - axes
+    body = brief.build(_opp("content_gap", "notion vs obsidian", gap_kind="missing"), {}, "en-US")["body"]
+    assert "- 여정 단계: 검토" in body.split("## 대상", 1)[1].split("\n## ", 1)[0], body
+    # 묶음(대상이 검색어가 아닌 종류)에는 안 선다
+    assert "여정 단계" not in brief.build(_opp("coverage", "cluster:x"), {}, "en-US")["body"]
+
+
+def test_trust_pages_line_only_with_crawl_data():
+    """사이트 신뢰 페이지(연락처·개인정보처리방침·약관·후기) 줄은 크롤이 그 점검을 실었을 때만 선다.
+    없는 페이로드에서는 한 글자도 안 나간다 — '없음'을 지어내지 않는다."""
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit()}}
+    o = _opp("aio_exposure", "검색어", band="page1")
+    o["band"] = "page1"
+    assert brief.TRUST_PAGES_LEAD not in brief.build(o, ctx, "ko-KR")["body"]
+    ctx[brief.TRUST_PAGES_KEY] = {"contact": "https://me.example/contact", "privacy": None,
+                                  "terms": "https://me.example/terms", "reviews": None}
+    body = brief.build(o, ctx, "ko-KR")["body"]
+    line = next(x for x in body.splitlines() if x.startswith(brief.TRUST_PAGES_LEAD))
+    assert "연락처 있음(https://me.example/contact)" in line and "개인정보처리방침 없음" in line, line
+    assert "후기 없음" in line and "약관 있음" in line, line
+    # 모르는 키는 말하지 않는다
+    ctx[brief.TRUST_PAGES_KEY]["mystery"] = "https://me.example/x"
+    assert "mystery" not in brief.build(o, ctx, "ko-KR")["body"]
+
+
+def test_conversion_shape_checks_measurement_before_copy():
+    """전환 점검 꼴 — 클릭은 오는데 전환이 0인 페이지. 고치기 꼴을 빌리면 '더 잘 보이게 고쳐
+    주세요'(순위 일)로 시작해 title 3안을 시킨다. 이 꼴은 측정부터 가리고(태그가 빠진 것이면 거기서
+    멈춘다) 결정 요인·반론·증거·CTA 마찰을 표로 받는다. 기회 종류가 아니라 화면 폴백만 쓴다."""
+    assert "conversion" in brief.SHAPE_NAMES
+    for k in scoring.ALL_KINDS:
+        for has in (True, False):
+            assert brief.shape_of(k, has_page=has) != "conversion", k
+    t = brief.tails("ko-KR")["conversion"]
+    form = t.split("## 규칙")[0]
+    for card in ("측정 확인", "결정 요인", "반론", "증거", "CTA 마찰"):
+        assert card in form, card
+    assert form.index("측정 확인") < form.index("결정 요인"), "측정이 먼저다"
+    rules = t.split("## 규칙")[1]
+    assert "지어내지" in rules and "긴급" in rules
+    # 순위 일이 아니다 — title·H1 3안을 시키지 않는다
+    assert "title 3안" not in t and "3안" not in form
+    p = brief.shapes_payload("ko-KR")
+    assert "conversion" in p["page_state"], "고칠 페이지가 있는 꼴이다 — 폴백이 페이지 상태를 싣는다"
+    assert "전환" in p["intro"]["conversion"] and "순위" in p["intro"]["conversion"]
+    assert "GA4" in brief.fail_signal("conversion")
+    # 브라우저로 열어 보고 찾은 둘: 폴백이 SEO 진단 목록(title·H1…)을 같이 실어 "순위 일이 아니다"와
+    # 부딪혔고, '대상'의 언어 줄이 title 길이 기준을 말했다. 진단을 안 싣는 꼴은 페이로드가 말한다.
+    assert set(p["no_advice"]) == {"consolidate", "conversion"}, p["no_advice"]
+    assert "길이 기준" not in p["lang_line"]["conversion"] and "길이 기준" not in t
+    assert "conversion" not in brief.SEND_SHAPES and "conversion" not in brief.OFFSITE_SHAPES
+
+
+def test_customer_words_slot_is_optional_and_only_where_copy_is_written():
+    """고객의 말(통화·채팅·후기 원문)은 측정 데이터가 아니라 붙여 넣는 선택 칸이다 — 글을 쓰는
+    꼴(고치기·새 글)에만 서고, 없으면 그 자리가 [확인 필요]다. 상위 글 H2 를 이미 실어 '붙여 넣을 것'
+    칸이 빠진 요청문에도 선다(다른 칸이다)."""
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit()}}
+    fix = brief.build(_opp("striking_distance", "검색어"), ctx, "ko-KR")["body"]
+    new = brief.build(_opp("content_gap", "검색어 없는 것", gap_kind="missing"), {}, "ko-KR")["body"]
+    for body in (fix, new):
+        assert body.count(brief.VOC_HEAD) == 1, body
+        sec = body.split(brief.VOC_HEAD, 1)[1]
+        assert "[확인 필요]" in sec and brief.VOC_MARK in sec, sec
+    for kind in ("index_blocked", "backlink_prospect", "cannibalization", "pseo_pattern"):
+        b = brief.build(_opp(kind, "검색어"), ctx, "ko-KR")
+        assert brief.VOC_HEAD not in b["body"], (kind, b["shape"])
+    # 지어낸 고객의 말을 막는다 — 칸이 비면 인용을 만들지 않는다
+    assert "지어내지" in fix.split(brief.VOC_HEAD, 1)[1]
+
+
+def test_fix_page_asks_for_a_current_to_target_section_frame():
+    """본문 구간 산출물은 '지금 구간 → 목표 구간' 틀로 받는다 — H2 목록만 받으면 무엇이 그대로이고
+    무엇이 새로 서는지가 안 보인다. 목표 쪽의 근거는 상위 글의 구간·형식 데이터다."""
+    form = " ".join(brief.SHAPES["fix_page"]["form"])
+    assert "현재 → 목표" in form and "지금 구간" in form and "목표 구간" in form
+    assert "상위 글 몇 곳" in form
+    # 새로 번호 카드를 늘리지 않는다 — H2 카드 안의 틀이다(조건 '있으면'이 그대로 걸린다)
+    card = next(x for x in brief.SHAPES["fix_page"]["form"] if "현재 → 목표" in x)
+    assert "본문 구간(H2) 산출물이 있으면" in card and "없으면 이 카드는 만들지" in card
+
+
+def _len_ctx(words=(800, 1000, 3000), mine=120, url=URL):
+    top = [{"position": i + 1, "title": f"상위{i + 1}", "url": f"https://r.example/{i + 1}"}
+           for i in range(len(words))]
+    return {"query_pages": {"검색어": _pages(url)},
+            "page_audits": {url: {**_audit(), "url": url, "words": mine, "tables": 0, "lists": 1}},
+            "serp_top": {"검색어": top},
+            "serp_outlines": {r["url"]: {"title": r["title"], "h2": ["가", "나"], "words": w, "tables": 1,
+                                         "lists": 1, "images": 1, "videos": 0}
+                              for r, w in zip(top, words)}}
+
+
+def test_length_is_compared_to_the_median_of_top_pages_in_the_languages_unit():
+    """길이는 고정 숫자(블로그 1,500단어)가 아니라 같은 검색결과 상위 글의 중앙값과 견준다. 단위는
+    언어별이다 — 수집이 세는 것은 공백으로 가른 수라 한국어는 어절이고, 띄어쓰기가 없는 언어
+    (일본어·중국어·태국어)는 그 수로 길이를 견주지 않는다고 말한다."""
+    o = _opp("striking_distance", "검색어")
+    ko = brief.build(o, _len_ctx(), "ko-KR")["body"]
+    assert "- 길이: 상위 3곳 본문의 중앙값 1,000어절, 우리 페이지 120어절(중앙값의 12%)" in ko, ko
+    en = brief.build(o, _len_ctx(url="https://me.example/en/a"), "en-US")["body"]
+    assert "중앙값 1,000단어, 우리 페이지 120단어" in en, en
+    # 짝수면 가운데 둘의 평균 — 평균(mean)이 아니다(3000 하나가 끌어올리지 않는다)
+    four = brief.build(o, _len_ctx(words=(800, 1000, 1200, 9000), url="https://me.example/en/a"), "en-US")["body"]
+    assert "상위 4곳 본문의 중앙값 1,100단어" in four, four
+    # 둘뿐이면 중앙값이라 부르지 않는다
+    assert "중앙값" not in brief.build(o, _len_ctx(words=(800, 1000), url="https://me.example/en/a"), "en-US")["body"]
+    # 띄어쓰기 없는 언어 — 수를 견주지 않는다고 말하고 중앙값은 안 낸다
+    ja = brief.build(o, _len_ctx(url="https://me.example/ja/a"), "ja-JP")["body"]
+    assert "중앙값" not in ja and "띄어쓰기" in ja.split("본문 틀 밖만", 1)[1], ja
+    assert set(brief.NO_SPACE_LANGS) <= brief._KNOWN_LANGS, "모르는 언어 코드가 표에 있다"
+    # 새 글 — 우리 페이지가 없으니 상위만. 단위는 검색어의 언어다(사이트 기본 en-US 가 아니라 한글)
+    new = brief.build(_opp("content_gap", "검색어", gap_kind="missing"),
+                      {k: v for k, v in _len_ctx().items() if k.startswith("serp")}, "en-US")["body"]
+    assert "상위 3곳 본문의 중앙값 1,000어절" in new and "우리 페이지 120" not in new, new
+
+
+def test_aio_checklist_names_the_search_console_generative_ai_control():
+    """AI 요약에 인용이 안 될 때 확인할 것에 Search Console 의 생성형 AI 검색 기능 설정이 든다 —
+    사이트가 그 기능에서 빠지기로 돼 있으면 글을 아무리 고쳐도 인용되지 않는다(2026-06 구글 발표,
+    2026-08-31 전 세계 적용). 메뉴 이름은 구글 문서로 확인하지 못해 적지 않는다."""
+    acts = " ".join(scoring.kind_play("aio_exposure", band="page1")["acts"])
+    assert "Search Console" in acts and "생성형 AI" in acts and "제외" in acts, acts
+    assert "nosnippet" in acts, "스니펫 확인 줄이 사라졌다"
+    body = brief.build({**_opp("aio_exposure", "검색어", band="page1"), "band": "page1"},
+                       {"query_pages": {"검색어": _pages(URL)}}, "ko-KR")["body"]
+    assert "생성형 AI" in body.split("## 이 상황에서 할 일", 1)[1].split("\n## ", 1)[0]
 
 
 if __name__ == "__main__":

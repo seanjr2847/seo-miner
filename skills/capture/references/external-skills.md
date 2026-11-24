@@ -7,7 +7,7 @@ seo-miner 는 **측정하고 기회를 만드는 도구**다. 그 기회를 "어
 ## 준비물 — 외부 마케팅 스킬
 
 seo-miner 의 위임은 사용자 환경에 그 스킬이 설치돼 있어야 제대로 동작한다. 아래
-표가 그 준비물이다(`aso` 는 앱 스토어 리스팅이 있는 사이트에만 해당 — **선택**).
+표가 그 준비물이다(`aso` 는 앱 스토어 리스팅이 있는 사이트에만, `cro` 는 GA4 를 연결한 사이트에만 해당 — **선택**).
 
 **개수를 세는 정본은 `../../setup/scripts/doctor.py` 의 `ALL_SKILLS` 하나다** —
 doctor 도 `install_skills.py` 도 거기서 세고 거기서 설명을 읽는다. 산문이 숫자를
@@ -44,6 +44,7 @@ python ../../setup/scripts/install_skills.py
 | `programmatic-seo` | pSEO 대량 생성 | `/create plan` 의 `pseo_pattern` |
 | `schema` | 구조화 데이터 | `/create run` 의 페이지 발행 |
 | `aso` | 앱 스토어 리스팅 | 앱이 있는 사이트만 (**선택**) |
+| `cro` | 전환 없는 페이지 점검 | GA4 를 연결한 사이트의 전환 없는 페이지 (**선택**) |
 
 출처: https://github.com/coreyhaines31/marketingskills. `/setup` 의 doctor 가
 설치 여부를 보고, 빠진 게 있으면 사용자 승낙을 받아 `install_skills.py` 가
@@ -113,6 +114,7 @@ claude-seo(AgriciDaniel/claude-seo)는 **위임 상대가 아니다.** 같은 �
 | `site-architecture` | `cannibalization`·`coverage` 기회, 또는 같은 쿼리에 여러 URL 이 물릴 때 | 겹치는 URL 쌍과 각각의 노출·순위 | 카니벌라이제이션 판정만 보고 |
 | `programmatic-seo` | `pseo_pattern` 기회를 `/create plan` 에서 집을 때 | 패턴(템플릿 축), 1차 롤아웃 규모, 데이터 소스 | `content-rules.md` 의 pSEO 레시피 |
 | `schema` | `/create run` 이 페이지를 새로 낼 때·리프레시할 때 (항상 후보) | 페이지 종류(리뷰·비교·목록·글), 리포의 기존 구조화 데이터 방식 | 리포에서 관찰된 기존 방식만 모방 |
+| `cro` | [사이트] 화면의 전환 없는 페이지 표에 행이 있고(GA4 연결·전환 이벤트가 설정된 사이트), 사용자가 그 페이지를 고치려 할 때 | 페이지 주소, 그 페이지의 클릭·세션, 걸린 검색어, 감사 행(title·H1·H2) | 그 행의 전환 점검 요청문(`brief.py` 의 conversion 꼴)을 그대로 쓴다 |
 
 ## `$CAPTURE_HOME/docs/{사이트}/`
 
