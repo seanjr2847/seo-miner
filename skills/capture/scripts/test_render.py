@@ -453,6 +453,29 @@ MUSTS = [
 # 요청문 상자(요청문 만들기·요청문 복사)는 **호스팅에만** 선다. 로컬은 기회마다 "도구로
 # 열기"(runTool)가 요청문을 파일로 써서 도구를 바로 띄우므로, 복사해 붙여 넣는 길을 또
 # 두면 같은 행동이 두 벌이다. 호스팅은 브라우저라 도구를 못 띄워 복사가 유일한 길이다.
+# [AI 인용]의 AI 크롤러 표 — robots.txt 판정과 서버 반응이 다른 칸에 서고, 덧말이 원문을 싣는다.
+# 로컬·호스팅·박제본 셋 다 같은 페이로드라 셋 다 본다.
+_BOTS = r'id="ai-bots-sec"(?![^>]*hidden)(?:(?!</section>).)*'
+AIBOT_MUSTS = [
+    (_BOTS + r'<th[^>]*>(?:(?!</th>).)*서버 반응',
+     "[AI 인용] 봇 표에 서버 반응 칸이 없다 — robots.txt 판정과 한 칸에 뭉쳤거나 안 그렸다"),
+    (_BOTS + r'<td>OAI-SearchBot</td>(?:(?!</tr>).)*class="badge ok">열림</span>(?:(?!</tr>).)*'
+     r'class="badge warn">거절함</span>(?:(?!</tr>).)*HTTP 403',
+     "robots.txt 는 열렸지만 서버가 거절한 봇(OAI-SearchBot)이 '열림 + 거절함 HTTP 403'으로 안 섰다"),
+    (_BOTS + r'<td>PerplexityBot</td>(?:(?!</tr>).)*class="badge ok">응답함</span>',
+     "서버가 응답한 봇(PerplexityBot)의 서버 반응이 안 섰다"),
+    (_BOTS + r'<td>GPTBot</td>(?:(?!</tr>).)*막힘</span>(?:(?!</tr>).)*Disallow: /',
+     "비표준 UA 줄(GPTBot/1.1)로 막힌 학습 봇이 '막힘'으로 안 섰다"),
+    (_BOTS + r'비표준 User-agent 줄 <code>User-agent: GPTBot/1\.1</code>',
+     "비표준 User-agent 줄 덧말이 없다"),
+    (_BOTS + r'<code>Content-Signal: search=yes, ai-train=no</code>',
+     "Content-Signal 줄 원문이 안 실렸다"),
+    (_BOTS + r'llms\.txt: 있음 \(21바이트\), 형식이 깨졌습니다: ',
+     "llms.txt 형식 문제가 안 실렸다"),
+    (_BOTS + r'서버가 그 이름의 요청을 거절한 크롤러가 <b>1개</b>',
+     "봇 표 부제가 서버 거절 수를 안 말한다"),
+]
+
 ASK_HOSTED_MUSTS = [
     # 요청문 복사 버튼은 **펴기 전에** 보인다 — 손잡이 안이 아니라 상자 바로 뒤의
     # 독립 버튼이다(손잡이 안에 두면 막대 전체가 한 버튼으로 읽혀 패널이 열렸다).
@@ -579,7 +602,12 @@ ANS_PROBE = """<script>addEventListener("load", function () {
   var snap = function (id) {
     out.insertAdjacentHTML("beforeend", '<div id="' + id + '">' + dr().querySelector(".aia").innerHTML + "</div>");
   };
-  wait(btn, function () {
+  // 줄이 생기자마자 누르지 않는다 — 첫 로딩의 마지막 걸음이 열린 서랍을 닫는다(SM.drawer.close).
+  // 그 닫기와 이 클릭이 10ms 차이로 엇갈리면 서랍이 '불러오는 중'에 멈추고, 화면이 조금만 무거워져도
+  // (봇 표가 픽스처에 들어온 뒤로) 이 검사가 오락가락했다. 줄이 다섯 번 연달아 보인 뒤(0.5초)에 누른다.
+  var seenBtn = 0;
+  var settled = function () { seenBtn = btn() ? seenBtn + 1 : 0; return seenBtn >= 5; };
+  wait(settled, function () {
     btn().click();
     wait(ready, function () {
       snap("__aians_1__");
@@ -1037,6 +1065,17 @@ def _axes(conn, pid: int) -> None:
                       " VALUES(?,?,'sitemap',10,1)", (pid, prev)).lastrowid
     r2 = conn.execute("INSERT INTO crawl_runs(project_id,finished_at,seed,pages,issues)"
                       " VALUES(?,?,'sitemap',12,2)", (pid, d)).lastrowid
+    # AI 크롤러 접근 — robots.txt(학습 봇만 막음·비표준 UA 줄·Content-Signal), 서버가 한 봇을
+    # 거절, llms.txt 는 있지만 형식이 깨짐. [AI 인용]의 봇 표가 이 넷을 다른 칸·덧말로 그린다.
+    import ai_access
+    conn.execute("UPDATE crawl_runs SET robots_txt=? WHERE id=?", (
+        "User-agent: *\nContent-Signal: search=yes, ai-train=no\nAllow: /\n\n"
+        "User-agent: GPTBot/1.1\nDisallow: /\n", r2))
+    db.write_ai_ua_probe(conn, r2, {"baseline": 200, "rows": {
+        "OAI-SearchBot": {"verdict": "refused", "status": 403, "detail": "HTTP 403"},
+        "PerplexityBot": {"verdict": "served", "status": 200, "detail": None}}})
+    db.write_llms_txt(conn, r2, {"found": 1, "bytes": 21, "head": "# 사이트",
+                                 "format": ai_access.llms_format("# 사이트\n짧다")})
     conn.executemany("INSERT INTO crawl_issues(run_id,kind,severity,url,detail)"
                      " VALUES(?,?,?,?,?)",
                      [(r1, "dup_title", "warn", "/a", "같은 제목"),
@@ -1638,7 +1677,7 @@ def run() -> None:
         local = shell.replace(b"</body>", (CARDS_PROBE + PLAY_PROBE + ANS_PROBE).encode("utf-8") + b"</body>", 1)
         targets = [("로컬 대시보드", lambda: _stdlib(local),
                     MUSTS + LOCAL_MUSTS + SHELL_LOCAL_MUSTS + ASK_LOCAL_MUSTS
-                    + PLAY_MUSTS + PLAY_LOCAL_MUSTS + KWM_LOCAL_MUSTS + ANS_MUSTS)]
+                    + PLAY_MUSTS + PLAY_LOCAL_MUSTS + KWM_LOCAL_MUSTS + ANS_MUSTS + AIBOT_MUSTS)]
         # 호스팅 조립본은 리포에서만 만들 수 있다 (플러그인 설치본에 server/ 가 없다).
         # uvicorn·fastapi 도 이 안에서만 들인다(serve_hosted) — 설치본에는 없을 수 있다.
         # 페이지는 여기서 만들지 않는다: /d 가 스스로 조립한다(dashboard.assemble("hosted")
@@ -1646,13 +1685,13 @@ def run() -> None:
         if (ROOT / "server" / "assets" / "dash.html").exists():
             targets.append(("호스팅 조립본", lambda: serve_hosted(home / "hosted"),
                             HOSTED_MUSTS + ASK_HOSTED_MUSTS + PLAY_MUSTS + PLAY_HOSTED_MUSTS
-                            + KWM_HOSTED_MUSTS + ANS_MUSTS))
+                            + KWM_HOSTED_MUSTS + ANS_MUSTS + AIBOT_MUSTS))
 
         # 박제본 — 같은 템플릿에 데이터를 박아 넣은 자립형 HTML.
         report = dashboard.export(SITES[1]).read_bytes().replace(
             b"</head>", PROBE.encode("utf-8") + b"</head>", 1)
         targets.append(("박제본", lambda: _stdlib(report),
-                        REPORT_MUSTS + ASK_LOCAL_MUSTS + PLAY_REPORT_MUSTS + [m for m in view_sections()
+                        REPORT_MUSTS + ASK_LOCAL_MUSTS + PLAY_REPORT_MUSTS + AIBOT_MUSTS + [m for m in view_sections()
                                         if not any(f'[{v}]' in m[1] for v in REPORT_DROPPED)]))
 
         for label, up, musts in targets:
