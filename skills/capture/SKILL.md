@@ -657,6 +657,9 @@ Next Actions가 리포트의 결론이므로 `--actions` 없이 내보내지 않
 (`references/scoring.md`·`../create/references/content-rules.md`)으로 진행한다 —
 그때는 결과물에 "내장 규칙으로 처리했습니다"를 한 줄 남긴다. 같은 세션에서
 두 번 조르지 않는다. 계약 전문: `references/external-skills.md`.
+아래 스킬 이름은 **marketingskills 팩**(coreyhaines31)의 것이다. claude-seo 팩에도 같은 이름
+(`seo-audit`)이 있지만 URL 하나만 받는 다른 스킬이라 위임 상대가 아니다 — 둘 다 깔려 있으면
+marketingskills 쪽을 부른다(관계와 구분법은 `references/external-skills.md` 의 'claude-seo 와의 관계').
 
 | 시점 | 부를 스킬 | 넘기는 근거 |
 |---|---|---|
