@@ -29,16 +29,17 @@ import serp_adapter  # noqa: E402
 
 # usd 는 **추정** 단가다 — 문서가 값을 적지 않아 문서 표본 응답의 cost 를 옮겼다(2026-11-24).
 # dry-run 고지에만 쓴다. 실청구액은 응답의 cost 로 읽어 runs 에 적는다(post_dataforseo).
-#   default  설정(serp_extras)을 안 건드린 사이트에서 도는가. 검색어 수만큼 돈이 느는
-#            것(bing_rank)·한 건이 비싼 것(trends·ai_mode)은 꺼 둔다 — 켜는 것은 사람이다.
+#   default  설정(serp_extras)을 안 건드린 사이트에서 도는가. 전부 False 다 — 하나같이 유료라
+#            켜 두면 이 기능이 생기기 전부터 쓰던 사이트의 지출이 묻지도 않고 는다(intent 만
+#            해도 상한 1000개 × 단가). 켜는 것은 사람이다(사이트 설정 serp_extras · --extras).
 #   needs    이 기능이 그 검색어의 검색결과에 섰을 때만 받는다(없으면 받을 까닭이 없다)
 #   cap      한 런에 받는 검색어 수 상한      fresh_days  이 안에 받은 것은 다시 안 받는다
 KINDS: dict[str, dict] = {
-    "intent": {"name": "검색 의도 검증", "default": True, "usd": 0.012, "cap": 1000,
+    "intent": {"name": "검색 의도 검증", "default": False, "usd": 0.012, "cap": 1000,
                "fresh_days": 90, "needs": ()},
-    "images": {"name": "이미지 SERP", "default": True, "usd": 0.002, "cap": 10,
+    "images": {"name": "이미지 SERP", "default": False, "usd": 0.002, "cap": 10,
                "fresh_days": 30, "needs": ("images",)},
-    "youtube": {"name": "YouTube SERP", "default": True, "usd": 0.002, "cap": 10,
+    "youtube": {"name": "YouTube SERP", "default": False, "usd": 0.002, "cap": 10,
                 "fresh_days": 30, "needs": ("video", "short_videos")},
     "bing_rank": {"name": "Bing 순위", "default": False, "usd": 0.002, "cap": 50,
                   "fresh_days": 1, "needs": ()},

@@ -476,14 +476,15 @@ def test_extras_spend_nothing_without_a_key_or_when_off():
     p = _project(conn, "w05_ex_off")
     kws = [_kw(conn, p["id"], "가")]
     fake = _Dfs()
-    got = _with_dfs(fake, lambda: serp_extras.run(conn, p, kws, default_locale="ko-KR"), key=False)
+    got = _with_dfs(fake, lambda: serp_extras.run(conn, p, kws, setting="intent",
+                                                  default_locale="ko-KR"), key=False)
     assert got["note"] == "extras=skipped(DataForSEO 키 없음)" and got["cost"] == 0 and not fake.calls
     got = _with_dfs(fake, lambda: serp_extras.run(conn, p, kws, setting="none",
                                                   default_locale="ko-KR"))
     assert got["note"] == "extras=off" and not fake.calls
-    # 기본으로 도는 것은 묶어 한 번(intent)과 기능이 선 검색어뿐 — 돈이 검색어 수만큼 느는
-    # 종류(bing_rank)와 한 건이 비싼 종류(trends·ai_mode)는 사람이 켠다
-    assert serp_extras.wanted(None) == ["intent", "images", "youtube"]
+    # 기본으로는 아무것도 안 돈다 — 전부 유료라 설정을 안 건드린 기존 사이트의 지출이 몰래
+    # 늘지 않게, 켜는 것은 사람이다(사이트 설정 serp_extras 또는 --extras)
+    assert serp_extras.wanted(None) == [] and not any(v["default"] for v in serp_extras.KINDS.values())
     # 사이트마다 켜고 끌 수 있다 — 설정 키가 정본 목록에 있어야 저장된다(없으면 ValueError)
     db.set_project_settings(conn, p["id"], {"serp_extras": "bing_rank", "ai_llm_mentions": 1})
     cfg = db.project_cfg(conn, p["name"])
@@ -492,13 +493,19 @@ def test_extras_spend_nothing_without_a_key_or_when_off():
     conn.close()
 
 
-def test_extras_default_run_only_fetches_what_the_serp_showed_and_not_twice():
+def test_extras_opted_in_run_only_fetches_what_the_serp_showed_and_not_twice():
     conn = db.connect()
     p = _project(conn, "w05_ex_run")
     a, b = _kw(conn, p["id"], "이미지 검색어"), _kw(conn, p["id"], "글 검색어")
+    # 기본값(설정을 안 건드린 사이트)은 유료 선택 수집을 하나도 안 돈다 — 켜는 것은 사람이다
+    idle = _Dfs()
+    none = _with_dfs(idle, lambda: serp_extras.run(conn, p, [a, b], default_locale="ko-KR",
+        features_of={a["id"]: ["images", "video"]}))
+    assert not idle.calls and none["cost"] == 0, none
+    assert serp_extras.wanted(None) == [], serp_extras.DEFAULT
     fake = _Dfs()
     run = lambda: serp_extras.run(                                     # noqa: E731
-        conn, p, [a, b], default_locale="ko-KR",
+        conn, p, [a, b], default_locale="ko-KR", setting="intent,images,youtube",
         features_of={a["id"]: ["images", "video"], b["id"]: ["people_also_ask"]})
     got = _with_dfs(fake, run)
     paths = [c[0] for c in fake.calls]
