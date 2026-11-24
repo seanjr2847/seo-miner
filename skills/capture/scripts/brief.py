@@ -48,7 +48,7 @@ import serp_adapter
 # 이름·순서의 정본. 화면의 폴백(기회로 아직 안 올라온 행)도 이 이름만 쓴다 —
 # test_seams 가 대조한다.
 SHAPE_NAMES = ("fix_page", "split_page", "new_content", "template", "consolidate", "technical",
-               "outreach", "mention", "presence")
+               "outreach", "mention", "presence", "conversion")
 
 # 숫자만 보고 제안하는 것을 막는 규칙 — 상수로 두는 이유는 검사가 어느 꼴에 실렸는지
 # 대조하기 때문이다. 요청문의 표는 출발점이지 페이지를 읽은 것이 아니다.
@@ -68,6 +68,23 @@ RULE_ONE_SET = ("검색어 여럿이 한 페이지에 걸려 있으면 title·H1
 ADVICE_HEAD = "## 진단: 고쳐야 할 것"
 WORK_HEAD = "## 이 페이지에 이미 한 작업"
 HOLD_MARK = "관찰 중"
+# 새 글 설계도의 필수 한 줄. 상위 글 H2 를 재료로 주기만 하면 설계도가 그 목차들의 합집합에서
+# 끝난다 — 같은 질문에 같은 답을 한 번 더 쓰는 글이다. '더 자세히'는 누구나 하는 말이라 답으로
+# 안 받는다. 못 찾으면 지어내지 않고 빈칸으로 보이게 둔다(사람이 채울 자리다).
+INFO_GAIN = ("새로 보태는 것(Information Gain) 한 줄: 상위 글 어디에도 없고 **우리만** 쓸 수 있는 것"
+             "(자체 데이터·직접 해 본 결과·원본 사례·현장 전문가의 판단) 하나와, 목차의 어느 구간이 "
+             "그것을 싣는지. '더 자세히·더 최신·더 길게'는 답이 아닙니다. 찾지 못하면 [확인 필요]로 "
+             "두고 지어내지 않습니다.")
+# 템플릿으로 찍을 양의 문턱 — 한 번에 이만큼 넘게 찍으면 먼저 표본을 사람이 읽고, 그 위는 멈춰
+# 묻는다. 근거 절(_ev_pseo)과 꼬리의 규칙이 이 수 한 벌을 쓴다.
+PSEO_SAMPLE_AT = 100
+PSEO_STOP_AT = 500
+# 비교 글의 공정성 — 한쪽이 우리 것일 때만 뜻이 있다(둘 다 남의 것·개념이면 표만으로 된다).
+# 진단 [비교] 의 산출물 틀과 비교 의도의 새 글 요청문이 이 한 벌을 싣는다.
+COMPARE_FAIR = ("견주는 한쪽이 우리 제품·서비스면: 값(가격·기능·수치)마다 확인한 날짜와 출처를 달고, "
+                "어느 쪽이 우리 것인지 밝히고, 상대가 나은 항목도 지우지 않고 남기며, 숨은 비용"
+                "(설치·수수료·약정)은 양쪽 다 적습니다. 상대를 설명하는 구간에는 우리 쪽 구매 유도를 "
+                "넣지 않습니다. 같은 상대를 다루는 다른 비교 글이 사이트에 있으면 서로 링크합니다.")
 
 SHAPES: dict[str, dict] = {
     "fix_page": dict(
@@ -191,6 +208,7 @@ SHAPES: dict[str, dict] = {
               "새로 만들지 않습니다.",
               "우리 제품·데이터로만 쓸 수 있는 구간은 제목 앞에 [내 데이터] 를 붙이고 넣을 것을 "
               "적습니다.",
+              INFO_GAIN,
               "신뢰 신호: 누가 쓰는 게 맞는지(경험·자격), 쓸 1차 자료, 출처가 필요한 주장. "
               "이름·자격은 [저자] 자리로 둡니다.",
               "발행 뒤 내부 링크 표: 어느 글에서 | 앵커 텍스트 | 넣을 자리. 위 '만들어 줄 것'에 "
@@ -234,6 +252,12 @@ SHAPES: dict[str, dict] = {
         rules=["값마다 그 값만의 데이터(값마다 다른 사실·수치·목록)가 있어야 찍습니다. 값 이름만 "
                "바꾼 페이지는 만들지 않습니다. 얇은 페이지가 쌓이면 사이트 전체가 저품질로 "
                "읽힙니다.",
+               # 지역 템플릿이 흔히 걸리는 자리 — 문단이 값과 무관하면 지명만 다른 같은 글이다.
+               "바꿔 끼우기 검사: 값 이름만 다른 값으로 바꿔도 그대로 말이 되는 문단은 그 값의 "
+               "고유 내용이 아닙니다. 값마다 바뀌는 구간이 이 검사를 통과하는지 견본에서 보입니다.",
+               f"찍을 양의 문턱: 한 번에 {PSEO_SAMPLE_AT}장을 넘기면 먼저 5~10%를 표본으로 찍어 "
+               f"사람이 읽은 뒤 나머지를 찍고, {PSEO_STOP_AT}장을 넘기면 찍지 않고 멈춰 묻습니다. "
+               "데이터 원본은 행 수·값끼리 내용이 겹치는 필드·마지막 갱신일을 적습니다.",
                "이미 전용 페이지가 있는 값(위 '대상')은 새로 찍지 않습니다. 같은 값으로 두 장이 서면 "
                "한 검색어를 나눠 갖습니다.",
                "경쟁 페이지의 문장·구성을 그대로 옮기지 않습니다. 같은 질문에 답하되 순서와 관점은 "
@@ -362,8 +386,84 @@ SHAPES: dict[str, dict] = {
                "숫자·후기·사례를 지어내지 않습니다. 없는 것은 [확인 필요]로 둡니다.",
                "모든 플랫폼을 한꺼번에 밀지 않습니다. 인용이 가장 잦은 한두 곳부터."],
         slot="", limits=False),
+    # 클릭은 오는데 전환이 0인 페이지. 예전엔 고치기 꼴을 빌렸다 — 머리말이 "이 검색어에서 더 잘
+    # 보이게 고쳐 주세요"(순위 일)이고 꼬리가 title·H1 안을 받는 표라, 전환을 묻는 요청문이 제목
+    # 3안을 받아 왔다. 이 꼴은 측정부터 가린다: 전환 0 의 가장 흔한 까닭은 페이지가 아니라 빠진
+    # 태그다. 그다음이 구매 결정에 필요한 것(결정 요인·반론·증거)과 CTA 까지 가는 길의 마찰이다.
+    # 기회 종류(KIND_SHAPE)가 아니라 화면 폴백([사이트]의 전환 없는 페이지)만 쓴다 — 전환 없음은
+    # 아직 기회로 채점하지 않는다. 위임 상대는 cro 스킬이다(references/external-skills.md).
+    "conversion": dict(
+        label="전환 점검",
+        intro="아래 페이지는 검색 클릭은 받는데 전환(신청·구매·문의)이 한 번도 안 잡혔습니다. 순위를 "
+              "올리는 일이 아닙니다. 전환이 정말 0인지(측정이 빠진 것인지)부터 가리고, 맞다면 이 "
+              "페이지에 온 사람이 결정하는 데 걸리는 것을 찾아 고칠 안을 내 주세요.",
+        form=["측정 확인 표: 전환 동작(신청·구매·문의·가입) | 이 페이지에서 그 동작까지 가는 길이 "
+              "있나(있으면 어디) | 그 동작에 분석 도구(GA4)의 전환 이벤트가 걸려 있나(확인한 방법). "
+              "길은 있는데 이벤트가 안 걸린 것이면 그것이 결론입니다. 아래 카드는 만들지 않고 "
+              "태그를 어디에 걸지만 적고 멈춥니다.",
+              "결정 요인 표: 이 페이지의 검색어로 온 사람이 결정 전에 알아야 하는 것(가격·조건·"
+              "대상·기간·위험 가운데 이 페이지에 해당하는 것) | 이 페이지에 있나(있으면 어느 구간) | "
+              "없으면 넣을 자리와 넣을 내용의 출처.",
+              "반론·걱정 표: 걱정 | 어디서 봤나(검색어·상위 글·고객의 말) | 이 페이지가 답하나 | "
+              "답할 문안. 근거가 없으면 문안 대신 [확인 필요].",
+              "증거 표: 증거 종류(후기·사례·수치·인증·보증) | 지금 이 페이지에 있는 것 | 빠진 것 | "
+              "사이트 어디에 재료가 있나. 재료가 없으면 [확인 필요]로 남깁니다.",
+              "CTA 마찰 표: CTA(문구·자리) | 모바일 첫 화면에 보이나 | 누른 뒤 끝까지 몇 단계·입력 "
+              "칸 몇 개 | 고칠 값. 검색어가 약속한 것과 첫 화면이 말하는 것이 맞는지 한 줄.",
+              "적용 뒤 확인: 다음 분석 수집에서 어느 이벤트가 몇 번 보이면 된 것인지."],
+        graph="",
+        rules=["후기·수치·보증·할인·남은 수량을 지어내지 않습니다. 사이트에 실제로 있는 것만 쓰고 "
+               "없으면 [확인 필요]로 둡니다.",
+               "가짜 긴급·희소성(거짓 마감·거짓 재고), 숨긴 비용, 거절을 어렵게 만드는 단추를 "
+               "제안하지 않습니다.",
+               "검색 순위를 올리는 일(title·H1·H2 손질, 새 글)은 이 요청문의 일이 아닙니다. 눈에 "
+               "띄면 '따로 볼 것'에 한 줄로만 적습니다.",
+               "전환이 잘 되는 다른 페이지와 견줄 때는 직접 열어 본 페이지만 견주고 주소를 답니다.",
+               "'지금 값'은 위 '지금 이 페이지 상태' 절이 있으면 거기서, 없으면 페이지를 열어 본 "
+               "값입니다. CTA·양식처럼 그 절에 없는 것은 직접 열어 보고 적습니다."],
+        slot="고객이 실제로 한 말(문의·통화·채팅·후기 원문)을 여기에 붙이면, 반론·걱정 표를 짐작이 "
+             "아니라 그 말로 채웁니다. 없으면 고객의 말이 필요한 칸은 [확인 필요]로 둡니다.",
+        limits=True),
 }
 assert tuple(SHAPES) == SHAPE_NAMES
+
+# '목표와 확인' 절의 실패 신호 — 꼴마다 한 벌. 목표·끝나는 조건은 잘됐을 때만 말해서, 고친 뒤
+# 무엇을 보면 접어야 하는지가 없었다. 판정이 아니라 사람이 볼 것이다(도구는 이 줄로 닫지 않는다).
+# {first}·{last} 는 관찰 주 수(RECHECK_WEEKS) — fail_signal() 이 채운다.
+FAIL_SIGNAL = {
+    "fix_page": "{last}주 뒤 확인에서도 이 페이지의 노출·클릭·평균 순위가 기준선에서 안 움직였거나 "
+                "내려갔으면 실패로 봅니다. 그 전에 볼 선행 지표: 구글이 고친 뒤 다시 읽어 갔는지(URL "
+                "검사의 마지막 크롤 날짜), 검색결과에 고친 title 이 보이는지.",
+    "split_page": "{last}주 뒤에도 떼어낸 지면이 그 묶음의 검색어로 노출이 없거나, 두 지면이 같은 "
+                  "검색어를 나눠 가지면(한 검색어에 두 주소) 실패로 봅니다. 선행 지표: 떼어낸 지면의 "
+                  "색인 여부.",
+    "new_content": "발행 {first}주 뒤에도 색인이 안 됐거나(URL 검사), {last}주 뒤에도 이 검색어로 "
+                   "노출이 없으면 실패로 봅니다. 선행 지표는 순서대로 색인 → 노출 → 순위입니다.",
+    "template": "찍은 값 페이지가 {first}주 뒤에도 대부분 색인되지 않거나 '크롤됨, 현재 색인이 생성되지 "
+                "않음'이 늘면 실패로 봅니다(얇다고 읽힌 것입니다). 선행 지표: 표본으로 먼저 찍은 값의 "
+                "색인 여부.",
+    "consolidate": "적용한 뒤에도 보낸 주소가 200 을 내거나 리다이렉트가 사슬이면 실패입니다. {last}주 "
+                   "뒤 남긴 주소의 노출이 합치기 전 합계보다 줄었으면 처분을 다시 봅니다.",
+    "technical": "적용한 날 직접 확인에서 값이 그대로면 실패입니다(배포가 안 됐거나 다른 자리가 "
+                 "덮어씁니다). 값은 바뀌었는데 다음 크롤·색인 확인에서 판정이 그대로면 원인이 다른 "
+                 "데 있습니다.",
+    "outreach": "{first}주 안에 답이 없고 한 번 다시 물어도 없으면 접습니다. 같은 곳에 세 번째 연락은 "
+                "하지 않습니다.",
+    "mention": "{first}주 안에 답이 없고 한 번 다시 물어도 없으면 접습니다. 링크가 걸렸는지는 그 글을 "
+               "직접 열어 봅니다.",
+    "presence": "4주 순서표를 마친 뒤 AI 확인에서 인용된 곳이 그대로면 실패로 봅니다. 선행 지표: 그 "
+                "플랫폼에서 우리 글·답변이 지워지지 않고 남아 있는지.",
+    "conversion": "적용 뒤 다음 GA4 수집에서도 이 페이지의 전환 이벤트가 0이면 실패로 봅니다. 선행 "
+                  "지표: 전환 동작을 직접 한 번 해 보고 그 이벤트가 GA4 실시간에 찍히는지.",
+}
+assert tuple(FAIL_SIGNAL) == SHAPE_NAMES
+
+
+def fail_signal(shape: str) -> str:
+    first, last = RECHECK_WEEKS
+    return FAIL_SIGNAL[shape].format(first=first, last=last)
+
+
 # 남의 사이트에 보내는 연락문 꼴 — 고칠 우리 페이지가 없어 페이지 언어·길이 줄을 세우지 않는다.
 OFFSITE_SHAPES = ("outreach", "mention")
 
@@ -400,6 +500,9 @@ STEP_SITE = {
     "mention": "그 이름에 걸 우리 페이지가 실제로 있는지(라이브), 그리고 우리 이름이 나온 그쪽 글",
     "presence": "그 플랫폼에서 인용·링크할 만한 우리 페이지가 실제로 있는지(라이브), 그리고 근거에 "
                 "나온 플랫폼의 실제 글과 규칙",
+    "conversion": "이 주소를 만드는 파일과 CTA·양식이 있는 자리, 전환 이벤트를 보내는 코드(태그 "
+                  "관리자·분석 스니펫·양식 제출 핸들러)가 어디 있고 이 페이지에도 걸리는지, 라이브 "
+                  "페이지를 모바일 폭으로 열었을 때 첫 화면",
 }
 assert tuple(STEP_SITE) == SHAPE_NAMES
 # 고칠 파일이 사이트 저장소에 없는 꼴 — 4단계가 '적용'이 아니라 사람이 보내는 일이다.
@@ -618,7 +721,7 @@ DELIVER_BY_TAG = {
     "본문": "본문에 추가할 H2 목록과 각 항목에서 답할 내용: 이미 있는 문단은 그대로 둡니다",
     "H2": "H2 목록: 검색어 묶음이 묻는 질문 순서대로, 지금 것과 나란히",
     "외부 링크": "근거로 걸 출처 1~3개와 그 앵커 문장: 본문의 주장 중 어느 것에 다는지까지",
-    "비교": "둘을 나란히 견주는 표(항목 | 하나 | 다른 하나) + 결론 한 문단",
+    "비교": "둘을 나란히 견주는 표(항목 | 하나 | 다른 하나) + 결론 한 문단. " + COMPARE_FAIR,
     # 진단이 '없다'만이 아니라 '필수 속성이 빠졌다'도 말한다(scoring._structured_data_advice) —
     # 있는 마크업을 버리고 새로 짜게 하지 않는다.
     "구조화 데이터": "이 페이지에 맞는 구조화 데이터(JSON-LD) 한 벌: 이미 있으면 진단이 짚은 "
@@ -833,7 +936,7 @@ def _target_lang_lines(o: dict, ctx: dict, locale: str | None, shape: str = "") 
 
 
 PRODUCT_NOUN = {"outreach": "연락문", "mention": "연락문", "presence": "게시·답변 문안",
-                "template": "틀의 title·H1"}
+                "template": "틀의 title·H1", "conversion": "CTA·본문 문안"}
 # 그 꼴이 실제로 내놓는 산출물의 **예** — 꼬리가 없는 산출물 이름을 부르지 않게.
 # 문안을 만드는 꼴만 title·meta 를 갖는다(SHAPES[...]['limits'] 와 같은 갈래다).
 PRODUCT_EXAMPLES = {"outreach": "연락문 제목·본문",
@@ -841,7 +944,8 @@ PRODUCT_EXAMPLES = {"outreach": "연락문 제목·본문",
                     "presence": "게시·답변 문안",
                     "template": "title·H1 틀과 견본·주소 꼴",
                     "technical": "코드·설정 값",
-                    "consolidate": "리다이렉트·canonical 설정 값"}
+                    "consolidate": "리다이렉트·canonical 설정 값",
+                    "conversion": "CTA 문구·반론에 답하는 문단"}
 PRODUCT_EXAMPLES_DEFAULT = "title·H1·meta description·본문 문안"
 
 
@@ -929,7 +1033,7 @@ def shape_of(kind: str, *, gap_kind: str | None = None, has_page: bool = False,
 def _shows_page(shape: str) -> bool:
     """'지금 이 페이지 상태' 섹션을 갖는 꼴 — 페이지를 손대거나(fix) 점검하거나(technical)
     정리(consolidate)하는 일. 새 글과 연락문에는 고칠 페이지가 없다."""
-    return shape in ("fix_page", "split_page", "technical", "consolidate")
+    return shape in ("fix_page", "split_page", "technical", "consolidate", "conversion")
 
 
 def _n(v) -> str:
@@ -1353,6 +1457,18 @@ SERP_FORMAT_HINT = {
     "top_stories": "뉴스 칸: 언론 기사가 그 자리를 가져갑니다(글 손질로는 못 들어갑니다)",
     "topStories": "뉴스 칸: 언론 기사가 그 자리를 가져갑니다(글 손질로는 못 들어갑니다)",
 }
+# 강조 스니펫이 **어떤 형식**으로 섰나 — 수집(순위 행)이 그 칸을 실을 때만 쓴다. 일반 문장은
+# "직답·표·번호 목록"을 한꺼번에 말해서 받는 쪽이 셋 중 무엇을 만들지 골라야 했다. 키 이름은
+# 수집 쪽과의 이음매라 상수로 둔다(칸이 없거나 값을 모르면 일반 문장 그대로 — 지어내지 않는다).
+SNIPPET_FORMAT_KEY = "snippet_format"
+SNIPPET_FORMAT_HINT = {
+    "paragraph": "강조 스니펫(문단 꼴): 질문 바로 아래 두세 문장 직답이 그 자리를 가져갑니다",
+    "list": "강조 스니펫(목록 꼴): 순서·항목을 번호 목록이나 글머리 목록으로 쓴 구간이 그 자리를 "
+            "가져갑니다",
+    "table": "강조 스니펫(표 꼴): 값을 견주는 표가 그 자리를 가져갑니다",
+    "video": "강조 스니펫(영상 꼴): 그 질문에 답하는 구간이 표시된 영상이 그 자리를 가져갑니다",
+}
+_SNIPPET_GENERIC = frozenset({SERP_FORMAT_HINT["featured_snippet"], SERP_FORMAT_HINT["answerBox"]})
 # 형식 사전에 없는 기능의 이름 — 요청문에 수집기 키(ai_overview 등)가 그대로 찍히지 않게.
 _FEATURE_NAME = {"ai_overview": "구글 AI 요약", "knowledge_graph": "지식 패널",
                  "knowledgeGraph": "지식 패널"}
@@ -1408,6 +1524,12 @@ def _serp_feature_lines(o: dict, ctx: dict) -> list[str]:
     있다(순위 행이 싣는다) — 그래서 상위 표와 따로 선다."""
     feats = ((ctx.get("rank_by_kw") or {}).get(str(o.get("target") or "")) or {}).get("features") or []
     hints = list(dict.fromkeys(SERP_FORMAT_HINT[f] for f in feats if f in SERP_FORMAT_HINT))
+    # 강조 스니펫의 형식을 수집이 알면 일반 문장 대신 그 형식을 말한다(모르는 값이면 그대로)
+    fmt = SNIPPET_FORMAT_HINT.get(str(
+        ((ctx.get("rank_by_kw") or {}).get(str(o.get("target") or "")) or {}).get(SNIPPET_FORMAT_KEY)
+        or ""))
+    if fmt:
+        hints = list(dict.fromkeys(fmt if h in _SNIPPET_GENERIC else h for h in hints))
     if not hints:
         return []
     return ["## 검색결과에 선 칸: 그 자리를 가져가는 형식", *(f"- {h}" for h in hints),
@@ -2522,7 +2644,24 @@ def _ev_pseo(o, ctx, pages):
              "있어(점검 전이면 구조로만) 그 값의 전용 페이지로 본 것입니다. 이미 찍혀 있는 값입니다. 값 둘이 "
              "한 페이지를 나눠 쓰면 그 페이지에서 더 높이 걸린 값의 것입니다. 서치콘솔은 노출이 적은 검색어를 "
              "감추므로 같은 틀의 값은 이 표보다 많습니다.")
+    # 허브의 링크 목록은 사이트에 실제로 있는 값 페이지다 — 받는 쪽이 목록을 짐작으로 채우면 없는
+    # 주소가 허브에 박히고 있는 주소가 빠진다.
+    own = [v for v in vals if v.get("own") and v.get("page")]
+    if own:
+        L.append(PSEO_HUB_COVER.format(n=len(own)))
+    todo = len(vals) - len([v for v in vals if v.get("own")])
+    if todo >= PSEO_SAMPLE_AT:
+        L.append(f"- 찍을 값이 {_n(todo)}개입니다. "
+                 + (f"{PSEO_STOP_AT}장을 넘깁니다. 찍지 않고 멈춰, 어느 값부터 몇 장을 찍을지 묻습니다."
+                    if todo >= PSEO_STOP_AT else
+                    f"{PSEO_SAMPLE_AT}장을 넘깁니다. 먼저 5~10%를 표본으로 찍어 사람이 읽은 뒤 나머지를 "
+                    "찍습니다."))
     return L
+
+
+PSEO_HUB_COVER = ("- 허브의 링크 목록은 위 표에서 (전용)인 주소 {n}곳 전부입니다. 빠뜨리지 않고, 표에 "
+                  "없는 주소를 지어내지 않습니다. 아직 없는 값은 링크가 아니라 '찍을 값'으로 따로 "
+                  "적습니다.")
 
 
 def _ev_device(o, ctx, pages):
@@ -4030,6 +4169,7 @@ def _goal_lines(o: dict, ctx: dict, pages: list[dict], pq: list[dict], shape: st
             L.append(f"- 언제 볼지: 적용 뒤 구글이 다시 읽어 가고 실적(기간 평균)이 따라와야 "
                      f"움직입니다. {first}주 뒤 첫 확인, {last}주 뒤 다시: 그때도 제자리면 진단으로 "
                      "돌아가 방향을 다시 정합니다. 고친 다음 날의 순위로 판단하지 않습니다.")
+    L.append(f"- 실패로 볼 신호: {fail_signal(shape)}")
     return L + [""]
 
 
@@ -4091,6 +4231,142 @@ def _page_work_lines(url: str | None, ctx: dict, *, table: bool = False,
         L.append(f"- 마지막 작업({last.isoformat()}) 뒤 관찰 기간({scoring.OBSERVE_DAYS}일)이 "
                  f"지났습니다.{mixed} 앞 작업이 바꾼 것을 되돌리는 안이면 왜 되돌리는지 적습니다.")
     return L + [""]
+
+
+# ── 주제 묶음의 지면 목록과 서로 링크 ─────────────────────────────────────────
+# 주제 묶음 요청문은 '대상'에 다른 지면의 주소만 한 줄로 늘어놓았다. 허브·목록을 짜라고 하면
+# 받는 쪽이 하위 지면을 짐작으로 채웠고(없는 주소를 넣고 있는 주소를 빠뜨렸다), 이 지면들이
+# 대상과 서로 링크하는지는 아무도 안 봤다. 지면 목록은 크롤이 본 것(topic_pages), 링크는 대상의
+# 들어오는·나가는 링크(crawl_inlinks·crawl_outlinks) — 크롤이 대상을 안 봤으면 '모름'이다.
+CLUSTER_PAGES_HEAD = "## 이 주제의 다른 지면 (사이트에 실제로 있는 것)"
+_CLUSTER_PAGE_ROWS = 20
+
+
+def _cluster_page_lines(o: dict, ctx: dict, url: str) -> list[str]:
+    rest = [p for p in _topic_of(o, ctx) if p.get("page") and p["page"] != url]
+    if not rest:
+        return []
+    ins = (ctx.get("crawl_inlinks") or {}).get(url)
+    outs = (ctx.get("crawl_outlinks") or {}).get(url)
+    # 들어오는 링크 표는 잘려 올 수 있다 — 전체 글 목록(from_all)이 있으면 그것으로 본다
+    froms = None if ins is None else {scoring.norm(u) for u in (
+        (ins[0].get("from_all") if ins else None) or [r.get("from") for r in ins]) if u}
+    tos = None if outs is None else {scoring.norm(u) for u in outs if u}
+
+    def mark(known, p):
+        return "모름" if known is None else "있음" if scoring.norm(p) in known else "없음"
+
+    L = [CLUSTER_PAGES_HEAD,
+         "크롤이 본, 제목·H1 에 이 주제가 든 내 지면입니다. 링크 칸은 같은 크롤의 값입니다.",
+         *_table(["지면", "제목", "그 지면 → 이 페이지 링크", "이 페이지 → 그 지면 링크"],
+                 [[p["page"], p.get("h1") or p.get("title"), mark(froms, p["page"]),
+                   mark(tos, p["page"])] for p in rest[:_CLUSTER_PAGE_ROWS]])]
+    if len(rest) > _CLUSTER_PAGE_ROWS:
+        L.append(f"- 외 {len(rest) - _CLUSTER_PAGE_ROWS}개")
+    L += ["- 이 주제의 지면을 나열하거나 묶는 구간(목록·허브·함께 보기)을 만들면 이 표의 지면을 "
+          "빠뜨리지 않고, 표에 없는 지면을 지어내지 않습니다. 더 있어야 할 지면은 링크가 아니라 "
+          "'따로 볼 것'에 새 글 후보로 적습니다.",
+          "- 링크 칸이 '없음'인 쪽은 '따로 볼 것'에 한 줄씩: 어느 문단에서 어떤 앵커로 걸지. "
+          "'모름'은 크롤이 이 페이지를 안 본 것이니 직접 열어 확인합니다.", ""]
+    return L
+
+
+# ── H2 마다 맡는 검색어 ──────────────────────────────────────────────────────
+# 검색어 여럿이 한 페이지에 걸리면 '한 벌이 전부를 맡는다'(RULE_ONE_SET)까지만 말했다 — 어느
+# 구간이 어느 검색어를 받는지는 받는 쪽이 짐작했다. 지금 H2 와 낱말이 겹치는 검색어를 기계로
+# 먼저 가른다. 묶음이 모두 품은 말은 가르지 못하니 뺀다. 낱말을 못 뽑는 글자(가나·한자 —
+# scoring.tokens 가 안 가른다)의 검색어가 하나라도 있으면 표를 안 세운다: '안 걸림'이 아니라 모름이다.
+H2_QUERIES_HEAD = "지금 H2 와 거기 걸리는 검색어 (낱말 겹침으로 가른 추정)"
+_H2_QUERY_ROWS = 12
+
+
+def _h2_query_lines(audit: dict | None, rows: list[dict]) -> list[str]:
+    h2s = _content_h2(scoring._as_list((audit or {}).get("h2_json")))
+    if len(rows) < 2 or not h2s:
+        return []
+    same = _shared_word(rows)
+    words = {r["query"]: (_words(r["query"]) - ({same} if same else set())) for r in rows}
+    if not all(words.values()):
+        return []
+
+    def hits(h2: str, ws: set[str]) -> bool:
+        toks, low = _words(h2), str(h2).lower()
+        # 라틴 낱말은 토큰 일치, 그 밖(한글)은 조사가 붙어 부분 일치 — scoring.INTENT_WORDS 와 같은 규칙
+        return any(w in toks if w.isascii() else w in low for w in ws)
+
+    took: set[str] = set()
+    table = []
+    for h in h2s[:_H2_QUERY_ROWS]:
+        qs = [q for q, ws in words.items() if hits(h, ws)]
+        took |= set(qs)
+        table.append([h, ", ".join(_ext(q, 60) for q in qs[:4])
+                      + (f" 외 {len(qs) - 4}개" if len(qs) > 4 else "") if qs else "-"])
+    left = [q for q in words if q not in took]
+    L = [H2_QUERIES_HEAD + ":", *_table(["지금 H2", "걸리는 검색어"], table)]
+    if len(h2s) > _H2_QUERY_ROWS:
+        L.append(f"- 외 H2 {len(h2s) - _H2_QUERY_ROWS}개")
+    L.append("- 어느 H2 에도 안 걸린 검색어: " + (", ".join(_ext(q, 60) for q in left[:8])
+                                           + (f" 외 {len(left) - 8}개" if len(left) > 8 else "")
+                                           if left else "없음")
+             + ". H2 를 고치거나 보탤 때는 구간마다 맡는 검색어를 한 칸으로 적습니다. 낱말이 안 "
+               "겹쳐도 그 구간이 실제로 답하면 맡은 것이고, 열어 보고 고칩니다.")
+    return L + [""]
+
+
+# ── 여정 단계 ────────────────────────────────────────────────────────────────
+# 의도 축(scoring.INTENT_WORDS 의 둘째 칸)을 단계로 옮긴다 — 낱말 표를 여기 또 두지 않는다.
+# 찾아가는 검색어(navigational)는 단계가 아니다. 낱말로 가른 추정이라 그렇게 말한다.
+JOURNEY_BY_AXIS = {"info": "인지", "commercial": "검토", "transactional": "결정"}
+JOURNEY_NEXT = {
+    "인지": "읽고 난 사람의 다음 걸음은 더 깊은 글·비교 글입니다. 그리로 잇고, 구매를 앞세우지 않습니다",
+    "검토": "고르는 중인 사람입니다. 견줄 기준·근거·사례가 먼저고, 다음 걸음은 가격·조건을 보는 길입니다",
+    "결정": "살지 정하는 사람입니다. 가격·조건·신청하는 길이 첫 화면에서 보여야 합니다",
+}
+JOURNEY_KINDS = ("striking_distance", "ctr_gap", "rank_decay", "aio_exposure", "content_gap")
+_AXIS_BY_INTENT = {name: axis for name, axis, _ in scoring.INTENT_WORDS}
+
+
+def journey_of(q: str, site: scoring.SiteWords | None = None) -> str | None:
+    """검색어 하나의 여정 단계(인지·검토·결정) — 의도를 못 가른 검색어는 인지 쪽이다."""
+    return JOURNEY_BY_AXIS.get(_AXIS_BY_INTENT.get(query_intent(q, site), "info"))
+
+
+def _journey_lines(o: dict, ctx: dict, shape: str, pq: list[dict]) -> list[str]:
+    # 검색어 여럿이 걸린 고치기 요청문은 의도 비율 줄이 이미 묶음을 말한다 — 누른 검색어 하나의
+    # 단계를 세우면 '일의 단위는 페이지'와 딴말이 된다.
+    if o.get("kind") not in JOURNEY_KINDS or shape not in ("fix_page", "new_content") or len(pq) > 1:
+        return []
+    t = str(o.get("target") or "")
+    stage = journey_of(t, site_of(ctx))
+    if not stage:
+        return []
+    return [f"- 여정 단계: {stage} ('{query_intent(t, site_of(ctx))}' 의도에서 옮긴 추정). "
+            f"{JOURNEY_NEXT[stage]}."]
+
+
+# ── 사이트 신뢰 페이지 ───────────────────────────────────────────────────────
+# 신뢰 신호를 시키는 요청문이 글 한 장의 저자·수정일만 봤다 — 사이트에 연락처·약관이 아예 없으면
+# 그 글만 고쳐서는 안 채워진다. 크롤이 그 점검을 실은 페이로드에서만 선다(키가 없으면 한 글자도
+# 안 나간다). 키 이름은 크롤 쪽과의 이음매라 상수로 둔다. 표에 없는 종류는 말하지 않는다.
+TRUST_PAGES_KEY = "trust_pages"
+TRUST_PAGES_LEAD = "- 사이트 신뢰 페이지(크롤에서 찾은 것): "
+TRUST_PAGE_NAMES = {"about": "소개", "contact": "연락처", "privacy": "개인정보처리방침",
+                    "terms": "약관", "reviews": "후기"}
+# 요청문은 읽는데 페이로드(dashboard.gather)가 아직 안 싣는 키 — 싣는 쪽이 따로 들어온다.
+# test_seams 19b 는 이 목록만 '없어도 되는 읽기'로 받는다. 싣는 축이 생기면 여기서 뺀다.
+UNSERVED_KEYS = (TRUST_PAGES_KEY,)
+
+
+def _trust_lines(ctx: dict) -> list[str]:
+    got = ctx.get(TRUST_PAGES_KEY)
+    if not isinstance(got, dict):
+        return []
+    parts = [f"{name} 있음({_clean_url(got[k])})" if got[k] else f"{name} 없음"
+             for k, name in TRUST_PAGE_NAMES.items() if k in got]
+    if not parts:
+        return []
+    return [TRUST_PAGES_LEAD + " · ".join(parts)
+            + ". 없는 것은 이 글만 고쳐서는 안 채워집니다. '따로 볼 것'에 적습니다."]
 
 
 def _summary_lines(o: dict, shape: str, goal: list[str], want: list[str],
@@ -4184,7 +4460,8 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
                               and not _find(ctx.get("downs"), "query", o.get("target")))
     L += (_target_lines(o, url, shape, ctx, has_evidence=fresh,
                         split=any(RANK_SPLIT_HEAD in x for x in ev or []))[:-1]
-          + lang_line + ([] if kind == "coverage" or not _reaches(o, pq) else _unit_lines(pq))
+          + lang_line + _journey_lines(o, ctx, shape, pq)
+          + ([] if kind == "coverage" or not _reaches(o, pq) else _unit_lines(pq))
           + [""])
     goal_at = len(L)                          # 목표 절은 대상 바로 뒤 — 끝에서 끼운다
     # AI 종류(챗봇 인용·구글 AI 요약)에서만 붙는 추출성 진단 — 판정은 scoring 한 곳.
@@ -4208,7 +4485,9 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
           if url and kind != "pseo_pattern" else [])
     L += _split_pending_lines(o, ctx, url) if url and shape == "fix_page" else []
     L += _page_query_lines(o, pq)
+    L += _h2_query_lines(audit, pq) if _reaches(o, pq) else []
     L += _page_sibling_lines(sibs, o, pq, play)
+    L += _cluster_page_lines(o, ctx, url) if kind == "coverage" and url else []
     if ev:
         L += ["## 근거 (수집한 데이터)", *ev, ""]
     had_top = had_outlines = False
@@ -4311,6 +4590,8 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
                          query=str(o.get("target") or "") if shape == "fix_page"
                          and kind != "coverage" else None,
                          queries=[r["query"] for r in pq], broken=kind == "rank_decay")
+        if _asks(want, AUTHOR_WORK_WORDS):
+            sf = list(sf) + _trust_lines(ctx)
         L[page_at:page_at] = ps + (["## 사이트 전체에서 본 이 주소", *sf, ""] if sf else [])
     if canon:
         want = [CANON_FIRST.format(url=url, canon=canon)] + list(want)
@@ -4320,6 +4601,12 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         want = list(want) + [NAP_DELIVER]
     L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want))]
     L += _aio_cited_missing_lines(o, ctx, want)
+    # 새 글 꼴에는 '사이트 전체에서 본 이 주소' 절이 없다 — 신뢰 신호 카드(꼴의 form)가 읽을 줄을 여기 둔다
+    if shape == "new_content":
+        L += _trust_lines(ctx)
+        # 비교 의도의 새 글 — 공정성 규칙은 한 벌(COMPARE_FAIR)이다
+        if kind in JOURNEY_KINDS and query_intent(str(o.get("target") or ""), site_of(ctx)) == "비교":
+            L.append(f"- 비교 글입니다. {COMPARE_FAIR}")
     if kind == "rank_decay" and shape == "fix_page":
         # 처방은 비교 대상을 '우리보다 위에 선 글'로만 말한다 — 그 글을 어디서 얻는지는 이
         # 요청문이 정한다. #128 은 그 말이 없어 11위 근처 글인지 상위 2~3개인지 두 갈래로 읽혔다.

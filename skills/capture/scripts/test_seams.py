@@ -617,11 +617,13 @@ def test_seam_19b_brief_reads_only_served_keys_at_runtime():
     brief.attach(rec, "ko-KR")
     rec.reads.discard("brief")           # attach 가 자기가 심는 키
     assert len(rec.reads) > 10, f"기록이 너무 적다 — 기록 dict 가 우회됐다: {sorted(rec.reads)}"
-    missing = rec.reads - set(d)
+    # brief.UNSERVED_KEYS — 싣는 축이 아직 없는 키(조건부로만 읽는다고 brief 가 선언한 것)
+    later = set(brief.UNSERVED_KEYS)
+    missing = rec.reads - set(d) - later
     assert not missing, f"요청문이 돌면서 읽었는데 페이로드에 없는 키: {sorted(missing)}"
     # 읽은 키마다 만든 축이 있다 — 이름표로 대조한다(장부 밖 키를 읽을 수는 없다)
     made_by = _gather("_s19b", rich=True, traced=True)[1]
-    assert all(k in made_by for k in rec.reads)
+    assert all(k in made_by for k in rec.reads - later)
     # 일부러 깬 판: 있는 키를 하나 지우면 같은 검사가 그 키를 짚어야 한다
     broken = Rec(copy.deepcopy(d))
     broken.reads = set()
@@ -5658,6 +5660,38 @@ def test_seam_202_ai_engine_table_single_source():
             if f.name not in ("skill_config.py", "test_seams.py")
             and copy.search(f.read_text("utf-8"))]
     assert not hits, f"엔진 표 사본: {hits}"
+
+
+def test_seam_conversion_brief_and_cro_delegation():
+    """전환 없는 페이지 → 전환 점검 요청문 / cro 위임. 끝이 넷이다.
+    - 화면([사이트]의 전환 없는 페이지 펼침)이 넘기는 꼴 이름이 brief.SHAPE_NAMES 의 전환 점검 꼴이다.
+      고치기 꼴을 넘기면 머리말이 '더 잘 보이게 고쳐 주세요'(순위 일)가 된다.
+    - 그 화면의 처방 문장이 가리키는 위임 스킬(cro)이 doctor 의 명부(OPTIONAL_SKILLS)에 있고,
+    - 위임 표(external-skills.md)에도 줄이 있다 — 명부에만 있으면 설치는 권하는데 언제 부르는지가 없다.
+    - 위임 표의 '없으면' 칸이 가리키는 것이 그 요청문이다.
+    """
+    import brief
+    site = ROOT / "skills" / "capture" / "templates" / "views" / "site.html"
+    if not site.exists():
+        return
+    src = site.read_text("utf-8")
+    m = re.search(r"function pgNoConvDetail\(page\) \{(.*?)\n\}", src, re.S)
+    assert m, "site.html 의 pgNoConvDetail 을 못 찾았다"
+    sh = re.search(r"askBlock\(\{shape:\s*\"(\w+)\"", m.group(1))
+    assert sh, "전환 없는 페이지 펼침이 요청문(askBlock)을 안 낸다"
+    assert sh.group(1) == "conversion" and sh.group(1) in brief.SHAPE_NAMES, \
+        f"전환 없는 페이지가 전환 점검 꼴이 아니라 {sh.group(1)!r} 꼴을 넘긴다"
+    assert brief.SHAPES["conversion"]["label"] == "전환 점검"
+    sys.path.insert(0, str(ROOT / "skills" / "setup" / "scripts"))
+    import doctor
+    assert "cro" in doctor.OPTIONAL_SKILLS, "doctor.OPTIONAL_SKILLS 에 cro 가 없다"
+    ext = (ROOT / "skills" / "capture" / "references" / "external-skills.md").read_text("utf-8")
+    rows = [ln for ln in ext.splitlines() if ln.startswith("| `cro` |")]
+    assert rows, "external-skills.md 위임 표에 cro 줄이 없다"
+    assert any("전환 없는 페이지" in r and "전환 점검 요청문" in r for r in rows), rows
+    # 위임 표의 스킬이 전부 명부에 있다(표에만 있고 명부에 없으면 doctor 가 설치를 안 권한다)
+    named = set(re.findall(r"^\| `([\w-]+)` \|", ext, re.M))
+    assert named <= set(doctor.ALL_SKILLS), f"위임 표에만 있는 스킬: {sorted(named - set(doctor.ALL_SKILLS))}"
 
 
 if __name__ == "__main__":
