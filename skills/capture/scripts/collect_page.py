@@ -572,6 +572,12 @@ def audit_html(url: str, html: str, status: int | None = 200) -> dict:
         p.feed(html[:MAX_HTML])
     except Exception as e:                       # 망가진 마크업에도 지금까지 읽은 것은 남긴다
         print(f"  ! {url}: 파싱 도중 중단 ({e})", file=sys.stderr)
+    # MAX_HTML 을 넘으면 앞부분만 읽은 것이다 — 그 사실을 행에 남긴다(html_truncated).
+    # 안 남기면 잘린 뒤쪽의 H2·구조화 데이터·링크가 "없음"으로 읽힌다.
+    truncated = int(len(html) > MAX_HTML)
+    if truncated:
+        print(f"  ! {url}: HTML 이 {MAX_HTML:,}자를 넘어 앞부분만 읽었습니다 "
+              f"(전체 {len(html):,}자) — 뒤쪽의 제목·구조화 데이터는 이 행에 없습니다", file=sys.stderr)
     words = p.words
     # 정적 HTML 로는 본문이 안 보이는 페이지 — 여기서 재는 title 말고 본문·H2·
     # 구조화 데이터는 전부 못 믿는 값이 된다. 판정이 아니라 **단서**라서 요청문이
@@ -596,7 +602,7 @@ def audit_html(url: str, html: str, status: int | None = 200) -> dict:
             "viewport": p.viewport, "html_lang": p.html_lang,
             "hreflang_json": json.dumps(p.hreflang[:30], ensure_ascii=False),
             "published": p.published, "modified": p.modified,
-            "js_shell": js_shell,
+            "js_shell": js_shell, "html_truncated": truncated,
             # 추출성. 저자는 못 찾으면 "" 다 — NULL 은 이 칸이 생기기 전의 행(안 봤다)이다.
             # 질문형 H2 는 h2_json 과 같은 20개 안에서 센다(요청문이 "n/전체"로 나란히 쓴다).
             "tables": p.tables, "lists": p.lists,

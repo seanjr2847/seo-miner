@@ -358,6 +358,7 @@ CREATE TABLE IF NOT EXISTS page_audits (     -- 내 페이지 HTML 감사 (colle
   author TEXT,                                -- meta author 또는 ld+json author.name. '' = 없음
   schema_gaps_json TEXT,                      -- 유형별 빠진 필수·권장 속성(scoring.SCHEMA_RULES). '[]' = 없음
   same_as_json TEXT,                          -- 열어 본 sameAs [{url,of,status,dead}]. NULL = 안 봄
+  html_truncated INTEGER,                     -- 1 = HTML 이 collect_page.MAX_HTML 을 넘어 앞부분만 읽음. NULL = 안 봄(옛 행)
   UNIQUE(project_id, checked_date, url)
 );
 CREATE TABLE IF NOT EXISTS page_vitals (    -- 속도 (collect_vitals.py · PageSpeed Insights)
@@ -791,6 +792,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in pa_cols:
             conn.execute(f"ALTER TABLE page_audits ADD COLUMN {col} TEXT")
             conn.commit()
+
+    # 2MB 절단 표시 — 옛 행은 NULL(안 봤다)이다. 0(전부 읽음)과 다르다.
+    if "html_truncated" not in pa_cols:
+        conn.execute("ALTER TABLE page_audits ADD COLUMN html_truncated INTEGER")
+        conn.commit()
 
     opp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(opportunities)")}
     if "status_at" not in opp_cols:      # 완료 후 관찰의 기준 시각 (spec keyword-triage §3)
@@ -2490,6 +2496,7 @@ def write_page_audits(conn: sqlite3.Connection, project_id: int, checked_date: s
             "viewport", "html_lang", "hreflang_json", "published", "modified", "js_shell",
             "tables", "lists", "h2_questions", "lead_words", "author",
             "schema_gaps_json", "same_as_json")
+    cols += ("html_truncated",)
     rows = list(rows)
     conn.executemany(
         f"""INSERT INTO page_audits(project_id, checked_date, url, {', '.join(cols)})
