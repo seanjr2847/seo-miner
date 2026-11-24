@@ -1850,7 +1850,10 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
             # 속도 행(_axis_vitals 의 {url: {기기: 행}})도 넘긴다 — [이미지 용량]은 감사가
             # 아니라 같은 PageSpeed 응답에서 온다. 안 넘기면 그 갈래는 화면에도 요청문에도 안 선다.
             a["advice"] = scoring.page_advice(a, qs, domain=p["domain"] or "",
-                                              vitals=(vitals or {}).get(a["url"]))
+                                              vitals=(vitals or {}).get(a["url"]),
+                                              site_type=dict(p).get("type") or "")
+            # 진단이 아닌 '알아 둘 것'(끝난 마크업·공유 카드·셀 수 있는 신뢰 신호) — 요청문이 사실로 싣는다
+            a["info"] = scoring.page_info(a, site_type=dict(p).get("type") or "")
             # 추출성은 AI 맥락에서만 뜻이 있다 — 일반 진단(advice)에 섞으면 모든 화면의
             # 진단표가 부푼다. 따로 싣고 [AI 인용] 화면만 진단표에 넘긴다. 챗봇 기준이다:
             # 그 화면은 챗봇 인용이고, 구글 AI 요약 기준 문구는 요청문이 따로 쓴다.

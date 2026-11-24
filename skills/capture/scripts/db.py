@@ -358,6 +358,10 @@ CREATE TABLE IF NOT EXISTS page_audits (     -- 내 페이지 HTML 감사 (colle
   author TEXT,                                -- meta author 또는 ld+json author.name. '' = 없음
   schema_gaps_json TEXT,                      -- 유형별 빠진 필수·권장 속성(scoring.SCHEMA_RULES). '[]' = 없음
   same_as_json TEXT,                          -- 열어 본 sameAs [{url,of,status,dead}]. NULL = 안 봄
+  signals_json TEXT,                          -- 기계 점검이 센 것(collect_page._signals). NULL = 안 봄
+  schema_issues_json TEXT,                    -- ld+json 값 이슈 [{type,prop,code}](schema_values). '[]' = 없음
+  schema_hash TEXT,                           -- ld+json 내용 지문(속성 값이 바뀌면 바뀐다). '' = 블록 없음
+  canonical_check_json TEXT,                  -- canonical 대상을 열어 본 결과 {url,status,final,next,loop}. NULL = 안 봄
   UNIQUE(project_id, checked_date, url)
 );
 CREATE TABLE IF NOT EXISTS page_vitals (    -- 속도 (collect_vitals.py · PageSpeed Insights)
@@ -788,6 +792,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 구조화 데이터 검증·엔티티 — 옛 행은 NULL(안 봄)로 남는다. "[]"(봤고 빠진 것 없음)와 다르다
     # (scoring._schema_gaps 가 그 칸 하나로 가른다).
     for col in ("schema_gaps_json", "same_as_json"):
+        if col not in pa_cols:
+            conn.execute(f"ALTER TABLE page_audits ADD COLUMN {col} TEXT")
+            conn.commit()
+    # 기계 점검·값 검사·내용 지문·canonical 대상 확인 — 옛 행은 NULL(안 봄)로 남는다
+    # (scoring._signals_of 가 signals_json 하나로 행의 나이를 가른다).
+    for col in ("signals_json", "schema_issues_json", "schema_hash", "canonical_check_json"):
         if col not in pa_cols:
             conn.execute(f"ALTER TABLE page_audits ADD COLUMN {col} TEXT")
             conn.commit()
@@ -2489,7 +2499,8 @@ def write_page_audits(conn: sqlite3.Connection, project_id: int, checked_date: s
             "internal_links", "external_links", "images", "images_no_alt",
             "viewport", "html_lang", "hreflang_json", "published", "modified", "js_shell",
             "tables", "lists", "h2_questions", "lead_words", "author",
-            "schema_gaps_json", "same_as_json")
+            "schema_gaps_json", "same_as_json",
+            "signals_json", "schema_issues_json", "schema_hash", "canonical_check_json")
     rows = list(rows)
     conn.executemany(
         f"""INSERT INTO page_audits(project_id, checked_date, url, {', '.join(cols)})

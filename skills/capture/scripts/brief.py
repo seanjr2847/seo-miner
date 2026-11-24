@@ -1116,6 +1116,8 @@ def _page_state(a: dict | None, url: str, *, author_work: bool = True) -> list[s
     # 추출성 — "인용될 블록이 있는가"의 재료. 판정은 scoring.extract_advice(AI 종류만)가
     # 하고, 여기는 사실만 싣는다. 옛 행(칸이 NULL)에는 이 줄이 없다 — "표 0" 을 지어낸다.
     structured = scoring._has_extract_fields(a)
+    # 알아 둘 것(scoring.page_info) — 진단이 아니라 사실 줄이다. 문장의 정본은 거기다.
+    L += [f"- {x}" for x in a.get("info") or []]
     if structured:
         lead, au = a.get("lead_words"), a.get("author")
         L.append("- 본문 구조: " + " · ".join((

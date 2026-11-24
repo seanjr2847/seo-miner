@@ -28,13 +28,15 @@ import threading
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import db  # noqa: E402
 import fanout  # noqa: E402
 import http_adapter  # noqa: E402
+import page_lang  # noqa: E402
+import schema_values  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -80,6 +82,127 @@ _Q_WORDS_EN = ("what", "why", "how", "when", "where", "who", "which", "can", "do
                "is", "are", "should", "will")
 
 
+# ── 기계 점검(page_audits.signals_json)의 재료 ────────────────────────────────
+# 아래는 전부 **세는** 것이다. 무엇이 문제인지는 scoring.signal_advice 가 답한다. 언어마다 다른
+# 목록(일반 앵커·뜻 없는 alt·소개/연락처 주소)은 page_lang 한 벌이다 — 여기 사본을 두지 않는다.
+_H_LEVEL = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
+# 닫는 태그가 없는 요소 — 스택에 남아도 다음 닫는 태그가 걷어 가지만, 그 사이 글자를 이 요소
+# '안'으로 치면 <input hidden> 하나가 뒤따르는 본문을 숨긴 글로 만든다. 숨김 표지를 안 단다.
+_VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+                   "param", "source", "track", "wbr"})
+_HIDDEN_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden", re.I)
+# 스택과 나란히 가는 표지(비트) — 숨김 / 접힌 <details> / <summary> / 본문 자리(main·article) / <address>
+_F_HIDDEN, _F_FOLD, _F_SUMMARY, _F_MAIN, _F_ADDR = 1, 2, 4, 8, 16
+# https 페이지가 http 로 부르는 자원(mixed content) — 태그 → 주소 속성
+_SUBRESOURCE = {"img": "src", "script": "src", "iframe": "src", "video": "src", "audio": "src",
+                "source": "src", "embed": "src", "object": "data"}
+# 봇 이름으로 단 robots meta(<meta name="googlebot" content="nosnippet">) — 검색엔진 봇만
+_ROBOTS_BOTS = ("googlebot", "googlebot-news", "bingbot", "yandex", "baiduspider", "yeti",
+                "naverbot", "duckduckbot", "applebot")
+# 구글이 큰 미리보기 이미지(Discover·이미지 검색)로 읽는 og:image 와 나머지 공유 카드 태그
+# https://developers.google.com/search/docs/appearance/google-discover
+_OG_TAGS = ("og:title", "og:description", "og:image", "twitter:card")
+# 발행·수정일을 적는 meta 이름(name·property·itemprop). 사이트마다 CMS 마다 다르다 — htmldate 가
+# 보는 것 중 뜻이 분명한 것만. 본문 글자에서 날짜를 짐작하지는 않는다(지어내지 않는다).
+_PUB_META = frozenset({"article:published_time", "datepublished", "date", "dc.date",
+                       "dc.date.issued", "dcterms.created", "dcterms.issued", "pubdate",
+                       "publishdate", "publish_date", "published_time", "og:published_time",
+                       "article:published", "parsely-pub-date", "sailthru.date",
+                       "citation_publication_date", "citation_date", "datecreated"})
+_MOD_META = frozenset({"article:modified_time", "og:updated_time", "datemodified", "last-modified",
+                       "dc.date.modified", "dcterms.modified", "lastmod", "revised",
+                       "article:modified", "og:modified_time"})
+# 주소에 박힌 날짜(/2024/03/02/). 발행일 칸에는 **안 넣는다** — 글을 고쳐도 주소는 그대로라
+# '마지막 수정'으로 읽히면 멀쩡한 글을 낡았다고 한다. 정보 한 줄로만 남긴다(signals.url_date).
+_URL_DATE = re.compile(r"/((?:19|20)\d{2})/(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])(?:/|$)")
+_CHARSET = re.compile(r"charset\s*=\s*[\"']?\s*([\w.:-]+)", re.I)
+MAIN_TEXT_MAX = 40_000      # 가독성·본문 대조에 쓰는 글자 상한(본문 앞부분이면 족하다)
+ANCHOR_KEEP = 400           # 앵커 글자를 견줄 링크 수 상한
+CANON_MAX = 8               # canonical 대상을 다시 여는 상한(한 회차)
+CANON_BUDGET = 20.0         # 초 — 한 회차에서 canonical 대상 확인에 쓰는 시간 전부
+
+
+def _charset_name(v: str | None) -> str | None:
+    """'UTF8'·' utf-8 ' → 'utf-8'. 견주려고 꼴만 맞춘다."""
+    c = (v or "").strip().lower()
+    return {"utf8": "utf-8", "latin1": "iso-8859-1", "latin-1": "iso-8859-1"}.get(c, c) or None
+
+
+def _digits(tel: str) -> str:
+    """전화 글자 → 견줄 숫자. '+82 2-123-4567'·'tel:02-123-4567' → '8221234567'·'021234567'."""
+    return re.sub(r"\D", "", (tel or "").split(";")[0])
+
+
+def tel_same(a: str, b: str) -> bool:
+    """두 전화번호가 같은 번호인가 — 국가번호·맨 앞 0 유무는 같은 번호다(+82 2-… = 02-…).
+    짧은 쪽에서 맨 앞 0 을 뗀 숫자로 긴 쪽이 끝나면 같다. 6자리 미만은 견주지 않는다."""
+    a, b = _digits(a), _digits(b)
+    if a.startswith("00"):
+        a = a[2:]
+    if b.startswith("00"):
+        b = b[2:]
+    short, long_ = sorted((a, b), key=len)
+    core = short.lstrip("0")
+    return len(core) >= 6 and long_.endswith(core)
+
+
+def _squash(text: str) -> str:
+    """주소 글자를 견줄 꼴로 — 빈칸·문장 부호를 다 떼고 소문자. 글자(한글·CJK)는 그대로."""
+    return re.sub(r"[\W_]+", "", page_lang.fold(text))
+
+
+def _owner_nap(blocks) -> tuple[list[str], list[str]]:
+    """ld+json 의 사이트 주인(scoring.OWNER_TYPES) 노드가 적은 전화들·주소 조각들(도로명·우편번호).
+    수집 중에만 쓴다 — 본문과 견준 **결과**만 남기고 값은 남기지 않는다."""
+    tels: list[str] = []
+    addrs: list[str] = []
+    stack = [blocks]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, list):
+            stack += cur
+            continue
+        if not isinstance(cur, dict):
+            continue
+        hit = scoring.schema_rule_of(cur.get("@type"))
+        if hit and hit[0] in scoring.OWNER_TYPES:
+            cp = cur.get("contactPoint")
+            for src in [cur, *(x for x in (cp if isinstance(cp, list) else [cp]) if isinstance(x, dict))]:
+                t = src.get("telephone")
+                tels += [x for x in (t if isinstance(t, list) else [t]) if isinstance(x, str) and _digits(x)]
+            ad = cur.get("address")
+            for x in (ad if isinstance(ad, list) else [ad]):
+                if isinstance(x, str) and x.strip():
+                    addrs.append(x)
+                elif isinstance(x, dict):
+                    addrs += [str(x[k]) for k in ("streetAddress", "postalCode")
+                              if isinstance(x.get(k), (str, int)) and str(x[k]).strip()]
+        stack += [v for v in cur.values() if isinstance(v, (dict, list))]
+    return list(dict.fromkeys(tels)), list(dict.fromkeys(addrs))
+
+
+def _nap_compare(blocks, page_tels: list[str], page_text: str, has_address_tag: bool) -> dict | None:
+    """마크업의 전화·주소 ↔ 본문(tel: 링크·화면 글자). 주인 마크업에 둘 다 없으면 None.
+
+    match: True 같음 · False 다름 · None 견줄 수 없음(한쪽이 없다). 주소는 마크업의 도로명·
+    우편번호 글자가 화면 글자에 **그대로** 있는지만 본다(빈칸·부호 무시) — 표기가 다르면
+    (St. / Street) 다르다고 나온다. 그게 지도 쪽 대조가 보는 '글자까지 같게'다."""
+    tels, addrs = _owner_nap(blocks)
+    if not tels and not addrs:
+        return None
+    out: dict = {"tel_markup": len(tels), "tel_page": len(page_tels), "tel_match": None,
+                 "addr_markup": len(addrs), "addr_tag": bool(has_address_tag), "addr_match": None}
+    if tels and page_tels:
+        out["tel_match"] = any(tel_same(m, b) for m in tels for b in page_tels)
+    if addrs:
+        body = _squash(page_text)
+        parts = [_squash(a) for a in addrs]
+        parts = [a for a in parts if len(a) >= 3]
+        if parts and body:
+            out["addr_match"] = all(a in body for a in parts)
+    return out
+
+
 def _is_question(text: str) -> bool:
     """H2 한 줄이 질문 꼴인가 — 휴리스틱(위 목록 참고). 판정이 아니라 셈의 재료다."""
     t = " ".join((text or "").split())
@@ -121,7 +244,7 @@ def _ld_load(blob: str):
     s, prev = (blob or "").strip(), None
     while s != prev:
         prev, s = s, _LD_WRAP.sub("", s).strip()
-    return json.loads(s, strict=False)
+    return schema_values.loads(s)
 
 
 def _schema_dates(blob: str) -> tuple[str | None, str | None]:
@@ -394,11 +517,47 @@ class _Page(HTMLParser):
         self._text: list[str] = []
         self._stack: list[str] = []
         self._grab = None          # 지금 글자를 모으는 자리: "title" | "h1" | "h2" | "ld"
+        # ── 기계 점검(signals_json) — 세기만 한다 ──
+        self.secure = base.lower().startswith("https://")
+        self._flags: list[int] = []              # _stack 과 나란히 — 요소마다 표지(_F_*)
+        self._on = {_F_HIDDEN: 0, _F_FOLD: 0, _F_SUMMARY: 0, _F_MAIN: 0, _F_ADDR: 0}
+        self.h_levels: list[int] = []            # 본문 제목 단계가 나온 순서(단계 건너뜀)
+        self.robots_bots: dict[str, str] = {}    # {"googlebot": "nosnippet"} — 봇 이름 robots meta
+        self.nosnip = self.nosnip_bad = 0        # data-nosnippet 을 단 요소(되는 태그 / 안 되는 태그)
+        self.meta_refresh = None
+        self.charset = None
+        self.og: list[str] = []
+        self.mixed = self.http_links = self.empty_links = 0
+        self.anchors: list[str] = []             # 링크 글자(앞 ANCHOR_KEEP 개) — 일반 앵커는 끝에 센다
+        self._a: dict | None = None              # 지금 열린 <a>: {"text": [], "label": bool}
+        self.paths: set[str] = set()             # 사이트 안 링크의 경로 — 소개·연락처 링크가 있나
+        self.author_link = False                 # rel=author 링크 또는 /author/ 로 가는 링크
+        self.images_decor = 0                    # 장식 이미지(aria-hidden·role=presentation/none)
+        self.alts: list[str] = []
+        self.micro: list[str] = []               # Microdata(itemscope itemtype) 의 schema.org 유형
+        self.rdfa: list[str] = []                # RDFa(typeof) 의 schema.org 유형
+        self._rdfa_vocab = False
+        self.tels: list[str] = []                # 본문 tel: 링크의 번호
+        self.address_tags = 0
+        self.time_tags = 0
+        self.hidden_words = self.fold_words = 0  # 숨긴 글(인라인 style·hidden) / 접힌 <details> 속 글
+        self.main_words = self.body_words = 0    # <main>·<article> 안 / 틀(_CHROME) 밖 전체
+        self._main_txt: list[str] = []
+        self._body_txt: list[str] = []
+        self._txt_len = 0
+        self._q: list[str] | None = None         # 지금 모으는 본문 <p>(구간 첫 문단·긴 문단)
+        self._sec_wait = False                   # H2 를 지났고 그 구간의 첫 문단을 아직 못 만났다
+        self.sec_leads: list[int] = []           # H2 구간마다 첫 문단 단어 수(0 = 문단 없음)
+        self.paras = self.long_paras = 0
 
     # ── 태그 ────────────────────────────────────────────────
     def handle_starttag(self, tag, attrs):
         a = {k.lower(): (v or "") for k, v in attrs}
         self._stack.append(tag)
+        self._flags.append(self._flag_of(tag, a))
+        for bit in self._on:
+            self._on[bit] += bool(self._flags[-1] & bit)
+        self._signals_start(tag, a)
         # 태그 종류와 무관한 신호라 사슬 밖에서 본다 — 사슬 안에 두면 <a id="root">
         # 하나가 링크 집계를 통째로 삼킨다.
         if a.get("id", "").strip().lower() in _APP_ROOTS or "data-reactroot" in a:
@@ -462,17 +621,28 @@ class _Page(HTMLParser):
                     self.external += 1
         elif tag == "img":
             self.images += 1
-            if not a.get("alt", "").strip():
+            alt = a.get("alt", "").strip()
+            # 장식 이미지는 alt 를 요구하지 않는다 — 'alt 없음'으로 세면 고칠 일이 아닌 것을 시킨다
+            if a.get("aria-hidden", "").strip().lower() == "true" \
+                    or a.get("role", "").strip().lower() in ("presentation", "none"):
+                self.images_decor += 1
+            elif not alt:
                 self.images_no_alt += 1
+            else:
+                self.alts.append(alt[:120])
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
         if self._stack and self._stack[-1] == tag:
-            self._stack.pop()
+            self._pop()
 
     def handle_endtag(self, tag):
         if tag == "p" and self._p is not None:
             self._end_p()
+        if tag == "p" and self._q is not None:
+            self._end_q()
+        if tag == "a" and self._a is not None:
+            self._end_a()
         if self._grab == tag or (self._grab == "ld" and tag == "script") \
                 or (self._grab == "title" and tag == "title"):
             text = " ".join("".join(self._buf).split())
@@ -498,7 +668,7 @@ class _Page(HTMLParser):
                 self.h2.append(text)
             self._grab = None
         while self._stack:                       # 안 닫힌 태그가 있어도 스택이 안 샌다
-            if self._stack.pop() == tag:
+            if self._pop() == tag:
                 break
 
     def handle_data(self, data):
@@ -508,6 +678,189 @@ class _Page(HTMLParser):
             self._text.append(data)
             if self._p is not None:
                 self._p.append(data)
+            self._signals_data(data)
+
+    # ── 기계 점검 — 세기만 한다(판정은 scoring.signal_advice) ──────────────
+    def _pop(self) -> str:
+        """스택과 표지를 같이 걷는다 — 둘이 어긋나면 숨김이 영영 안 풀린다."""
+        f = self._flags.pop() if self._flags else 0
+        for bit in self._on:
+            self._on[bit] -= bool(f & bit)
+        return self._stack.pop()
+
+    @staticmethod
+    def _flag_of(tag: str, a: dict) -> int:
+        if tag in _VOID or tag in SKIP_TEXT:
+            return 0
+        f = 0
+        if "hidden" in a or _HIDDEN_STYLE.search(a.get("style", "")):
+            f |= _F_HIDDEN
+        if tag == "details" and "open" not in a:
+            f |= _F_FOLD
+        if tag == "summary":
+            f |= _F_SUMMARY
+        if tag in ("main", "article") or a.get("role", "").strip().lower() == "main":
+            f |= _F_MAIN
+        if tag == "address":
+            f |= _F_ADDR
+        return f
+
+    def _signals_start(self, tag: str, a: dict) -> None:
+        """사슬 밖에서 보는 신호들 — 아래 elif 사슬의 어느 갈래와도 무관하게 센다."""
+        chrome = self._in_chrome()
+        if self._q is not None and tag in _P_BREAK:
+            self._end_q()
+        if not chrome:
+            if tag in _H_LEVEL:
+                self.h_levels.append(_H_LEVEL[tag])
+            if tag == "h2":
+                if self._sec_wait:
+                    self.sec_leads.append(0)     # 앞 구간에 문단이 없었다
+                self._sec_wait = True
+            elif tag == "p":
+                self._q = []
+        if "data-nosnippet" in a:
+            # span·div·section 에서만 통한다(구글 문서) — 다른 태그에 달면 아무 일도 없다
+            if tag in ("span", "div", "section"):
+                self.nosnip += 1
+            else:
+                self.nosnip_bad += 1
+        # 구조화 데이터의 다른 두 문법 — 구글은 JSON-LD·Microdata·RDFa 를 똑같이 읽는다
+        if "itemscope" in a and a.get("itemtype"):
+            self.micro += [scoring.schema_type_name(t) for t in a["itemtype"].split()
+                           if scoring.host_of(t) == "schema.org"]
+        if scoring.host_of(a.get("vocab", "")) == "schema.org":
+            self._rdfa_vocab = True
+        if a.get("typeof"):
+            for t in a["typeof"].split():
+                if t.startswith("schema:") or scoring.host_of(t) == "schema.org":
+                    self.rdfa.append(scoring.schema_type_name(t))
+                elif self._rdfa_vocab and ":" not in t:
+                    self.rdfa.append(t)
+        if tag == "address":
+            self.address_tags += 1
+        elif tag == "time":
+            self.time_tags += 1
+            if a.get("datetime") and a.get("itemprop", "").lower() == "datemodified" \
+                    and not self.modified:
+                self.modified = _date(a["datetime"])
+        elif tag == "meta":
+            self._meta_extra(a)
+        elif tag == "a":
+            self._start_a(a)
+        if self._a is not None and tag != "a" and (
+                a.get("aria-label", "").strip() or a.get("title", "").strip()
+                or (tag == "img" and a.get("alt", "").strip())):
+            self._a["label"] = True              # 글자는 없어도 이름이 있는 링크(아이콘·그림 링크)
+        src = a.get(_SUBRESOURCE.get(tag, ""), "") if tag in _SUBRESOURCE else (
+            a.get("href", "") if tag == "link" and "stylesheet" in a.get("rel", "").lower() else "")
+        if self.secure and src.strip().lower().startswith("http://"):
+            self.mixed += 1
+
+    def _meta_extra(self, a: dict) -> None:
+        name = (a.get("name") or a.get("property") or a.get("itemprop") or "").strip().lower()
+        equiv = a.get("http-equiv", "").strip().lower()
+        content = a.get("content", "").strip()
+        if a.get("charset") and not self.charset:
+            self.charset = _charset_name(a["charset"])
+        elif equiv == "content-type" and not self.charset:
+            m = _CHARSET.search(content)
+            self.charset = _charset_name(m.group(1)) if m else None
+        elif equiv == "refresh" and content and self.meta_refresh is None:
+            self.meta_refresh = content[:160]
+        if name in _ROBOTS_BOTS and content:
+            self.robots_bots[name] = content[:200]
+        elif name in _OG_TAGS and content and name not in self.og:
+            self.og.append(name)
+        elif name in _PUB_META and content and not self.published:
+            self.published = _date(content)
+        elif name in _MOD_META and content and not self.modified:
+            self.modified = _date(content)
+
+    def _start_a(self, a: dict) -> None:
+        if self._a is not None:
+            self._end_a()                        # 안 닫힌 <a> 뒤에 또 <a>
+        href = a.get("href", "").strip()
+        if href.lower().startswith("tel:"):
+            d = _digits(href[4:])
+            if d and d not in self.tels:
+                self.tels.append(d)
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            return
+        full = urljoin(self.base, href)
+        h = scoring.host_of(full)
+        own = not h or h == self.host or scoring.owns(h, self.host)
+        if own:
+            path = urlsplit(full).path
+            if len(self.paths) < ANCHOR_KEEP:
+                self.paths.add(path)
+            if "/author/" in path.lower() or "/authors/" in path.lower():
+                self.author_link = True
+            if self.secure and full.lower().startswith("http://"):
+                self.http_links += 1             # https 사이트가 제 페이지를 http 로 건다
+        if "author" in a.get("rel", "").lower().split():
+            self.author_link = True
+        self._a = {"text": [], "label": bool(a.get("aria-label", "").strip()
+                                             or a.get("title", "").strip())}
+
+    def _end_a(self) -> None:
+        cur, self._a = self._a, None
+        text = " ".join("".join(cur["text"]).split())
+        if not text and not cur["label"]:
+            self.empty_links += 1
+        elif text and len(self.anchors) < ANCHOR_KEEP:
+            self.anchors.append(text[:80])
+
+    def _end_q(self) -> None:
+        n = len(" ".join(self._q or []).split())
+        self._q = None
+        if n < LEAD_MIN_WORDS:
+            return
+        self.paras += 1
+        self.long_paras += n > scoring.LEAD_MAX_WORDS
+        if self._sec_wait:
+            self.sec_leads.append(n)
+            self._sec_wait = False
+
+    def _signals_data(self, data: str) -> None:
+        if self._a is not None:
+            self._a["text"].append(data)
+        if self._q is not None:
+            self._q.append(data)
+        if self._in_chrome():
+            return
+        n = len(data.split())
+        if not n:
+            return
+        if self._on[_F_HIDDEN]:
+            self.hidden_words += n
+            return                               # 숨긴 글은 본문 글자로 안 친다
+        if self._on[_F_FOLD] and not self._on[_F_SUMMARY]:
+            self.fold_words += n                 # 접힌 아코디언 — 숨긴 글과 다르다(펼치면 보인다)
+        self.body_words += n
+        main = bool(self._on[_F_MAIN])
+        self.main_words += n * main
+        if self._txt_len < MAIN_TEXT_MAX * 2:
+            (self._main_txt if main else self._body_txt).append(data)
+            self._txt_len += len(data)
+
+    def finish(self) -> None:
+        """문서 끝 — 안 닫힌 문단·링크·구간을 마감한다. 여러 번 불러도 같다."""
+        if self._q is not None:
+            self._end_q()
+        if self._a is not None:
+            self._end_a()
+        if self._sec_wait:
+            self.sec_leads.append(0)
+            self._sec_wait = False
+
+    def main_text(self) -> tuple[str, int]:
+        """본문만 — (글자, 단어 수). <main>·<article> 안의 글이 있으면 그것, 없으면 틀(메뉴·
+        꼬리말·곁가지·폼) 밖 전체. 숨긴 글은 빠진다. 라이브러리 없이 태그 자리로만 가른다:
+        광고·댓글 상자까지 걸러 내지는 못한다(그래서 '본문 약 n단어'다)."""
+        if self.main_words:
+            return " ".join("".join(self._main_txt).split())[:MAIN_TEXT_MAX], self.main_words
+        return " ".join("".join(self._body_txt).split())[:MAIN_TEXT_MAX], self.body_words
 
     # ── 추출성 ──────────────────────────────────────────────
     def _in_chrome(self) -> bool:
@@ -565,13 +918,66 @@ def _schema_types(blob: str) -> list[str]:
     return out
 
 
-def audit_html(url: str, html: str, status: int | None = 200) -> dict:
-    """HTML 한 장 → page_audits 한 줄. 네트워크를 타지 않는다(자체점검이 여기를 부른다)."""
+def _heading_skips(levels: list[int]) -> list[list]:
+    """제목 단계가 한 번에 두 칸 이상 내려간 자리 — [["H2","H4",횟수], ...]. 올라가는 것은
+    건너뜀이 아니다(H4 다음 H2 는 구간이 끝난 것이다)."""
+    got: dict[tuple[int, int], int] = {}
+    for a, b in zip(levels, levels[1:]):
+        if b > a + 1:
+            got[(a, b)] = got.get((a, b), 0) + 1
+    return [[f"H{a}", f"H{b}", n] for (a, b), n in sorted(got.items())]
+
+
+def _signals(p: "_Page", url: str, headers: dict | None, gaps: dict) -> dict:
+    """파서가 센 것 → page_audits.signals_json. 판정은 없다(scoring.signal_advice 가 한다).
+    이 칸이 NULL 인 행은 '안 봤다'(옛 행·대신 읽은 행)다 — 0 과 다르다."""
+    lang = page_lang.lang_of(p.html_lang)
+    hd = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    http_cs = _CHARSET.search(hd.get("content-type", ""))
+    http_cs = _charset_name(http_cs.group(1)) if http_cs else None
+    generic = [page_lang.is_generic_anchor(t, lang) for t in p.anchors]
+    text, main_words = p.main_text()
+    pg = gaps.get("Person") or {}
+    trust = {k for k in (page_lang.trust_kind(x, lang) for x in p.paths) if k}
+    m = _URL_DATE.search(urlsplit(url).path)
+    return {
+        "h": {**{f"h{n}": p.h_levels.count(n) for n in (3, 4, 5, 6)},
+              "skips": _heading_skips(p.h_levels)},
+        "links": {"http": p.http_links, "empty": p.empty_links, "mixed": p.mixed,
+                  # 표에 없는 언어면 None(못 셌다) — 0 이 아니다
+                  "generic": None if lang not in page_lang.GENERIC_ANCHORS else sum(map(bool, generic)),
+                  "anchors": len(p.anchors)},
+        "meta": {"refresh": p.meta_refresh, "charset": p.charset, "charset_http": http_cs,
+                 "x_robots": (hd.get("x-robots-tag") or "")[:300] or None,
+                 "bots": p.robots_bots, "og": p.og},
+        "snippet": {"data_nosnippet": p.nosnip, "data_nosnippet_invalid": p.nosnip_bad},
+        "text": {"main_words": main_words, "hidden_words": p.hidden_words,
+                 "fold_words": p.fold_words,
+                 "lorem": len(page_lang.LOREM.findall(" ".join(p._text))),
+                 "paras": p.paras, "long_paras": p.long_paras, "sec_leads": p.sec_leads[:20]},
+        "img": {"decorative": p.images_decor,
+                "junk_alt": sum(page_lang.is_junk_alt(a, lang) for a in p.alts)},
+        "markup": {"microdata": sorted(set(p.micro)), "rdfa": sorted(set(p.rdfa))},
+        "nap": _nap_compare(p.ld_blocks, p.tels, " ".join(p._text), p.address_tags > 0),
+        # E-E-A-T 로 셀 수 있는 것만 — 있다/없다. 점수로 합치지 않는다(가중치를 지어내야 한다)
+        "eeat": {"author": bool(p.author), "author_link": p.author_link,
+                 "author_profile": bool(pg.get("n")) and not any(pg.get("each") or [["x"]]),
+                 "date_shown": p.time_tags > 0, "modified": bool(p.modified),
+                 "about_link": "about" in trust, "contact_link": "contact" in trust},
+        "read": page_lang.readability(text, lang),
+        "url_date": "-".join(m.groups()) if m else None,
+    }
+
+
+def audit_html(url: str, html: str, status: int | None = 200, headers: dict | None = None) -> dict:
+    """HTML 한 장 → page_audits 한 줄. 네트워크를 타지 않는다(자체점검이 여기를 부른다).
+    headers: 응답 헤더(X-Robots-Tag·Content-Type 의 charset 을 본다). 없으면 그 칸은 '없음'이다."""
     p = _Page(url)
     try:
         p.feed(html[:MAX_HTML])
     except Exception as e:                       # 망가진 마크업에도 지금까지 읽은 것은 남긴다
         print(f"  ! {url}: 파싱 도중 중단 ({e})", file=sys.stderr)
+    p.finish()
     words = p.words
     # 정적 HTML 로는 본문이 안 보이는 페이지 — 여기서 재는 title 말고 본문·H2·
     # 구조화 데이터는 전부 못 믿는 값이 된다. 판정이 아니라 **단서**라서 요청문이
@@ -581,6 +987,10 @@ def audit_html(url: str, html: str, status: int | None = 200) -> dict:
     gaps: dict = {}                              # 규칙 → 빠진 속성 집계
     same_as: list[list[str]] = []                # [[규칙, 주소], ...] — 수집 중에만 쓴다
     _schema_scan(p.ld_blocks, gaps, same_as)
+    # Microdata·RDFa 로 단 유형도 '있는 마크업'이다 — ld+json 만 보면 그런 사이트에 있는 마크업을
+    # 또 만들라고 시킨다. 유형 이름은 같은 칸(schema_json)에 합치고, 어느 문법인지는 signals 에.
+    # (속성 검사 schema_gaps·값 검사 schema_issues 는 JSON-LD 만 한다 — 다른 문법의 빈칸은 모른다.)
+    p.schema += p.micro + p.rdfa
     return {"url": url, "status": status, "error": None,
             "title": p.title, "meta_description": p.meta_description,
             "h1_json": json.dumps(p.h1, ensure_ascii=False),
@@ -599,6 +1009,11 @@ def audit_html(url: str, html: str, status: int | None = 200) -> dict:
             "js_shell": js_shell,
             # 추출성. 저자는 못 찾으면 "" 다 — NULL 은 이 칸이 생기기 전의 행(안 봤다)이다.
             # 질문형 H2 는 h2_json 과 같은 20개 안에서 센다(요청문이 "n/전체"로 나란히 쓴다).
+            # 기계 점검·값 검사·내용 지문 — 셋 다 NULL 이면 '안 봤다'(옛 행·대신 읽은 행)
+            "signals_json": json.dumps(_signals(p, url, headers, gaps), ensure_ascii=False),
+            "schema_issues_json": json.dumps(schema_values.value_issues(p.ld_blocks, url),
+                                             ensure_ascii=False),
+            "schema_hash": schema_values.schema_hash(p.ld_blocks),
             "tables": p.tables, "lists": p.lists,
             "h2_questions": sum(map(_is_question, p.h2[:20])),
             "lead_words": p.lead_words(), "author": p.author or "",
@@ -829,9 +1244,61 @@ def fetch(url: str, timeout: int | None = None) -> dict:
     except Exception as e:
         return {"url": url, "status": None, "error": f"{type(e).__name__}: {e}"[:200]}
     if r.status >= 400 or "html" not in r.content_type.lower():
-        return {"url": url, "status": r.status,
+        return {"url": url, "status": r.status, "final_url": r.final_url,
                 "error": f"HTTP {r.status} · {r.content_type or '?'}"}
-    return audit_html(url, r.text, r.status)
+    # 응답 헤더는 받은 응답(requests)에만 있다 — 검사용 가짜 전송은 헤더가 없다(= 없음)
+    hdr = getattr(getattr(r, "_resp", None), "headers", None) or {}
+    row = audit_html(url, r.text, r.status, {k: hdr[k] for k in ("x-robots-tag", "content-type")
+                                             if hdr.get(k)})
+    # 칸이 아니다(write_page_audits 가 버린다) — canonical 대상 확인이 리다이렉트를 아는 재료
+    row["final_url"] = r.final_url
+    return row
+
+
+def check_canonicals(rows: list[dict], domain: str, get=None) -> int:
+    """canonical 이 다른 주소를 가리키는 행마다 그 **대상**을 한 번 열어 결과를 행의
+    canonical_check_json 에 적는다 → 연 주소 수.
+
+    한 장만 보면 'canonical: 다른 주소'까지만 안다. 그 주소가 없는 페이지인지, 리다이렉트되는지,
+    또 다른 정본을 가리키는지(사슬)·되돌아오는지(고리)는 열어 봐야 안다. 이번 회차에 이미 본
+    주소면 그 행을 쓴다(요청 0). 남의 도메인을 가리키는 canonical 은 안 연다 — 그건 이미
+    bad 로 말한다(scoring.page_advice). 상한(CANON_MAX)·시간(CANON_BUDGET) 안에서만.
+    get: (url) -> 감사 행 꼴. 기본은 이 모듈의 fetch(검사가 갈아 끼운다)."""
+    import time
+
+    get = get or fetch
+    by_url = {scoring.norm(str(r.get("url") or "")): r for r in rows if not r.get("error")}
+    todo = []
+    for r in rows:
+        c = (r.get("canonical") or "").strip()
+        if r.get("error") or not c or scoring.norm(c) == scoring.norm(str(r.get("url") or "")):
+            continue
+        if domain and not scoring.owns(scoring.host_of(c), domain):
+            continue
+        todo.append((r, c))
+    deadline = time.monotonic() + CANON_BUDGET
+    seen: dict[str, dict] = {}
+    opened = 0
+    for r, c in todo:
+        key = scoring.norm(c)
+        if key not in seen:
+            hit = by_url.get(key)
+            if hit is None:
+                if opened >= CANON_MAX or time.monotonic() >= deadline:
+                    continue
+                opened += 1
+                hit = get(c) or {}
+            seen[key] = {"url": c, "status": hit.get("status"),
+                         "final": hit.get("final_url") if hit.get("final_url")
+                         and scoring.norm(hit["final_url"]) != key else None,
+                         "canonical": hit.get("canonical")}
+        t = dict(seen[key])
+        tc = (t.pop("canonical") or "").strip()
+        # 대상이 스스로를 정본이라 하면(또는 canonical 이 없으면) 정상이다
+        t["next"] = tc if tc and scoring.norm(tc) != key else None
+        t["loop"] = bool(tc) and scoring.norm(tc) == scoring.norm(str(r.get("url") or ""))
+        r["canonical_check_json"] = json.dumps(t, ensure_ascii=False)
+    return opened
 
 
 # ── 막힌 페이지 대신 읽기 — DataForSEO On-Page content_parsing ────────────────
@@ -1065,6 +1532,10 @@ def collect(project: str, *,
             n_sa = check_same_as(rows, p["domain"] or "")
             if n_sa:
                 print(f"  · sameAs {n_sa}곳을 열어 살아 있는지 봤습니다")
+            # canonical 이 가리키는 주소 — 같은 식으로 몇 곳만(이미 본 주소는 요청 없이)
+            n_ca = check_canonicals(rows, p["domain"] or "")
+            if n_ca:
+                print(f"  · canonical 대상 {n_ca}곳을 열어 봤습니다")
             checked = str(date.today())
             db.write_page_audits(conn, p["id"], checked, rows)
             r.api_calls = done
