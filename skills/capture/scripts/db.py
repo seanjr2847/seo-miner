@@ -570,12 +570,22 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
   -- 증거 없이 말하게 된다. 크기·앞부분은 있을 때만 (collect_crawl.probe_llms_txt)
   llms_txt_found INTEGER,
   llms_txt_bytes INTEGER,
-  llms_txt_head TEXT
+  llms_txt_head TEXT,
+  -- robots.txt 를 받은 결과 — 200 이 아니면 '없다'와 '못 읽었다'가 갈린다(collect_crawl.robots_state):
+  -- ok 읽음 · none 4xx(규칙 없음) · blocked 5xx(준수 크롤러는 사이트 전체를 멈춘다) · unknown 429·응답 없음
+  robots_status INTEGER,
+  robots_state TEXT,
+  discovery_capped INTEGER,                   -- 1 = 사이트맵을 상한에서 잘랐다(전수가 아니다). NULL = 이 칸 전의 회차
+  latency_p50_ms INTEGER,                     -- 크롤 응답 지연(HTML 로 받은 장만) — 중앙값·p95
+  latency_p95_ms INTEGER,
+  facts_json TEXT                             -- 사이트 단위로 한 번 본 것(호스트·사이트맵 파일·탐침) — collect_crawl.site_facts
 );
 CREATE TABLE IF NOT EXISTS sitemap_urls (     -- 사이트맵이 시드였을 때 그 목록 그대로
   id INTEGER PRIMARY KEY,
   run_id INTEGER NOT NULL REFERENCES crawl_runs(id),
-  url TEXT NOT NULL
+  url TEXT NOT NULL,
+  lastmod TEXT,                               -- <lastmod> 원문 그대로(형식 검사는 collect_crawl 이 한다)
+  source TEXT                                 -- 이 주소를 실은 사이트맵 파일
 );
 CREATE INDEX IF NOT EXISTS idx_sitemap_urls ON sitemap_urls(run_id);
 CREATE TABLE IF NOT EXISTS crawl_pages (
@@ -592,6 +602,13 @@ CREATE TABLE IF NOT EXISTS crawl_pages (
   links_in INTEGER DEFAULT 0, links_out INTEGER DEFAULT 0,
   images_no_alt INTEGER DEFAULT 0,
   bytes INTEGER,
+  x_robots TEXT,                              -- X-Robots-Tag 헤더 중 모든 크롤러·구글에 걸리는 규칙(소문자)
+  fetch_ms INTEGER,                           -- 이 장을 받는 데 걸린 시간
+  tpl TEXT,                                   -- 주소 꼴(/blog/*) — 같은 틀 묶음(collect_crawl.url_template)
+  body_hash TEXT,                             -- 틀(메뉴·꼬리말) 밖 글자의 해시 — 같은 본문 판정
+  modified TEXT,                              -- 페이지가 말한 수정일(dateModified·article:modified_time)
+  h2s INTEGER, images INTEGER,                -- 언어 판 사이 동등성(H2·이미지 수)
+  lang TEXT,                                  -- html lang
   UNIQUE(run_id, url)
 );
 CREATE INDEX IF NOT EXISTS idx_crawl_pages ON crawl_pages(run_id);
@@ -611,7 +628,8 @@ CREATE TABLE IF NOT EXISTS crawl_hreflang (   -- 페이지가 선언한 hreflang
   run_id INTEGER NOT NULL REFERENCES crawl_runs(id),
   url TEXT NOT NULL,                          -- 선언한 쪽
   code TEXT NOT NULL,                         -- ko, en-GB, x-default …
-  href TEXT NOT NULL                          -- 가리키는 쪽 (정규화된 주소)
+  href TEXT NOT NULL,                         -- 가리키는 쪽 (정규화된 주소)
+  source TEXT                                 -- html(<link>) · header(Link:) · sitemap(xhtml:link). NULL = 이 칸 전의 회차(html)
 );
 CREATE INDEX IF NOT EXISTS idx_crawl_hreflang ON crawl_hreflang(run_id, href);
 CREATE TABLE IF NOT EXISTS crawl_issues (     -- 도출 결과를 저장한다 — 그래야 회차 비교가 된다
@@ -736,6 +754,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # (상위는 비교표·영상이 있는데 우리는 글뿐)은 못 봤다. 옛 행은 NULL(안 셌다)이다.
     # 링크가 틀(메뉴·꼬리말) 안인가 — 본문 링크와 공통 메뉴를 가른다. 옛 행은 NULL(모른다):
     # 0 으로 채우면 메뉴 링크 전부가 본문 링크로 읽힌다.
+    # 크롤·사이트맵 판정 정확성(2026-11) — 전부 ADD COLUMN, 옛 행은 NULL(안 봤다)로 남는다.
+    for cr_table, cr_add in _CRAWL_ADD_COLS:
+        cr_have = {r["name"] for r in conn.execute(f"PRAGMA table_info({cr_table})")}
+        for col, decl in cr_add:
+            if col not in cr_have:
+                conn.execute(f"ALTER TABLE {cr_table} ADD COLUMN {col} {decl}")
+                conn.commit()
     cl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(crawl_links)")}
     if "in_chrome" not in cl_cols:
         conn.execute("ALTER TABLE crawl_links ADD COLUMN in_chrome INTEGER")
@@ -2608,6 +2633,34 @@ def write_sitemap_urls(conn: sqlite3.Connection, run_id: int, urls) -> int:
                      [(run_id, u) for u in urls])
     conn.commit()
     return len(urls)
+
+
+# 크롤 표에 뒤에 붙인 칸 — 스키마(CREATE TABLE)와 같은 이름·같은 꼴. 옛 Brain 은 여기로 따라온다.
+_CRAWL_ADD_COLS = (
+    ("crawl_runs", (("robots_status", "INTEGER"), ("robots_state", "TEXT"),
+                    ("discovery_capped", "INTEGER"), ("latency_p50_ms", "INTEGER"),
+                    ("latency_p95_ms", "INTEGER"), ("facts_json", "TEXT"))),
+    ("sitemap_urls", (("lastmod", "TEXT"), ("source", "TEXT"))),
+    ("crawl_pages", (("x_robots", "TEXT"), ("fetch_ms", "INTEGER"), ("tpl", "TEXT"),
+                     ("body_hash", "TEXT"), ("modified", "TEXT"), ("h2s", "INTEGER"),
+                     ("images", "INTEGER"), ("lang", "TEXT"))),
+    ("crawl_hreflang", (("source", "TEXT"),)),
+)
+
+
+def write_sitemap_entries(conn: sqlite3.Connection, run_id: int, entries) -> int:
+    """사이트맵 항목 [{url, lastmod, source}] 을 크롤 회차에 매단다(주소당 한 줄, 재실행은 덮어쓴다).
+    write_sitemap_urls 의 lastmod·출처 파일까지 싣는 판이다."""
+    seen, rows = set(), []
+    for e in entries:
+        u = e.get("url")
+        if u and u not in seen:
+            seen.add(u)
+            rows.append((run_id, u, e.get("lastmod"), e.get("source")))
+    conn.execute("DELETE FROM sitemap_urls WHERE run_id=?", (run_id,))
+    conn.executemany("INSERT INTO sitemap_urls(run_id, url, lastmod, source) VALUES(?,?,?,?)", rows)
+    conn.commit()
+    return len(rows)
 
 
 def write_llms_txt(conn: sqlite3.Connection, run_id: int, probe: dict) -> None:

@@ -2091,6 +2091,11 @@ _META_SEP = re.compile(r"\s+[|—–\-·:»•]\s+|\s*[|»•]\s*")
 _META_BREAK = ".|。»•·"
 
 
+# 꼴 이름 → 화면·요청문에 나가는 말. 꼴을 더하면 여기도 더한다(desc_template_kind 가 돌려주는 값 전부).
+DESC_TEMPLATE_KINDS = {"same_as_title": "제목과 같음", "brand_tail": "브랜드 꼬리가 붙음",
+                       "title_repeat": "제목을 되풀이"}
+
+
 def _meta_norm(s: str) -> str:
     """비교용 한 줄 — NFKC·소문자로 접고 글자·숫자만 남긴다. 어느 문자 체계든 글자는 글자다
     (라틴만 남기면 한글·가나·한자 설명은 빈 문자열끼리 '같다'가 된다)."""

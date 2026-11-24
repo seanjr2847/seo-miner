@@ -79,6 +79,18 @@ class Fetched:
             self._text = html_text(self._resp) if self._resp is not None else ""
         return self._text
 
+    @property
+    def headers(self) -> dict:
+        """응답 헤더(이름은 소문자). 가짜 전송이 만든 응답(resp 없음)은 빈 dict 다."""
+        h = getattr(self._resp, "headers", None)
+        return {str(k).lower(): str(v) for k, v in h.items()} if h else {}
+
+    @property
+    def content(self) -> bytes:
+        """본문 바이트 — gzip 사이트맵처럼 글자로 읽으면 깨지는 것을 받는 쪽이 푼다."""
+        c = getattr(self._resp, "content", None)
+        return c if isinstance(c, (bytes, bytearray)) else (self._text or "").encode("utf-8")
+
 
 # ── 전송 (갈아끼우는 자리) ───────────────────────────────────────────────────
 _session = None
@@ -189,12 +201,12 @@ def _store(url: str, f: Fetched) -> None:
             _cache_bytes -= gone.bytes
 
 
-def get(url: str, *, headers: dict, timeout) -> Fetched:
+def get(url: str, *, headers: dict, timeout, fresh: bool = False) -> Fetched:
     """URL 한 장. 리다이렉트는 따라가고 홉은 chain 에 남는다. 연결 실패·시간 초과는 예외 그대로.
 
     run_scope() 안이면 같은 URL 은 한 번만 받는다(동시에 부르면 하나가 받고 나머지는 기다린다).
     공유된 응답은 처음 받은 쪽의 UA·타임아웃으로 받은 것이다 — 두 UA 는 모두 같은 신원(seo-miner)이다."""
-    if _depth == 0:
+    if _depth == 0 or fresh:      # fresh: 같은 주소를 다른 헤더(Accept)로 다시 묻는 탐침 — 공유하지 않는다
         return _transport(url, headers, timeout)
     while True:
         with _lock:

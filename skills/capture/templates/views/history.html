@@ -302,6 +302,11 @@ const HS_NOTE_LABEL = {rows:"행", window:"기간", pages:"페이지", provider:
   daily:"일별", page_daily:"페이지별 일별", country:"나라",
   // 사이트가 이 서버를 막아(무응답·403·429) 못 본 주소 수 — collect_crawl 이 적는다.
   blocked:"막힌 주소",
+  // 크롤이 사이트 단위로 본 것(collect_crawl) — robots.txt 가 5xx·판정 불가였나, 사이트맵을 상한에서
+  // 잘랐나, 속도 제한(429·503)으로 못 본 주소 수, 따른 Crawl-delay(초).
+  robots_error:"robots.txt 서버 오류", robots_unknown:"robots.txt 판정 불가",
+  sitemap_capped:"사이트맵 상한에서 자름", rate_limited:"속도 제한으로 못 본 주소",
+  crawl_delay:"Crawl-delay(초)",
   // 경쟁사 비브랜드 발견·역할 판정(collect_gap D·E)
   nonbrand_new:"비브랜드로 찾은 경쟁사", judged:"역할 판정",
   // 검색량 API 가 못 재는 검색어(빈 문자열·길이 초과·안 받는 지역). 실패가 아니라
