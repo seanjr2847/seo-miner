@@ -35,6 +35,7 @@ import collector  # noqa: E402
 import db  # noqa: E402
 import fanout  # noqa: E402
 import http_adapter  # noqa: E402
+import render  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
 
@@ -597,6 +598,8 @@ def audit_html(url: str, html: str, status: int | None = 200) -> dict:
             "hreflang_json": json.dumps(p.hreflang[:30], ensure_ascii=False),
             "published": p.published, "modified": p.modified,
             "js_shell": js_shell,
+            # page_audits 칸이 아니다 — render.save 가 page_renders 에 적는다(정보 한 줄).
+            "pushstate_inline": render.pushstate_inline(html),
             # 추출성. 저자는 못 찾으면 "" 다 — NULL 은 이 칸이 생기기 전의 행(안 봤다)이다.
             # 질문형 H2 는 h2_json 과 같은 20개 안에서 센다(요청문이 "n/전체"로 나란히 쓴다).
             "tables": p.tables, "lists": p.lists,
@@ -1004,13 +1007,14 @@ def collect(project: str, *,
         fresh_ok = _recent_ok(conn, p["id"], PAGE_DFS_FRESH_DAYS)
         lock = threading.Lock()
         spend = {"n": 0, "cost": 0.0, "off": ""}
+        rnd = render.Session()     # 렌더 엔진이 없으면(호스팅) 아무것도 안 한다
 
         def get(url: str) -> dict:
             # 일꾼 스레드 — 네트워크만(Brain 을 안 만진다). 막혔으면: 최근에 잘 읽은 주소는
             # 지난 값을 그대로 두고(_keep), 아니면 상한 안에서 DataForSEO 로 대신 읽는다.
             row = fetch(url)
             if not (row.get("error") and blocked(row.get("status"))):
-                return row
+                return rnd.reread(url, row, audit_html)   # js_shell 이면 렌더해 다시 읽는다
             if url in fresh_ok:
                 return {**row, "_keep": True}
             with lock:
@@ -1067,6 +1071,8 @@ def collect(project: str, *,
                 print(f"  · sameAs {n_sa}곳을 열어 살아 있는지 봤습니다")
             checked = str(date.today())
             db.write_page_audits(conn, p["id"], checked, rows)
+            rnd.save(conn, p["id"], checked, rows)
+            print(f"  · {rnd.summary}")
             r.api_calls = done
             r.cost = round(spend["cost"], 4)
             r.notes = (f"urls={len(rows)}/{len(urls)} checked={checked} "
