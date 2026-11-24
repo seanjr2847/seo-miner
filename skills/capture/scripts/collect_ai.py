@@ -195,6 +195,7 @@ def collect(project: str, *,
             ids: str | None = None,
             category: str | None = None,
             force: bool = False,
+            llm_mentions: int | None = None,
             conn=None) -> collector.StageResult:
     """AI 가시성 체크 (OpenRouter) — 결과를 Brain 에 적재한다.
 
@@ -210,6 +211,7 @@ def collect(project: str, *,
         ids: 쉼표 구분 ai_prompt id — 지정하면 is_active 무시
         category: 이 카테고리의 활성 프롬프트만 실행
         force: 오늘 이미 확인한 질문도 재확인
+        llm_mentions: 1 이면 LLM 언급 집계도 받는다(config 키는 ai_llm_mentions, 유료)
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
 
     Returns:
@@ -219,7 +221,8 @@ def collect(project: str, *,
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p, cfg = st.conn, st.project, st.cfg
         s = st.settings(ap, argparse.Namespace(
-            throttle=throttle, samples=samples, max_prompts=max_prompts))
+            throttle=throttle, samples=samples, max_prompts=max_prompts,
+            llm_mentions=llm_mentions))
         samples = s["ai_samples"]
         max_ai_prompts = s["limits.max_ai_prompts"]
 
