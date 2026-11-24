@@ -15,7 +15,7 @@ Standalone-safe: if brain.db doesn't exist, commands explain and exit cleanly
 CLI:
   python createdb.py pick   <project> [--kinds a,b] [--limit 10]
   python createdb.py claim  <project> <id> [<id> ...]
-  python createdb.py done   <project> <id> --path PATH [--branch BR] [--note N]
+  python createdb.py done   <project> <id> --path PATH [--branch BR] [--note N] [--url 공개주소 ...]
   python createdb.py list   <project>
   python createdb.py merged <creation_id> [--project P]
   python createdb.py sync   <project> --repo PATH   # [opp #id] 커밋 기록 + PR 머지 반영
@@ -31,6 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "capture" / "scripts"))
 import db  # noqa: E402
 import remote  # noqa: E402  (호스팅 사이트면 Brain 대신 서버 창구를 쓴다)
+import indexnow  # noqa: E402  (머지를 확인한 뒤 바뀐 주소를 한 번 알린다)
 
 # creations 테이블·경로 규칙·콘솔 인코딩은 전부 db가 갖는다. 여기서 따로 CREATE TABLE을
 # 하던 시절엔 create가 capture의 Brain 안에 제 테이블을 심는 꼴이라, dashboard가 그
@@ -117,8 +118,39 @@ def _mark_done(conn, pid: int, opp_id: int | None, path: str,
                               branch=branch, note=note)
 
 
+def _notify_indexnow(project: str, cids: list) -> None:
+    """이번에 머지를 확인한 작업 기록의 공개 주소(노트의 `[url …]`)를 IndexNow 로 한 번 알린다.
+
+    머지 반영의 꼬리다 — 여기서 무엇이 터져도 반영은 이미 끝났다. 한 줄 알리고 넘어간다.
+    키가 없으면 indexnow.notify 가 사유를 돌려준다(건너뜀)."""
+    try:
+        want = {int(c) for c in cids if c is not None}
+        if not want:
+            rows = []                   # 물을 것이 없으면 Brain·서버를 또 읽지 않는다
+        elif _remote(project):
+            rows = [(c.get("id"), c.get("note")) for c in (_payload(project).get("creations") or [])]
+        else:
+            conn = connect()
+            try:
+                pid = db.get_project(conn, project)["id"]
+                rows = [(r["id"], r["note"]) for r in conn.execute(
+                    "SELECT id, note FROM creations WHERE project_id=?", (pid,))]
+            finally:
+                conn.close()
+        items = [(int(i), indexnow.urls_in(n)) for i, n in rows if i is not None and int(i) in want]
+        # 새로 머지된 것이 없어도 부른다 — 지난번에 '아직 안 떠서' 미룬 주소를 다시 본다.
+        msg = indexnow.report(indexnow.notify(project, [(i, u) for i, u in items if u]))
+        if msg:
+            print(msg)
+    except Exception as e:   # noqa: BLE001 — 알림 실패가 머지 반영을 실패로 만들지 않는다
+        print(f"IndexNow 건너뜀: {type(e).__name__}: {str(e)[:120]}")
+
+
 def done(project: str, opp_id: int | None, path: str,
-         branch: str | None, note: str | None, repo: str | None = None) -> None:
+         branch: str | None, note: str | None, repo: str | None = None,
+         urls: list[str] | None = None) -> None:
+    # 공개 주소는 노트에 `[url …]` 로 적는다 — 머지를 확인한 뒤 그 주소만 IndexNow 로 알린다.
+    note = indexnow.note_with_urls(note, urls)
     # 요청문 답 보고서(%TEMP%\seo-fix_page-….html)는 작업 기록이 아니다 — 저장소가 안 바뀌었다.
     # 요청문 꼬리가 "제안서까지만 냈으면 기록하지 않는다"고 하는데도 그 경로로 기록이 남아,
     # 아무것도 안 고친 페이지가 '관찰 중'으로 묶이고 기회가 '작업 후 완료'로 닫힐 뻔했다.
@@ -212,6 +244,7 @@ def sync(project: str, repo: str) -> None:
     ref = _default_ref(repo)
     remote_site = _remote(project)
     recorded = landed = untouched = 0
+    just_merged = []        # 이번 sync 가 머지로 닫은 기록 — 꼬리에서 IndexNow 로 알린다
     # 이미 남긴 기록(노트에 그 커밋 앞 8자리)은 다시 남기지 않는다 — 예전엔 진행 중(acked)인
     # 기회의 커밋을 sync 마다 또 기록했다. 기록이 '병합 전'이고 커밋이 기본 브랜치에 들어갔으면
     # 그 기록을 머지로 닫는다.
@@ -237,6 +270,7 @@ def sync(project: str, repo: str) -> None:
             reason = f"커밋 {sha[:8]} 이 기본 브랜치에 있음"
             if old:
                 if at and not old[3] and old[0] is not None:
+                    just_merged.append(old[0])
                     landed += (_merge_remote(project, old[0], at, reason) if remote_site
                                else db.merge_creation(conn, pid, old[0], at, reason))
                 continue
@@ -250,6 +284,7 @@ def sync(project: str, repo: str) -> None:
                 cid = _mark_done(conn, pid, opp_id, "", branch=None, note=note)
             recorded += 1
             if at and cid is not None:
+                just_merged.append(cid)
                 landed += (_merge_remote(project, cid, at, reason) if remote_site
                            else db.merge_creation(conn, pid, cid, at, reason))
     finally:
@@ -257,7 +292,7 @@ def sync(project: str, repo: str) -> None:
             conn.close()
     print(f"sync 완료: {recorded}건 기록, 기본 브랜치에 들어간 것 {landed}건 완료, "
           f"{untouched}건 건드리지 않음")
-    sync_merged(project, repo)
+    sync_merged(project, repo, also=just_merged)
 
 
 # ── 머지 반영 ──────────────────────────────────────────────────────────────
@@ -293,7 +328,7 @@ def _merged_pr(branch: str, cwd: str | None) -> dict | None:
     return rows[0] if rows else None
 
 
-def sync_merged(project: str, repo: str | None) -> dict:
+def sync_merged(project: str, repo: str | None, also: list | None = None) -> dict:
     """머지를 아직 모르는 작업 기록마다 PR 머지를 확인해, 머지됐으면 기록을 merged 로,
     그 기회를 done 으로 닫는다(status_at = 머지 시각). gh 가 없거나 로그인이 안
     됐으면 한 줄 알리고 건너뛴다 — 실패로 치지 않는다(sync 의 나머지는 이미 끝났다).
@@ -304,6 +339,7 @@ def sync_merged(project: str, repo: str | None) -> dict:
     gh 에 영영 다시 묻고, 화면의 「고친 것」은 계속 '병합 전'으로 남는다.
     """
     out = {"checked": 0, "merged": 0, "closed": 0, "skipped": ""}
+    just_merged = list(also or [])      # sync 가 커밋으로 닫은 것 + 여기서 PR 로 닫는 것
     cwd = str(repo) if repo else None
     remote_site = _remote(project)
     if remote_site:
@@ -324,6 +360,7 @@ def sync_merged(project: str, repo: str | None) -> dict:
             if not pr:
                 continue
             out["merged"] += 1
+            just_merged.append(cid)
             reason = f"PR #{pr.get('number')} 머지됨 ({branch.strip()})"
             if remote_site:
                 # 기록과 기회를 한 번에 닫는다(서버 db.merge_creation, 완료 시각 = 머지 시각).
@@ -339,6 +376,7 @@ def sync_merged(project: str, repo: str | None) -> dict:
     finally:
         if conn is not None:
             conn.close()
+        _notify_indexnow(project, just_merged)   # gh 가 없어도 커밋으로 닫은 것은 알린다
     print(f"머지 확인: {out['checked']}건 중 {out['merged']}건 머지됨 → "
           f"기회 {out['closed']}건 완료")
     return out
@@ -361,9 +399,13 @@ def merged(creation_id: int, project: str | None = None) -> None:
     if project and _remote(project):
         sys.exit("웹에 등록한 사이트의 머지 표시는 대시보드에서 합니다")
     conn = connect()
+    was = conn.execute("SELECT c.merged, p.name FROM creations c JOIN projects p ON p.id=c.project_id "
+                       "WHERE c.id=?", (int(creation_id),)).fetchone()
     db.mark_creation_merged(conn, creation_id)
     print(f"creation#{creation_id} marked merged")
     conn.close()
+    if was and not was["merged"]:       # 이미 머지로 적힌 것을 또 누른 것은 새 변경이 아니다
+        _notify_indexnow(was["name"], [creation_id])
 
 
 if __name__ == "__main__":
@@ -378,6 +420,8 @@ if __name__ == "__main__":
     p3.add_argument("--path", required=True); p3.add_argument("--branch")
     p3.add_argument("--note")
     p3.add_argument("--repo", help="사이트 리포 — 주면 기록 뒤 앞선 기록들의 머지를 반영한다")
+    p3.add_argument("--url", action="append", default=[],
+                    help="이 작업으로 바뀐 공개 주소(여러 번 가능) — 머지 확인 뒤 IndexNow 로 한 번 알린다")
     p4 = sub.add_parser("list"); p4.add_argument("project")
     p5 = sub.add_parser("merged"); p5.add_argument("creation_id", type=int)
     p5.add_argument("--project")
@@ -390,7 +434,7 @@ if __name__ == "__main__":
         elif a.cmd == "claim":
             claim(a.project, a.ids)
         elif a.cmd == "done":
-            done(a.project, a.id, a.path, a.branch, a.note, a.repo)
+            done(a.project, a.id, a.path, a.branch, a.note, a.repo, a.url)
         elif a.cmd == "list":
             list_creations(a.project)
         elif a.cmd == "merged":

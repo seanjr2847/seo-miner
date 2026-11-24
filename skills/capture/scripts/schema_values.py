@@ -73,31 +73,90 @@ PLACEHOLDER_RE = re.compile(
     re.I | re.S)
 
 
-def is_placeholder(value) -> bool:
+# 자리표시의 **꼴**(이름 붙은 것) — create 의 커밋 전 검사(jsonld_check)가 어느 꼴인지 말할 때 쓴다.
+# 위 PLACEHOLDER_RE 와 함께 '자리표시인가'의 정본이다(두 모듈이 따로 갖지 않는다).
+PLACEHOLDER_FORMS = (
+    ("대괄호 자리표시", re.compile(r"^\s*\[[^\[\]]{1,80}\]\s*$")),          # [Business Name]·[확인 필요]
+    ("대괄호 자리표시", re.compile(r"\[(?:your|insert|url|todo)\b[^\]]*\]", re.I)),
+    ("템플릿 표현식", re.compile(r"\{\{.*?\}\}|\$\{[^}]*\}|<%.*?%>|\{%.*?%\}")),
+    ("미완 표시", re.compile(r"\b(?:TODO|TBD|FIXME|XXX+|CHANGEME|REPLACE(?:_[A-Z]+)+|REPLACE ME|"
+                          r"YOUR[_ ][A-Z_ ]+)\b")),
+    ("채움 글", re.compile(r"lorem ipsum", re.I)),
+    # example.com·.net·.org 는 문서용 예약 이름이다(RFC 2606) — 템플릿 기본값이 그대로 남은 흔적.
+    # .example·.test·.invalid 최상위 이름은 잡지 않는다: 개발·검사용 사이트가 실제로 그 이름에 뜬다.
+    ("예약 도메인", re.compile(r"(?:^|[/@.])example\.(?:com|net|org)(?=$|[/:?#])", re.I)),
+)
+
+
+def placeholder_kind(value, own_host: str = "") -> str | None:
+    """자리표시면 그 꼴 이름(PLACEHOLDER_FORMS), PLACEHOLDER_RE 에만 걸리면 '자리표시', 아니면 None.
+
+    own_host: 이 마크업이 놓인 페이지의 호스트. 그 사이트 자신이 예약 이름(.test 개발 서버 등)에
+    떠 있으면 자기 주소는 자리표시가 아니다 — 남의 예약 주소(example.com 이 남은 것)만 잡는다."""
+    if not isinstance(value, str):
+        return None
+    own = (own_host or "").lower().removeprefix("www.")
+    for name, rx in PLACEHOLDER_FORMS:
+        m = rx.search(value)
+        if m and name == "예약 도메인" and own and own in value.lower():
+            continue
+        if m:
+            return name
+    return "자리표시" if PLACEHOLDER_RE.search(value) else None
+
+
+def is_placeholder(value, own_host: str = "") -> bool:
     """글자 값이 안 갈아 끼운 자리표시인가."""
-    return isinstance(value, str) and bool(PLACEHOLDER_RE.search(value))
+    return placeholder_kind(value, own_host) is not None
 
 
-# ISO 8601 — 날짜, 또는 날짜T시각(+시간대). 구글 Article 문서: "in ISO 8601 format"
+# ISO 8601 — 날짜, 또는 날짜T시각(+시간대). 구글 Article 문서: "in ISO 8601 format", 시간대는
+# "We recommend that you provide timezone information" — 그래서 꼴은 틀림, 시간대 없음은 따로 말한다.
 # https://developers.google.com/search/docs/appearance/structured-data/article
-_ISO_DATE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
-_ISO_DATETIME = re.compile(
-    r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-4]):[0-5]\d(:[0-5]\d(\.\d+)?)?"
-    r"(Z|[+-]([01]\d|2[0-3])(:?[0-5]\d)?)?$")
-_ISO_PARTIAL = re.compile(r"^\d{4}(-(0[1-9]|1[0-2]))?$")            # 2026 · 2026-03
+_ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_ISO_DT = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:[.,]\d+)?)?"
+                     r"(Z|[+-]\d{2}(?::?\d{2})?)?$")
+_ISO_PARTIAL = re.compile(r"^\d{4}(-(0[1-9]|1[0-2]))?$")            # 2026 · 2026-03 (foundingDate 등)
+ISO_TIME = re.compile(r"^\d{2}:\d{2}(?::\d{2})?(Z|[+-]\d{2}(?::?\d{2})?)?$")
+
+
+def date_state(value) -> str:
+    """'ok' | 'no_tz'(날짜+시각인데 시간대 없음) | 'bad'(ISO 8601 이 아니거나 없는 날짜 — 2026-02-30)."""
+    from datetime import date, datetime
+    if not isinstance(value, str):
+        return "bad"
+    s = value.strip()
+    m = _ISO_DATE.match(s)
+    if m:
+        try:
+            date(int(m[1]), int(m[2]), int(m[3]))
+        except ValueError:
+            return "bad"
+        return "ok"
+    m = _ISO_DT.match(s)
+    if m:
+        try:
+            datetime(int(m[1]), int(m[2]), int(m[3]), int(m[4]), int(m[5]), int(m[6] or 0))
+        except ValueError:
+            return "bad"
+        return "ok" if m[7] else "no_tz"
+    return "ok" if _ISO_PARTIAL.match(s) else "bad"
 
 
 def is_iso8601(value) -> bool:
     """'2026-03-02'·'2026-03-02T10:00:00+09:00'·'2026' → True. 'March 2, 2026'·'2026/03/02' → False."""
-    v = value.strip() if isinstance(value, str) else ""
-    return bool(_ISO_DATE.match(v) or _ISO_DATETIME.match(v) or _ISO_PARTIAL.match(v))
+    return date_state(value) != "bad"
+
+
+# 주소가 아니어도 되는 절대 참조 — 연락 링크·인라인 데이터·URN 은 그 자체로 온전하다.
+_ABS_OTHER = ("mailto", "tel", "data", "urn")
 
 
 def is_absolute_url(value) -> bool:
-    """'https://a.b/c' → True. '/logo.png'·'logo.png'·'//cdn.a/x.png' → False."""
+    """'https://a.b/c'·'mailto:a@b.c' → True. '/logo.png'·'logo.png'·'//cdn.a/x.png' → False."""
     v = value.strip() if isinstance(value, str) else ""
     u = urlsplit(v)
-    return u.scheme in ("http", "https") and bool(u.netloc)
+    return (u.scheme in ("http", "https") and bool(u.netloc)) or u.scheme.lower() in _ABS_OTHER
 
 
 def context_ok(ctx) -> bool:
@@ -144,13 +203,21 @@ def price_number(value) -> float | None:
 # ── 표 ──────────────────────────────────────────────────────────────────────
 # 날짜·주소가 값인 속성. 여기 없는 속성은 꼴을 안 본다(모르는 속성에 규칙을 대지 않는다).
 DATE_PROPS = ("datePublished", "dateModified", "dateCreated", "uploadDate", "startDate", "endDate",
-              "validFrom", "validThrough", "priceValidUntil", "foundingDate", "expires")
+              "validFrom", "validThrough", "priceValidUntil", "foundingDate", "expires",
+              "datePosted", "birthDate", "deathDate", "dissolutionDate", "releaseDate",
+              "availabilityStarts", "availabilityEnds", "doorTime", "checkinTime", "checkoutTime",
+              "dateIssued", "dateRead", "dateReceived", "dateSent", "arrivalTime", "departureTime",
+              "scheduledTime", "orderDate")
+# 시각만 받는 속성 — 날짜 꼴을 요구하면 정상 값(14:00)이 걸린다.
+TIME_ONLY_PROPS = frozenset({"doorTime", "checkinTime", "checkoutTime"})
 # 구글 문서가 속성별로 'fully-qualified URL'·'valid URL' 을 요구하는 것들. JSON-LD 문법으로는
 # 상대 주소도 되지만 구글은 속성마다 전체 주소를 적으라고 한다(일반 규칙으로 적힌 문장은 없다 —
 # Article 문서 "Use valid URLs for the url or sameAs properties", LocalBusiness menu "the
 # fully-qualified URL of the menu", Carousel item.url "The fully-qualified URL").
 URL_PROPS = ("url", "sameAs", "logo", "image", "contentUrl", "embedUrl", "thumbnailUrl", "menu",
-             "hasMenu", "hasMap", "item", "license", "acquireLicensePage")
+             "hasMenu", "hasMap", "item", "license", "acquireLicensePage",
+             "mainEntityOfPage", "target", "urlTemplate", "discussionUrl", "downloadUrl", "installUrl",
+             "acceptedAnswerUrl", "codeRepository")
 # 구글 merchant listing 이 받는 availability 값 — 전체 주소든 짧은 이름이든.
 # https://developers.google.com/search/docs/appearance/structured-data/merchant-listing
 AVAILABILITY = frozenset({"BackOrder", "Discontinued", "InStock", "InStoreOnly", "LimitedAvailability",
@@ -319,8 +386,10 @@ def value_issues(data, page_url: str = "") -> list[dict]:
             for x in _listed(v):
                 if not isinstance(x, str):
                     continue
-                if is_placeholder(x):
+                if is_placeholder(x, _host(page_url) if page_url else ""):
                     add("placeholder", prop)
+                elif prop in TIME_ONLY_PROPS and ISO_TIME.match(x.strip()):
+                    pass                                   # 시각만 받는 속성의 정상 값(14:00)
                 elif prop in DATE_PROPS and x.strip() and not is_iso8601(x):
                     add("bad_date", prop)
                 elif prop in URL_PROPS and x.strip() and not is_absolute_url(x):

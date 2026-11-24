@@ -5928,6 +5928,111 @@ def test_seam_ai_access_verdicts_and_payload_keys_single_source():
     assert ai_access.SERVER_CAVEAT not in view, "서버 반응 한계 문장의 사본이 화면에 있다"
 
 
+CREATE_SCRIPTS = ROOT / "skills" / "create" / "scripts"
+
+
+def _create_mod(name: str):
+    if str(CREATE_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(CREATE_SCRIPTS))
+    return __import__(name)
+
+
+def test_seam_w11a_create_jsonld_rules_live_in_one_place():
+    """create 커밋 전 JSON-LD 검사) 규칙의 정본은 jsonld_check.value_issues 하나다.
+
+    한쪽 끝은 create 의 훅(check_jsonld.py)이고 다른 끝은 SKILL.md 의 run 절차다. 훅이 규칙을
+    제 안에 다시 적으면 수집 쪽과 갈리고, SKILL.md 가 훅을 안 부르면 검사는 있어도 아무도 안 돌린다.
+    규칙 이름표(RULES)에 있는 것은 전부 실제로 나올 수 있어야 한다 — 이름만 있는 규칙은 사본이다.
+    """
+    import jsonld_check
+    hook = (CREATE_SCRIPTS / "check_jsonld.py").read_text("utf-8")
+    assert "jsonld_check.value_issues(" in hook, "훅이 정본 함수를 안 부른다"
+    # 값 규칙(자리표시·ISO 날짜·절대 주소·@context)의 정본은 schema_values — 수집 쪽과 한 벌이다.
+    # jsonld_check 가 정규식을 다시 갖기 시작하면 create 와 수집이 같은 값을 다르게 판정한다.
+    own = (SCRIPTS / "jsonld_check.py").read_text("utf-8")
+    assert "re.compile" not in own and "import schema_values" in own, \
+        "jsonld_check 가 schema_values 대신 값 규칙의 사본을 갖는다"
+    skill = (ROOT / "skills" / "create" / "SKILL.md").read_text("utf-8")
+    assert "scripts/check_jsonld.py --repo . --staged" in skill, "SKILL.md run 절차에 커밋 전 검사가 없다"
+    bad = {"@type": "Article", "headline": "[Title]", "datePublished": "2026/01/01",
+           "dateModified": "2026-01-01T09:00:00", "image": "/a.png"}
+    got = {i["rule"] for i in jsonld_check.value_issues(bad)}
+    assert got == set(jsonld_check.RULES), f"이름표와 실제 규칙이 다르다: {got ^ set(jsonld_check.RULES)}"
+    assert {i["level"] for i in jsonld_check.value_issues(bad)} <= set(jsonld_check.LEVELS)
+    # 훅의 종료코드는 error 만 본다 — warn 이 커밋을 막기 시작하면 상대 주소를 쓰는 리포에서 훅이 꺼진다.
+    assert jsonld_check.has_errors([{"level": "warn"}]) is False
+
+
+def test_seam_w11b_create_keys_match_doctor_and_skill():
+    """create 선택 기능의 키) 키 이름은 쓰는 모듈의 KEY_ENV, 켜짐 판정은 doctor 가 같은 이름으로 읽는다.
+
+    IndexNow·대표 이미지는 키가 없으면 건너뛴다. 모듈이 읽는 이름과 doctor 가 '켜졌다'고 말하는
+    이름이 갈리면, 키를 넣었는데 doctor 는 잠겼다 하고(또는 그 반대) 사용자는 어느 쪽도 못 믿는다.
+    SKILL.md 가 가리키는 스크립트는 실제로 있어야 한다.
+    """
+    sys.path.insert(0, str(ROOT / "skills" / "setup" / "scripts"))
+    import doctor
+    indexnow, og_image = _create_mod("indexnow"), _create_mod("og_image")
+    src = (ROOT / "skills" / "setup" / "scripts" / "doctor.py").read_text("utf-8")
+    caps = {c["id"]: c for c in doctor.CAPABILITIES}
+    for cap_id, mod in (("indexnow", indexnow), ("image", og_image)):
+        assert cap_id in caps, f"doctor CAPABILITIES 에 {cap_id} 가 없다"
+        assert f'os.environ.get("{mod.KEY_ENV}")' in src, f"doctor 가 {mod.KEY_ENV} 를 안 읽는다"
+        c = caps[cap_id]
+        assert mod.KEY_ENV in c["keys"] or mod.KEY_ENV in (c["fix"] or ""), (cap_id, c)
+    # 유료인 쪽은 명부가 유료라고 말한다(무료라고 적힌 단계가 돈을 쓰면 안 된다).
+    assert caps["image"]["cost"] == "유료" and og_image.COST_PER_IMAGE_USD > 0
+    assert caps["indexnow"]["cost"] == "무료"
+    # 비용 장부의 종류 이름은 측정 단계가 아니다 — 측정했는지 묻는 쪽(site_plan)이 이걸 측정으로 세면
+    # 이미지 한 장 만든 새 사이트가 '이미 측정함'이 된다.
+    import run_all
+    assert og_image.RUN_KIND not in run_all.VALID_STAGE_NAMES
+    skill = (ROOT / "skills" / "create" / "SKILL.md").read_text("utf-8")
+    named = set(re.findall(r"scripts/(\w+\.py)", skill))
+    missing = sorted(n for n in named if not (CREATE_SCRIPTS / n).exists()
+                     and not (SCRIPTS / n).exists()
+                     and not (ROOT / "skills" / "setup" / "scripts" / n).exists())
+    assert not missing, f"SKILL.md 가 없는 스크립트를 가리킨다: {missing}"
+    for need in ("og_image.py", "indexnow.py", "site_plan.py", "check_jsonld.py"):
+        assert need in named, f"create SKILL.md 가 {need} 를 안 가리킨다 — 있어도 아무도 안 돌린다"
+
+
+def test_seam_w11c_create_merge_paths_all_notify_indexnow():
+    """IndexNow) 머지를 확인하는 길 셋(커밋이 기본 브랜치에 있음·PR 머지·손으로 merged)이 전부 알림을 지난다.
+
+    적는 쪽(`done --url` → 노트의 `[url …]`)과 읽는 쪽(indexnow.urls_in)도 한 표기다. 한 길만
+    빠지면 그 길로 머지된 글은 영영 안 알려지고, 표기가 갈리면 주소를 못 찾아 조용히 0건이 된다.
+    """
+    indexnow = _create_mod("indexnow")
+    src = (CREATE_SCRIPTS / "createdb.py").read_text("utf-8")
+    assert "sync_merged(project, repo, also=just_merged)" in src, "커밋으로 닫은 기록이 알림으로 안 넘어간다"
+    body = src.split("def sync_merged(")[1].split("\ndef ")[0]
+    assert "_notify_indexnow(project, just_merged)" in body and "just_merged.append(cid)" in body
+    body = src.split("def merged(")[1].split("\nif __name__")[0]
+    assert "_notify_indexnow(" in body, "손으로 누른 merged 가 알림을 안 지난다"
+    assert "indexnow.note_with_urls(note, urls)" in src and "indexnow.urls_in(" in src
+    urls = ["https://a.example/x/", "https://a.example/y?z=1"]
+    assert indexnow.urls_in(indexnow.note_with_urls("메모", urls)) == urls
+
+
+def test_seam_w11d_report_print_rules_open_every_view():
+    """인쇄(PDF)) 박제본을 인쇄하면 숨긴 화면이 전부 펴지고, 쪽은 화면 '사이'에서만 넘어간다.
+
+    첫 화면은 main 의 첫 자식이 아니다(표지·축·배너가 앞에 있다) — `.view:first-child` 로 첫 쪽
+    넘김을 막던 규칙은 한 번도 안 맞아서 표지만 한 쪽을 먹었다. 누르는 것(탭·펼침 화살표)은 종이에 없다.
+    쪽수는 test_render.print_all 이 실제 PDF 로 본다 — 여기는 그 규칙이 조립본에 실려 나가는지다.
+    """
+    import dashboard
+    html = dashboard.assemble("frozen")
+    prints = "".join(re.findall(r"@media print\s*\{((?:[^{}]|\{[^{}]*\})*)\}", html))
+    assert ".view[hidden] { display:block; }" in prints, "숨긴 화면을 펴는 인쇄 규칙이 없다"
+    assert ".view ~ .view { break-before:page; }" in prints, "화면 사이 쪽 넘김 규칙이 없다"
+    tail = prints.split(".view ~ .view")[0].rsplit(".view {", 1)[-1]
+    assert "break-before:auto" in tail, "첫 화면이 표지 뒤에서 쪽을 넘긴다"
+    assert re.search(r"\.vtabs,\s*summary::before\s*\{\s*display:none", prints), "탭·펼침 화살표가 종이에 남는다"
+    assert "@page {" in html
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

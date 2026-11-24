@@ -1780,7 +1780,16 @@ pre { font:400 var(--fs-1)/1.65 var(--mono); background:var(--sunk); border:0; b
 @media print {
   header, .railcard, .navbar, #nav, #navfoot, .rail-foot, .topbar, .fold,
   .tools, .ask, .cmd, .hint, .acts, .go { display:none; }
+  /* PDF 로 내보낼 때(브라우저 인쇄 → PDF 로 저장) 보인 것 셋 — 2026-11-24 인쇄본을 열어 보고 고쳤다.
+     ① 표지만 한 쪽을 먹었다: 첫 화면은 main 의 첫 자식이 아니라(표지·축·배너가 앞에 있다)
+        `.view:first-child` 가 한 번도 안 맞았다. 화면 '사이'에서만 쪽을 넘긴다.
+     ② 화면 안 탭([할 것]·[전체])과 펼침 화살표는 누르는 것이다 — 종이에는 없다.
+     ③ 쪽 여백을 정해 둔다(브라우저 기본값은 제품마다 다르다). */
+  .view { break-before:auto; }
+  .view ~ .view { break-before:page; }
+  .vtabs, summary::before { display:none; }
 }
+@page { margin:14mm 12mm; }
 </style>
 </head>
 <body>

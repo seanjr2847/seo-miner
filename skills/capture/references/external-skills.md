@@ -50,6 +50,24 @@ python ../../setup/scripts/install_skills.py
 `claude plugin install` 로 대신 설치한다. 거절해도 작업은 계속되고 내장 규칙으로
 채운다.
 
+## claude-seo 와의 관계
+
+claude-seo(AgriciDaniel/claude-seo)는 **위임 상대가 아니다.** 같은 영역을 다루는 별개의 도구이고
+(대화형 감사·점수 보고서), seo-miner 는 그 스킬을 부르지 않는다. 같이 깔려 있을 때 알아 둘 것:
+
+- **이름이 겹친다.** `seo-audit` 는 두 팩에 다 있다. 위임 표의 `seo-audit` 는 위 marketingskills
+  팩의 것이다(조회 결과를 넘겨받아 해석한다). claude-seo 의 `seo-audit` 는 `claude-seo:seo-audit`
+  로 불리고 URL 하나를 받아 스스로 긁는다 — Brain 근거를 넘길 자리가 없다. 플러그인 스킬은
+  `팩:스킬` 꼴로 구분되므로, 위임할 때 `claude-seo:` 접두가 붙은 것을 고르지 않는다.
+- **같은 말에 둘 다 걸린다.** 'SEO 감사'·'AI 인용'·'스키마' 같은 요청에 claude-seo 와 capture 가
+  함께 반응할 수 있다. 등록한 사이트의 **측정에 근거한** 답이면 capture, 등록 안 한 임의 URL 을
+  그 자리에서 훑는 것이면 claude-seo 다.
+- **claude-seo 로 사이트를 바꿨으면 기록한다.** 그쪽의 쓰기 동작(JSON-LD 생성·IndexNow 제출)은
+  Brain 이 모른다. 리포를 바꿨으면 커밋에 `[opp #id]` 를 남기거나 `createdb.py done` 으로 기록한다
+  — 안 그러면 완료 후 관찰이 그 변화를 다른 원인으로 읽는다.
+- **숫자를 섞지 않는다.** 두 도구는 같은 API 를 다른 기준으로 읽고(기본 로케일·기간·필터),
+  claude-seo 의 0~100 점수는 seo-miner 의 기회 점수와 뜻이 다르다. 한 답에서 견주지 않는다.
+
 ## 스킬이 없을 때
 
 (a) **빠진 걸 알리고, 대신 설치해 드릴지 묻는다.** 어느 스킬이 빠졌는지 이름을
