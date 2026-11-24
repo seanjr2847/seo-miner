@@ -172,6 +172,9 @@ ISSUE_KIND = {
     "url_hygiene": ["주소 꼴",
                     "색인될 주소에 파라미터·대문자·밑줄·이중 슬래시가 있습니다. 급하지 않습니다 — "
                     "새 주소부터 맞추세요."],
+    "canonical_bad_target": ["canonical 대상이 잘못됨",
+                             "canonical 이 리다이렉트·오류이거나 다시 다른 주소를 가리킵니다. 구글은 "
+                             "그 말을 버리고 대표 주소를 스스로 고릅니다."],
     "hreflang_bad_target": ["hreflang 대상이 잘못됨",
                             "hreflang 이 리다이렉트·오류·noindex·canonical 이 다른 주소를 "
                             "가리킵니다. 그 짝은 버려집니다."],
@@ -213,6 +216,7 @@ SEVERITY = {
     "sitemap_bad_url": "warn", "not_in_sitemap": "info", "sitemap_news": "warn",
     "rate_limited": "info", "soft_404": "warn",
     "host_http": "warn", "host_dup": "warn", "cert_expiring": "warn", "url_hygiene": "info",
+    "canonical_bad_target": "warn",
     "hreflang_bad_target": "warn", "hreflang_mixed": "warn", "hreflang_bad_code": "warn",
     "template_thin": "warn", "meta_template": "warn",
     "trust_missing": "info", "locator_uncrawlable": "warn",
@@ -1364,6 +1368,7 @@ def site_checks(pages, links, *, disc: dict, home: str, rp=None, site_type=None,
                      f"{len(limited)}장이 속도 제한(429·503)으로 답했습니다 — 다시 물어도 같았습니다. "
                      "예: " + ", ".join(_path(u) for u in limited[:3])))
     rows += crawl_site.url_hygiene(pages)
+    rows += crawl_site.canonical_targets(pages, _get, home=home)
     rows += crawl_site.hreflang_issues(pages)
     rows += crawl_site.template_thin(pages)
     rows += crawl_site.meta_template_issue(pages, home)

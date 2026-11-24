@@ -663,6 +663,49 @@ def sitemap_vs_crawl(sitemap_urls, pages, *, capped: bool = False) -> list[tuple
     return out
 
 
+# ── canonical 대상 ──────────────────────────────────────────────────────────
+CANON_FETCH_MAX = 20          # 크롤이 안 본 canonical 대상을 한 번 더 여는 수 상한
+
+
+def canonical_targets(pages, fetch=None, *, home: str = "", max_fetch: int = CANON_FETCH_MAX) -> list[tuple]:
+    """canonical 이 가리키는 주소가 대표 노릇을 할 수 있나 — 리다이렉트·4xx·또 다른 canonical(사슬·고리).
+
+    canonical 은 "이 주소를 대신 색인해 달라"는 말이다. 그 주소가 넘어가거나 없거나 다시 다른
+    주소를 가리키면 구글은 그 말을 버리고 스스로 고른다. 크롤이 본 주소는 그 결과로, 안 본 내
+    주소는 fetch 로 한 번 열어 본다(max_fetch 까지). 속도 제한·봇 차단은 판정하지 않는다."""
+    by = {p["url"]: p for p in pages}
+    host = scoring.host_of(home) if home else ""
+    opened: dict[str, dict] = {}
+    out = []
+    for p in pages:
+        c = (p.get("canonical") or "").strip()
+        if p.get("status") != 200 or p.get("redirect_to") or not c or c == p["url"]:
+            continue
+        t = by.get(c)
+        if t is None and fetch is not None and host and scoring.owns(scoring.host_of(c), host):
+            if c not in opened and len(opened) < max_fetch:
+                r = fetch(c)
+                final = r.get("final_url") or c
+                opened[c] = {"status": r.get("status"), "canonical": None,
+                             "redirect_to": final if (r.get("chain") or final.rstrip("/") != c.rstrip("/"))
+                             and r.get("status") is not None else None}
+            t = opened.get(c)
+        if not t:
+            continue
+        st = t.get("status")
+        why = None
+        if t.get("redirect_to"):
+            why = f"리다이렉트됩니다 → {t['redirect_to']}"
+        elif isinstance(st, int) and st >= 400 and st not in RATE_STATUS and st != 403:
+            why = f"HTTP {st}"
+        elif (t.get("canonical") or "").strip() and t["canonical"] != c:
+            why = ("다시 이 주소를 가리킵니다(고리)" if t["canonical"] == p["url"]
+                   else f"또 다른 주소를 canonical 로 가리킵니다 → {t['canonical']}")
+        if why:
+            out.append(("canonical_bad_target", p["url"], f"canonical {c} 는 {why}"))
+    return out
+
+
 # ── hreflang ────────────────────────────────────────────────────────────────
 def hreflang_issues(pages) -> list[tuple]:
     """hreflang 대상·묶음·코드 — 대상은 주소마다, 묶음·코드는 사이트 한 줄(틀의 문제다).

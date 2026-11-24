@@ -535,6 +535,35 @@ def test_url_hygiene():
     assert "쿼리" in got["q?id=3"]
 
 
+def test_canonical_target_is_opened_once_more():
+    pages = [_pg(f"{H}/a", canonical=f"{H}/moved"), _pg(f"{H}/b", canonical=f"{H}/gone"),
+             _pg(f"{H}/c", canonical=f"{H}/d"), _pg(f"{H}/d", canonical=f"{H}/c"),
+             _pg(f"{H}/e", canonical=f"{H}/f"), _pg(f"{H}/f", canonical=f"{H}/g"), _pg(f"{H}/g"),
+             _pg(f"{H}/ok", canonical=f"{H}/g"), _pg(f"{H}/self", canonical=f"{H}/self"),
+             _pg(f"{H}/far", canonical=f"{H}/unseen-404"), _pg(f"{H}/far2", canonical=f"{H}/unseen-ok"),
+             _pg(f"{H}/out", canonical="https://other.com/x"), _pg(f"{H}/busy", canonical=f"{H}/limited"),
+             _pg(f"{H}/moved", status=301, redirect_to=f"{H}/a2", title=None, words=None),
+             _pg(f"{H}/gone", status=410, title=None, words=None),
+             _pg(f"{H}/limited", status=429, title=None, words=None)]
+    asked = []
+
+    def fetch(u):
+        asked.append(u)
+        return {"status": 404 if "404" in u else 200, "final_url": u, "chain": []}
+    got = {u.rsplit("/", 1)[1]: d for k, u, d in cs.canonical_targets(pages, fetch, home=f"{H}/")
+           if k == "canonical_bad_target"}
+    assert set(got) == {"a", "b", "c", "d", "e", "far"}, sorted(got)
+    assert "리다이렉트" in got["a"] and "410" in got["b"] and "고리" in got["c"] and "또 다른" in got["e"]
+    assert "HTTP 404" in got["far"]
+    # 크롤이 안 본 내 주소만, 한 번씩 연다 — 남의 호스트는 두드리지 않는다
+    assert sorted(asked) == [f"{H}/unseen-404", f"{H}/unseen-ok"], asked
+    assert cs.canonical_targets(pages, fetch, home=f"{H}/", max_fetch=0) != [] and len(asked) == 2
+    # 크롤이 실제로 적는다
+    site = base_site(**{"/a": page("에이", head=f'<link rel="canonical" href="{H}/nowhere">')})
+    _, issues, log, *_ = crawl_once(site)
+    assert ("canonical_bad_target", f"{H}/a") in issues and log.count(f"{H}/nowhere") == 1, sorted(issues)
+
+
 # ── 7. hreflang ─────────────────────────────────────────────────────────────
 def test_hreflang_targets_sets_and_codes():
     pages = [
