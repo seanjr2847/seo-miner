@@ -3388,6 +3388,9 @@ def test_seam_214_backlinks_view_says_insufficient_instead_of_a_number():
     NA = link_profile.INSUFFICIENT
     assert NA in got["anchors"] and 'class="num">100%' not in got["anchors"], \
         f"링크 5개의 앵커 비율을 숫자로 찍었다: {got['anchors'][-600:]}"
+    # 비율 **칸 자체**가 그 말이어야 한다 — 곁줄에 '데이터 부족'이 있어도 칸이 0% 면 숫자를 찍은 것이다.
+    assert '<td class="num"><span class="blk-na"' in got["anchors"] and not re.search(
+        r'class="num">\d+%', got["anchors"]), f"앵커 유형의 비율 칸에 숫자가 섰다: {got['anchors'][-500:]}"
     assert "쏠림</span>" not in got["anchors"].split("<table")[0].replace("쏠림 판단", ""), \
         "근거가 모자란데 쏠림 배지를 달았다"
     assert got["shape"].count(NA) >= 4, f"분포·집중도·spam·상호 링크가 '데이터 부족'으로 서지 않는다: {got['shape'][:600]}"

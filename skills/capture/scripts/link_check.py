@@ -38,6 +38,7 @@ STATES = ("linked", "nofollow", "no_link", "unknown")
 REL_NOFOLLOW = frozenset({"nofollow", "ugc", "sponsored"})
 UA = {"User-Agent": "seo-miner/link-check (+https://github.com/seanjr2847/seo-miner)"}
 MAX_HTML = 2_000_000
+TIMEOUT = 10        # 남의 페이지 한 장. 수십 장을 여는 자리라 내 페이지 점검(20초)보다 짧게 끊는다
 
 
 class _Links(HTMLParser):
@@ -109,9 +110,8 @@ def judge(status, content_type: str, html: str, url: str, own: str) -> dict:
 def check(url: str, own: str, *, timeout=None) -> dict:
     """URL 한 장을 열어 판정한다. 어떤 실패도 예외로 올리지 않는다 — 전부 unknown 이다."""
     import http_adapter
-    import serp_adapter
     try:
-        r = http_adapter.get(url, headers=UA, timeout=timeout or serp_adapter.TIMEOUTS["page"])
+        r = http_adapter.get(url, headers=UA, timeout=timeout or TIMEOUT)
     except Exception as e:               # noqa: BLE001 — 못 연 것이 곧 답(확인 불가)이다
         return {**judge(None, "", "", url, own), "why": f"열지 못했습니다({type(e).__name__})"}
     html = r.text if "html" in (r.content_type or "").lower() and r.status < 400 else ""

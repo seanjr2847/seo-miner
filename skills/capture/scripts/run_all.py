@@ -17,7 +17,7 @@ StageResult 를 그대로 호출자에게 넘긴다.
   crawl       : 사이트 전수 크롤. 한 장만 봐서는 모르는 것(중복·고아·사슬)의 유일한 출처.
   ai          : 유료 AI 인용 체크. 키 없으면 건너뜀.
   competitors : 유료 DataForSEO Labs 역키워드. 키 없으면 건너뜀.
-  backlinks   : 유료 백링크 프로필·링크 교집합. 키 없으면 건너뜀.
+  backlinks   : 유료 백링크 프로필·링크 교집합. 유료 키가 없으면 무료 출처(Bing 웹마스터·Common Crawl)로.
   gaps        : scoring.py load <project> (수집 결과를 읽어 기회 데이터 적재).
   plays       : 열린 기회를 페이지별 할 일로 묶고 증거·AI 수정안을 붙인다 (plays.py). 기회가
                 선 뒤여야 하고, 페이지 점검(pages)이 막 읽은 값을 못 읽었을 때의 대체로 쓴다.

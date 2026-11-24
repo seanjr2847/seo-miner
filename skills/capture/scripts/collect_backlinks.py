@@ -15,6 +15,17 @@
   6. /content_analysis/search/live      → brand_mentions     (우리 이름을 말했는데 링크는 없는 곳)
      별칭마다 한 번 + 언급한 도메인이 이미 링크했는지 referring_domains 로 한 번 더.
 
+그 밖에 같은 단계가 하는 일(각 모듈이 정본이다 — 여기는 부르기만 한다):
+  · /backlinks/domain_pages_summary/live → backlink_pages (링크가 몰린 페이지)
+  · /backlinks/timeseries_summary/live · timeseries_new_lost_summary/live → backlink_timeseries
+  · 요약·참조 도메인·개별 링크의 spam score, 요약의 TLD·국가 분포 (받아 놓고 버리던 값)
+  · 무료 GET 확인(link_check) → backlink_checks: 언급한 페이지·경쟁사만 받는 도메인의 첫 화면을
+    직접 열어 링크가 걸렸는지 본다. 신선도 안이라 다시 사지 않는 회차에도 돈다(돈이 안 든다).
+  · Bing 웹마스터(collect_bing, 키가 있을 때) → bing_* : 색인·크롤·검색어
+  · DataForSEO 키가 없으면 무료 출처로 물러선다(_collect_free): Bing 인바운드 링크를 백링크 표에
+    source='bing' 으로, Common Crawl 그래프 순위(cc_graph)를 backlink_graph_rank 에.
+읽는 쪽(유형·분포·속도 같은 판정)은 link_profile 이다.
+
 설계 메모:
   · 인증·타임아웃·task 오류 판정은 serp_adapter.post_dataforseo 한 곳이다.
     이 파일은 requests 를 import 하지 않는다 (server/backlinks.py 가 자기 _post 를

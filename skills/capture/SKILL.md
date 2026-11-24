@@ -392,7 +392,7 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 
 **키는 `/capture rank`·`/capture competitors` 와 같은 DataForSEO 자격이다**
 (`DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD`). 백링크는 코드가 아니라 인프라라
-(링크 그래프를 만드는 일) 사서 쓴다. 키가 없으면 정중히 종료한다.
+(링크 그래프를 만드는 일) 사서 쓴다. 키가 없으면 무료 출처로 물러선다: Bing 웹마스터(`BING_WEBMASTER_API_KEY` 가 있으면 인바운드 링크·색인·크롤·검색어)와 Common Crawl 그래프 순위(키 없음). 그때 지수·순위 반영 여부·교집합·언급은 비어 있고 화면이 그렇게 말한다.
 
 **여섯 축을 함께 캔다** — 요약만으로는 "무엇을 할지"가 안 나오기 때문이다:
 프로필 한 줄(`backlink_summary`) · 누가 링크를 주나(`referring_domains`) ·
