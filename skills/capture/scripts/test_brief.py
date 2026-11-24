@@ -1980,9 +1980,8 @@ def test_striking_above_top3_says_the_job_is_clicks():
     assert "이미 상단 3위권(3.6위)입니다" in body and "이 요청문의 일은 클릭입니다" in body, body
 
 
-def _sec(body, head):
-    """요청문 본문에서 그 섹션 하나만 — 다음 "## " 앞까지."""
-    return body.split(head)[1].split(chr(10) + "## ")[0]
+# _sec(body, head) — 요청문 본문에서 그 섹션 하나만. 정의는 아래 한 벌(같은 이름이 둘이면
+# 뒤의 것이 앞의 것을 덮는다 — test_seams 의 중복 정의 검사가 잡는다).
 
 # ── 의도 갈라 내기 (split_page) ──────────────────────────────────────────────
 

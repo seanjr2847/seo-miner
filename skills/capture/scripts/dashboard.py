@@ -1503,8 +1503,19 @@ def _axis_crawl(conn, pid: int) -> dict:
     # crawl_intl: 다국어 갈래 목록(정본 collect_crawl.INTL_KINDS)과 이 사이트가 다국어인지(시장의
     # 언어가 둘 이상) — [사이트 점검]이 다국어 카드를 세울지·「이상 없음」이라고 말할지를 가른다.
     langs = {serp_adapter.lang_of(loc) for loc in db.site_locales(conn, pid)}
+    # 신뢰 페이지(연락처·개인정보처리방침·약관·후기) — 크롤이 사이트 사실(facts_json.trust)로
+    # 남긴 {종류: 주소|None}. 요청문(brief.TRUST_PAGES_KEY)이 그 꼴 그대로 읽는다. 이 칸 전의
+    # 회차·크롤 전이면 None — 요청문은 그 줄을 안 쓴다(없는 것과 안 본 것을 섞지 않는다).
+    trust = None
+    if cr is not None and "facts_json" in cr.keys() and cr["facts_json"]:
+        try:
+            got = json.loads(cr["facts_json"]).get("trust")
+            trust = got if isinstance(got, dict) else None
+        except (TypeError, ValueError, AttributeError):
+            trust = None
     return {"crawl": crawl, "crawl_kinds": collect_crawl.ISSUE_KIND,
-            "crawl_intl": {"kinds": list(intl), "multi": len(langs) >= 2}}
+            "crawl_intl": {"kinds": list(intl), "multi": len(langs) >= 2},
+            brief.TRUST_PAGES_KEY: trust}
 
 
 def _crawl_inlinks(conn, crawl: dict, urls) -> dict:

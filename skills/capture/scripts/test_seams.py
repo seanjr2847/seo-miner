@@ -6713,6 +6713,28 @@ def test_seam_drift_ledger_and_field_changes_are_one_list():
     assert "dashboard" not in re.findall(r"^import (\w+)", audit, re.M), "audit_data 가 dashboard 를 import 한다(순환)"
 
 
+def test_seam_no_module_defines_the_same_top_level_name_twice():
+    """한 모듈 안에 같은 이름의 최상위 함수·클래스가 둘이면 **뒤의 것이 앞의 것을 조용히 덮는다**.
+
+    2026-11-24 병렬 작업 12갈래를 합칠 때 db.py 에 _json_list 가 둘 생겼다 — 앞의 것은 '모름
+    =None', 뒤의 것은 '모름=[]'. 파일 하나만 보면 둘 다 멀쩡하고, 앞의 것을 부르던 serp_outlines
+    가 뒤의 것으로 바뀌어 '안 본 행'을 '봤는데 없음'으로 말했다(test_serp_w05 가 잡았다).
+    병합 도구는 같은 이름을 충돌로 보지 않는다 — 그래서 여기서 못 박는다."""
+    import ast
+    dups = []
+    for base in (ROOT / "skills", ROOT / "server"):
+        for f in sorted(base.rglob("*.py")):
+            if "__pycache__" in f.parts or "vendor" in f.parts:
+                continue
+            seen: dict[str, int] = {}
+            for node in ast.parse(f.read_text("utf-8")).body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    if node.name in seen:
+                        dups.append(f"{f.relative_to(ROOT)}: {node.name} ({seen[node.name]}행·{node.lineno}행)")
+                    seen[node.name] = node.lineno
+    assert not dups, "같은 이름의 최상위 정의가 둘 — 뒤의 것이 앞의 것을 덮는다: " + "; ".join(dups)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

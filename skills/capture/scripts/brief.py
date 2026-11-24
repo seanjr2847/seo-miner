@@ -4848,7 +4848,7 @@ TRUST_PAGE_NAMES = {"about": "소개", "contact": "연락처", "privacy": "개�
                     "terms": "약관", "reviews": "후기"}
 # 요청문은 읽는데 페이로드(dashboard.gather)가 아직 안 싣는 키 — 싣는 쪽이 따로 들어온다.
 # test_seams 19b 는 이 목록만 '없어도 되는 읽기'로 받는다. 싣는 축이 생기면 여기서 뺀다.
-UNSERVED_KEYS = (TRUST_PAGES_KEY,)
+UNSERVED_KEYS: tuple[str, ...] = ()
 
 
 def _trust_lines(ctx: dict) -> list[str]:
