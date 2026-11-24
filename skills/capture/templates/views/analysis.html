@@ -133,6 +133,15 @@
 #an-struct details ul { margin:var(--sp-2) 0 0; padding-left:18px; color:var(--sub); font-size:var(--fs-1); line-height:1.7; }
 #an-struct li { overflow-wrap:anywhere; }
 #an-struct .ans-b { margin-top:var(--sp-4); }
+.anthin b { color:var(--ink); font-weight:600; }
+.ansub { font-size:var(--fs-2); font-weight:600; color:var(--ink); margin:var(--sp-5) 0 var(--sp-2); }
+.ansub small { font:var(--micro); color:var(--sub); margin-left:var(--sp-2); }
+.anchg { list-style:none; margin:0; padding:0; }
+.anchg li { display:grid; grid-template-columns:1fr auto; gap:2px var(--sp-3); padding:var(--sp-2) 0;
+  border-top:1px solid var(--line); }
+.anchg li > span { min-width:0; overflow-wrap:anywhere; }
+.anchg li > b { font-weight:600; font-variant-numeric:tabular-nums; }
+.anchg li > small { grid-column:1 / -1; font:var(--micro); color:var(--sub); }
 
 /* ── 맨 위: 리드 문장 + KPI 스트립. 이 절은 카드가 아니다 — KPI 하나하나가 카드다. ── */
 #an-top .anverdict { font:500 var(--fs-3)/1.6 var(--sans); color:var(--ink); max-width:none;
@@ -695,9 +704,28 @@ const anNoGa4 = () => `<p class="anthin">방문 이후의 세션·전환은 GA4 
   window.go("settings", "GA4 연결"))
   + `</p>`;
 
+/* GA4 속성이 지금 무엇을 말하나(d.ga4_state — 판정은 scoring.ga4_property_state). '속성에 행 0'과
+   '유기 트래픽 0'은 다른 일이다: 앞쪽은 태그·속성 연결을 볼 일이고, 뒤쪽은 검색 유입이 없는 것이다.
+   둘 다 유기 스냅샷이 비어 예전에는 똑같이 "GA4 를 연결해야 보입니다"로 나갔다. */
+function anGa4State(d) {
+  const s = d.ga4_state;
+  if (!s) return d.ga4_funnel ? "" : anNoGa4();
+  const when = `<span class="lat">GA4</span> ${esc(s.date)} 수집 · 최근 ${num(s.period_days)}일`;
+  if (s.state === "empty")
+    return `<p class="anthin"><b>GA4 속성에 방문이 한 건도 없습니다.</b> ${when}. 유기 검색이 0 인 것이 아니라
+      속성 자체가 비어 있습니다. 사이트에 태그가 붙었는지, 다른 속성을 연결한 것은 아닌지 확인하세요.</p>`;
+  if (s.state === "no_organic")
+    return `<p class="anthin"><b>방문은 있는데 유기 검색 세션이 0 입니다.</b> ${when}. 전체 세션 ${num(s.sessions_all)}
+      가운데 검색에서 온 것이 없습니다. 속성은 살아 있습니다.</p>`;
+  return s.conv_unset
+    ? `<p class="anthin"><b>전환 이벤트 미설정.</b> ${when}. 전체 세션 ${num(s.sessions_all)}에 전환(키 이벤트)이
+      한 건도 없습니다. 무엇을 전환으로 셀지 정하기 전까지 전환 숫자는 0 으로만 나오고, 기회 점수에
+      전환 보정을 걸지 않습니다.</p>` : (d.ga4_funnel ? "" : anNoGa4());
+}
+
 function anTop(d, mismatch) {
   const verdict = anTopVerdict(d), kpis = anTopKpis(d);
-  const ga4 = d.ga4_funnel ? "" : anNoGa4();
+  const ga4 = anGa4State(d);
   if (!verdict && !kpis)
     return (!mismatch && d.gsc_prev ? AN_NO_CLICKS : mismatch
       ? `<div class="empty err"><b>기간이 달라 안 맞댔습니다</b>
@@ -1485,6 +1513,42 @@ function anChannels(c) {
       + "세지 않습니다.");
 }
 
+/* 기본 채널 그룹(d.ga4_channel_groups) — GA4 가 가른 채널마다 세션·고유 방문자·전환. 고유
+   방문자는 채널끼리 더하면 같은 사람을 여러 번 세므로 합계 줄은 GA4 가 준 값을 그대로 쓴다. */
+function anChannelGroups(g) {
+  if (!g || !g.rows.length) return "";
+  // 이 카드는 세 장이 한 줄에 서는 좁은 칸이다 — 다섯 열 표는 잘린다. 채널마다 두 줄로 쌓는다.
+  const li = (name, r, share) => `<li><span>${name}</span><b>${num(r.sessions)}</b>
+    <small>${share == null ? "" : share + "% · "}고유 방문자 ${num(r.active_users)} · 전환 ${num(r.key_events)}</small></li>`;
+  return `<h3 class="ansub">GA4 가 가른 채널 <small>세션 순</small></h3><ul class="anchg">`
+    + g.rows.map(r => li(esc(r.channel), r, r.share)).join("")
+    + li("<b>전체</b>", g.total, null) + `</ul>`
+    + `<p class="anthin">고유 방문자는 이 기간에 한 번이라도 들어온 사람 수입니다. 전체 줄은 채널을 더한 값이
+       아니라 GA4 가 준 합계입니다.</p>`;
+}
+
+/* GA4 의 AI Assistant 채널과 우리 AI 출처 목록의 대조(d.ga4_ai_channel). GA4 는 AI 로 세는데
+   우리 목록에 없는 출처가 있으면 그만큼 [AI 인용] 화면의 AI 유입이 작게 나온다. */
+function anAiChannel(c) {
+  if (!c) return "";
+  if (!c.channel_sessions)
+    return anNote("AI 답변에서 온 방문", `GA4 기본 채널 ${esc(c.channel)} 에 잡힌 세션이 이 기간에는 없습니다.`);
+  const miss = c.unlisted || [];
+  return anNote("AI 답변에서 온 방문",
+    `GA4 기본 채널 ${esc(c.channel)} 세션 ${num(c.channel_sessions)} 가운데 ${num(c.listed_sessions)}이 `
+    + `우리 AI 출처 목록에 있는 곳에서 왔습니다.`
+    + (miss.length ? ` 목록에 없는 출처: ${miss.slice(0, 5).map(m => `${esc(m.source)} ${num(m.sessions)}`).join(", ")}. `
+        + `이만큼은 AI 인용 화면의 AI 유입에 안 잡힙니다.` : ` 빠진 출처가 없습니다.`)
+    + ` 구글 AI 요약·AI 모드는 이 채널에 들지 않습니다.`);
+}
+
+/* 날짜별 유기 검색 세션(d.ga4_daily) — 28일 합계로는 어느 날 꺾였는지 모른다. */
+function anGa4Daily(rows) {
+  if (!rows || rows.length < 2) return "";
+  return `<h3 class="ansub">날짜별 유기 검색 세션</h3>`
+    + window.chLine(rows.map(r => ({x: r.day, y: r.sessions})), {width: 1000, height: 160});
+}
+
 // 수집 전에는 아래 여섯 절이 전부 "아직 없습니다" 카드다 — 하나로 접어서
 // 스크롤·CTA 반복을 없앤다. id 는 절 자신(<section id="an-daily"> 등)을
 // 가리킨다 — body div 가 아니라 절째로 숨겨야 머리(제목·부제·ⓘ)까지 함께 빠진다.
@@ -1599,9 +1663,12 @@ VIEW("analysis", function (d) {
   anOff("an-newret-sec", !hasGa4);
   if (hasGa4) $("an-newret-body").innerHTML = anNewret(d.ga4_by_newret);
   anOff("an-funnel-sec", !hasGa4);
-  if (hasGa4) $("an-funnel-body").innerHTML = anFunnel(d.ga4_funnel);
-  anOff("an-channels-sec", !hasGa4);
-  if (hasGa4) $("an-channels-body").innerHTML = anChannels(d.ga4_channels);
+  if (hasGa4) $("an-funnel-body").innerHTML = anFunnel(d.ga4_funnel) + anGa4Daily(d.ga4_daily);
+  // 채널 그룹은 유기 스냅샷이 비어도(유기 0) 말할 것이 있다 — 그 조회가 됐으면 절을 편다.
+  const hasCh = hasGa4 || !!(d.ga4_channel_groups && d.ga4_channel_groups.rows.length);
+  anOff("an-channels-sec", !hasCh);
+  if (hasCh) $("an-channels-body").innerHTML = (hasGa4 ? anChannels(d.ga4_channels) : "")
+    + anChannelGroups(d.ga4_channel_groups) + anAiChannel(d.ga4_ai_channel);
   anNext(d);
 });
 </script>

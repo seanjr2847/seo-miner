@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS keywords (
   verdict_off INTEGER DEFAULT 0,              -- 1 = '무관' 판정이 is_active 를 껐다(되돌리기가 되켤 줄). 사람이 손대면 0
   active_src TEXT,                            -- is_active 를 마지막으로 정한 쪽: manual(사람) | auto(워커 자동 선택) | demoted(순위 밖이 이어져 내림 — demote_unranked). NULL = 이 칸 이전(모름 — 사람 것으로 친다)
   added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  monthly_json TEXT,                          -- 월별 검색량 [[YYYY-MM, 검색량], ...] 옛 달부터(collect_metrics · search_volume 의 monthly_searches). NULL = 안 받음. 읽는 곳은 scoring.volume_trend
   UNIQUE(project_id, keyword)
 );
 CREATE TABLE IF NOT EXISTS rank_snapshots (   -- reserved for SERP adapter (v2)
@@ -341,6 +342,66 @@ CREATE TABLE IF NOT EXISTS ga4_ai_measured (
   hosts_json TEXT NOT NULL,
   UNIQUE(project_id, snapshot_date)
 );
+-- 날짜별 유기 검색 세션(collect_ga4 의 부수 조회) — gsc_daily 의 GA4 짝. 스냅샷 표는 28일
+-- 합계 한 줄이라 "어느 날 꺾였나"를 못 말한다. (project_id, day) upsert: 최근 며칠은 GA4 가
+-- 나중에 보정하므로 다음 수집이 덮는다. active_users 는 그 날의 고유 방문자(날짜끼리 더하면
+-- 같은 사람을 여러 번 센다 — 합계는 ga4_channels 의 '(total)' 줄을 읽는다).
+CREATE TABLE IF NOT EXISTS ga4_daily (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  day TEXT NOT NULL,                          -- YYYY-MM-DD (GA4 date 차원)
+  sessions INTEGER,                           -- 유기 검색(Organic Search) 세션
+  active_users INTEGER,                       -- 유기 검색 고유 방문자(activeUsers)
+  key_events REAL,
+  UNIQUE(project_id, day)
+);
+-- 기본 채널 그룹별 세션(collect_ga4 의 부수 조회, 채널 필터 없음). channel 은 GA4 원문
+-- ('Organic Search'·'Direct'·'AI Assistant'…)이고, 한 줄은 우리가 만든 표식이다:
+--   '(total)'   속성 전체 합(GA4 totals 줄 — active_users 는 채널끼리 더한 값이 아니라
+--               중복을 뺀 고유 방문자다). **이 줄이 있으면 그날 채널 조회가 성공한 것**이고
+--               sessions=0 이면 '속성에 행 0'(태그 미설치·다른 속성)이다 — 유기 스냅샷만
+--               비어 있는 '유기 트래픽 0'과 갈라 말하는 근거(scoring.ga4_property_state).
+--               key_events=0 이면 '전환 이벤트 미설정'(scoring.ga4_conversions_unset).
+--   '(ai-assistant)' 'AI Assistant' 채널 출처 조회가 성공했다는 표식(db.GA4_AI_MEASURED).
+CREATE TABLE IF NOT EXISTS ga4_channels (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  snapshot_date TEXT NOT NULL,
+  period_days INTEGER NOT NULL,
+  channel TEXT NOT NULL,
+  sessions INTEGER,
+  active_users INTEGER,
+  key_events REAL,
+  UNIQUE(project_id, snapshot_date, channel)
+);
+-- GA4 가 기본 채널 'AI Assistant' 로 분류한 세션의 출처(sessionSource) — 우리 AI 출처 목록
+-- (skill_config ai_referrers)과 대조하는 재료다. listed=1 이면 우리 목록에 걸리는 호스트,
+-- 0 이면 GA4 는 AI 로 세는데 우리는 안 세는 출처(목록에 넣을 후보)다.
+CREATE TABLE IF NOT EXISTS ga4_ai_channel (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  snapshot_date TEXT NOT NULL,
+  period_days INTEGER NOT NULL,
+  source TEXT NOT NULL,                       -- GA4 sessionSource 원문(소문자)
+  sessions INTEGER,
+  listed INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(project_id, snapshot_date, source)
+);
+-- 서치콘솔에 제출된 사이트맵 목록(collect_index 의 부수 조회 · sitemaps.list) — 회차마다 쌓는다.
+-- errors·warnings 는 구글이 센 수, last_downloaded 는 구글이 마지막으로 읽은 때다.
+CREATE TABLE IF NOT EXISTS gsc_sitemaps (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  checked_date TEXT NOT NULL,                 -- YYYY-MM-DD
+  path TEXT NOT NULL,                         -- 사이트맵 주소
+  type TEXT,                                  -- sitemap|rssFeed|atomFeed|… (구글 표현 그대로)
+  is_index INTEGER,                           -- 1 = 사이트맵 색인 파일
+  is_pending INTEGER,                         -- 1 = 아직 처리 전
+  last_submitted TEXT, last_downloaded TEXT,
+  errors INTEGER, warnings INTEGER,
+  submitted INTEGER,                          -- contents[].submitted 합(제출된 주소 수). NULL = 구글이 안 줌
+  UNIQUE(project_id, checked_date, path)
+);
 CREATE TABLE IF NOT EXISTS gsc_index_status (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -350,6 +411,10 @@ CREATE TABLE IF NOT EXISTS gsc_index_status (
   coverage_state TEXT, robots_txt_state TEXT, page_fetch_state TEXT,
   indexing_state TEXT, google_canonical TEXT, user_canonical TEXT,
   last_crawled TEXT, rich_results_json TEXT,
+  -- URL Inspection 이 같이 주는데 버리던 것(collect_index.to_row). NULL = 이 칸 전에 검사한 행.
+  referring_urls_json TEXT,                   -- 구글이 이 주소를 알게 된 페이지들(referringUrls). '[]' = 구글이 하나도 안 줌
+  crawled_as TEXT,                            -- DESKTOP|MOBILE (구글 표현 그대로)
+  sitemaps_json TEXT,                         -- 이 주소가 실린 사이트맵(sitemap). '[]' = 사이트맵으로는 못 찾음
   UNIQUE(project_id, checked_date, url)
 );
 CREATE TABLE IF NOT EXISTS page_audits (     -- 내 페이지 HTML 감사 (collect_page.py)
@@ -426,9 +491,44 @@ CREATE TABLE IF NOT EXISTS page_vitals (    -- 속도 (collect_vitals.py · Page
   -- img_json = {"save":[{id,kb,n,items}]}, 이름표는 collect_vitals.IMAGE_AUDITS, 판정은
   -- scoring.image_weight_advice. NULL = 이 칸 전에 잰 행이거나 이미지 진단이 없던 응답.
   img_json TEXT,
+  -- 같은 응답의 진단(collect_vitals.parse_diag): LCP 요소·렌더 차단·크기 없는 이미지·LCP 지연
+  -- 로드·서드파티·안 쓰는 JS/CSS·글꼴·긴 작업·DOM 크기. diag_json = {"lcp":{…},"items":[{id,ms,kb,n,items}]}
+  -- (줄일 시간이 큰 순), 이름표는 collect_vitals.DIAG_AUDITS. NULL = 이 칸 전에 잰 행.
+  diag_json TEXT,
+  -- 접근성·권장사항 카테고리(같은 호출의 category=accessibility·best-practices).
+  -- cat_json = {"accessibility":{"score":n,"fail":[{id,n}]},"best-practices":{…}}. NULL = 안 봤다.
+  cat_json TEXT,
+  lh_version TEXT,                            -- 잰 Lighthouse 판(lighthouseVersion) — 판이 바뀐 회차끼리는 실험실 점수를 견주지 않는다
+  agentic_json TEXT,                          -- PSI agentic-browsing 카테고리 {"pass":x,"total":n,"fail":[id]} — 참고 칸. NULL = 응답에 없음
   UNIQUE(project_id, checked_date, url, strategy)
 );
 CREATE INDEX IF NOT EXISTS idx_page_vitals ON page_vitals(project_id, checked_date);
+-- '구글이 연 모습' 썸네일(PSI final-screenshot, data:image/…;base64,…). 주소·기기마다
+-- **최신 한 장만** 둔다 — 회차마다 쌓으면 Brain 이 그림으로 붓는다.
+CREATE TABLE IF NOT EXISTS page_vital_shots (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  url TEXT NOT NULL,
+  strategy TEXT NOT NULL,
+  checked_date TEXT NOT NULL,
+  data TEXT NOT NULL,
+  UNIQUE(project_id, url, strategy)
+);
+-- CrUX History(collect_vitals 의 부수 조회) — 주마다 한 점인 현장 p75. page_vitals 는 우리가
+-- 잰 날에만 점이 생기지만 이쪽은 첫 수집부터 지난 25주가 온다. origin=1 은 사이트 전체 값.
+-- (project_id, url, form_factor, metric, period_end) upsert — 회차마다 겹치는 주를 다시 받는다.
+CREATE TABLE IF NOT EXISTS crux_history (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  url TEXT NOT NULL,                          -- 페이지 주소, origin=1 이면 오리진(https://host)
+  origin INTEGER NOT NULL DEFAULT 0,
+  form_factor TEXT NOT NULL,                  -- PHONE|DESKTOP (CrUX 표현 그대로)
+  metric TEXT NOT NULL,                       -- lcp_ms|inp_ms|cls|ttfb_ms (collect_vitals.CRUX_METRICS)
+  period_end TEXT NOT NULL,                   -- 28일 창의 마지막 날 YYYY-MM-DD
+  p75 REAL,                                   -- NULL = 그 주는 표본이 모자랐다
+  UNIQUE(project_id, url, form_factor, metric, period_end)
+);
+CREATE INDEX IF NOT EXISTS idx_crux_history ON crux_history(project_id, url, form_factor, metric);
 CREATE TABLE IF NOT EXISTS ai_prompts (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -828,7 +928,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # volume·difficulty 는 처음부터 있었지만 채우는 코드가 없어 늘 NULL 이었다.
     # cpc·metrics_at 이 붙으면서 "언제 잰 값인가"를 말할 수 있게 된다 — 지표는
     # 유료로 사 오는 것이라 언제 산 값인지가 재구매 판단의 전부다.
-    for col, decl in (("cpc", "REAL"), ("metrics_at", "TEXT")):
+    for col, decl in (("cpc", "REAL"), ("metrics_at", "TEXT"), ("monthly_json", "TEXT")):
         if col not in cols:
             conn.execute(f"ALTER TABLE keywords ADD COLUMN {col} {decl}")
             conn.commit()
@@ -902,9 +1002,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 구글이 연 모습의 SEO 점검(collect_vitals.parse_seo) — 옛 행은 NULL(안 봤다)로 남는다.
     pv_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_vitals)")}
     # 이미지 용량·포맷(collect_vitals.parse_images)도 같은 자리다 — 옛 행은 NULL(안 봤다).
-    for col, decl in (("seo_score", "INTEGER"), ("seo_json", "TEXT"), ("img_json", "TEXT")):
+    for col, decl in (("seo_score", "INTEGER"), ("seo_json", "TEXT"), ("img_json", "TEXT"),
+                      ("diag_json", "TEXT"), ("cat_json", "TEXT"), ("lh_version", "TEXT"),
+                      ("agentic_json", "TEXT")):
         if col not in pv_cols:
             conn.execute(f"ALTER TABLE page_vitals ADD COLUMN {col} {decl}")
+            conn.commit()
+    # URL Inspection 이 같이 주던 것(collect_index.to_row) — 옛 행은 NULL(안 받았다).
+    ix_cols = {r["name"] for r in conn.execute("PRAGMA table_info(gsc_index_status)")}
+    for col in ("referring_urls_json", "crawled_as", "sitemaps_json"):
+        if col not in ix_cols:
+            conn.execute(f"ALTER TABLE gsc_index_status ADD COLUMN {col} TEXT")
             conn.commit()
 
     pa_cols = {r["name"] for r in conn.execute("PRAGMA table_info(page_audits)")}
@@ -2494,7 +2602,8 @@ def write_index_status(conn: sqlite3.Connection, project_id: int, checked_date: 
     """
     cols = ("verdict", "coverage_state", "robots_txt_state", "page_fetch_state",
             "indexing_state", "google_canonical", "user_canonical",
-            "last_crawled", "rich_results_json")
+            "last_crawled", "rich_results_json",
+            "referring_urls_json", "crawled_as", "sitemaps_json")
     rows = list(rows)
     conn.executemany(
         f"""INSERT INTO gsc_index_status(project_id, checked_date, url, {', '.join(cols)})
@@ -2684,7 +2793,7 @@ def write_page_vitals(conn: sqlite3.Connection, project_id: int, checked_date: s
     cols = ("error", "origin_fallback", "field_verdict",
             "field_lcp_ms", "field_inp_ms", "field_cls", "field_ttfb_ms",
             "lab_score", "lab_lcp_ms", "lab_cls", "lab_tbt_ms", "seo_score", "seo_json",
-            "img_json")
+            "img_json", "diag_json", "cat_json", "lh_version", "agentic_json")
     rows = list(rows)
     conn.executemany(
         f"""INSERT INTO page_vitals(project_id, checked_date, url, strategy, {', '.join(cols)})
@@ -2693,6 +2802,111 @@ def write_page_vitals(conn: sqlite3.Connection, project_id: int, checked_date: s
               {', '.join(f'{c}=excluded.{c}' for c in cols)}""",
         [(project_id, checked_date, r["url"], r["strategy"]) + tuple(r.get(c) for c in cols)
          for r in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_page_vital_shots(conn: sqlite3.Connection, project_id: int, checked_date: str,
+                           rows) -> int:
+    """'구글이 연 모습' 썸네일 — 주소·기기마다 최신 한 장으로 덮는다. rows: {url, strategy, shot}."""
+    rows = [r for r in rows if r.get("shot")]
+    conn.executemany(
+        """INSERT INTO page_vital_shots(project_id, url, strategy, checked_date, data)
+           VALUES(?,?,?,?,?)
+           ON CONFLICT(project_id, url, strategy) DO UPDATE SET
+             checked_date=excluded.checked_date, data=excluded.data""",
+        [(project_id, r["url"], r["strategy"], checked_date, r["shot"]) for r in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_crux_history(conn: sqlite3.Connection, project_id: int, rows) -> int:
+    """CrUX History 적재 — rows: (url, origin, form_factor, metric, period_end, p75).
+    같은 주를 다시 받으면 덮는다(창이 겹쳐 온다)."""
+    rows = list(rows)
+    conn.executemany(
+        """INSERT INTO crux_history(project_id, url, origin, form_factor, metric, period_end, p75)
+           VALUES(?,?,?,?,?,?,?)
+           ON CONFLICT(project_id, url, form_factor, metric, period_end) DO UPDATE SET
+             p75=excluded.p75, origin=excluded.origin""",
+        [(project_id, *r) for r in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_gsc_sitemaps(conn: sqlite3.Connection, project_id: int, checked_date: str,
+                       rows) -> int:
+    """서치콘솔 사이트맵 목록 적재 — 그날 것을 통째로 갈아 끼운다(목록에서 빠진 사이트맵이
+    그날 행으로 남으면 '아직 제출돼 있다'가 된다). rows: dict(키는 칸 이름)."""
+    cols = ("path", "type", "is_index", "is_pending", "last_submitted", "last_downloaded",
+            "errors", "warnings", "submitted")
+    rows = list(rows)
+    conn.execute("DELETE FROM gsc_sitemaps WHERE project_id=? AND checked_date=?",
+                 (project_id, checked_date))
+    conn.executemany(
+        f"INSERT OR REPLACE INTO gsc_sitemaps(project_id, checked_date, {', '.join(cols)})"
+        f" VALUES(?,?,{','.join('?' * len(cols))})",
+        [(project_id, checked_date) + tuple(r.get(c) for c in cols) for r in rows])
+    conn.commit()
+    return len(rows)
+
+
+def write_ga4_daily(conn: sqlite3.Connection, project_id: int, rows) -> int:
+    """GA4 날짜별 유기 세션 — rows: (day, sessions, active_users, key_events). write_gsc_daily
+    와 같은 upsert 다(최근 며칠은 GA4 가 나중에 보정한다)."""
+    rows = list(rows)
+    conn.executemany(
+        """INSERT INTO ga4_daily(project_id, day, sessions, active_users, key_events)
+           VALUES(?,?,?,?,?)
+           ON CONFLICT(project_id, day) DO UPDATE SET sessions=excluded.sessions,
+             active_users=excluded.active_users, key_events=excluded.key_events""",
+        [(project_id, d, int(s or 0), int(u or 0), round(float(k or 0), 2))
+         for d, s, u, k in rows])
+    conn.commit()
+    return len(rows)
+
+
+# ga4_channels 의 속성 전체 합 줄 — GA4 채널 이름과 안 겹치게 괄호를 두른다(표 주석 참조).
+GA4_TOTAL_CHANNEL = "(total)"
+# 'AI Assistant' 채널 출처 조회가 성공했다는 표식 줄(sessions = 그 채널 세션 합). 출처가 0 이어도
+# 이 줄은 남긴다 — 없으면 "쟀고 0"과 "안 쟀다"가 같은 빈 결과가 된다.
+GA4_AI_MEASURED = "(ai-assistant)"
+
+
+def write_ga4_channels(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
+                       period_days: int, rows, total) -> int:
+    """GA4 채널 그룹 적재 — rows: (channel, sessions, active_users, key_events), total 은 같은
+    꼴의 (sessions, active_users, key_events) 속성 전체 합. **조회가 성공한 날만 부른다** —
+    '(total)' 줄이 "쟀다"는 표시라서, 행이 0이어도(속성이 비었다) 그 줄은 남긴다."""
+    rows = list(rows)
+    conn.execute("DELETE FROM ga4_channels WHERE project_id=? AND snapshot_date=?",
+                 (project_id, snapshot_date))
+    conn.executemany(
+        """INSERT INTO ga4_channels(project_id, snapshot_date, period_days, channel,
+             sessions, active_users, key_events) VALUES(?,?,?,?,?,?,?)""",
+        [(project_id, snapshot_date, period_days, ch, int(s or 0), int(u or 0),
+          round(float(k or 0), 2))
+         for ch, s, u, k in [*rows, (GA4_TOTAL_CHANNEL, *total)]])
+    conn.commit()
+    return len(rows)
+
+
+def write_ga4_ai_channel(conn: sqlite3.Connection, project_id: int, snapshot_date: str,
+                         period_days: int, rows) -> int:
+    """GA4 'AI Assistant' 채널의 출처 — rows: (source, sessions, listed). 그날 것을 갈아 끼운다."""
+    rows = list(rows)
+    conn.execute("DELETE FROM ga4_ai_channel WHERE project_id=? AND snapshot_date=?",
+                 (project_id, snapshot_date))
+    conn.execute(
+        """INSERT OR REPLACE INTO ga4_channels(project_id, snapshot_date, period_days, channel,
+             sessions, active_users, key_events) VALUES(?,?,?,?,?,NULL,NULL)""",
+        (project_id, snapshot_date, period_days, GA4_AI_MEASURED,
+         sum(int(s or 0) for _, s, _ in rows)))
+    conn.executemany(
+        """INSERT OR REPLACE INTO ga4_ai_channel(project_id, snapshot_date, period_days,
+             source, sessions, listed) VALUES(?,?,?,?,?,?)""",
+        [(project_id, snapshot_date, period_days, src, int(s or 0), int(bool(li)))
+         for src, s, li in rows])
     conn.commit()
     return len(rows)
 

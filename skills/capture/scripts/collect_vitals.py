@@ -179,6 +179,377 @@ def parse_images(lh: dict) -> str | None:
     return json.dumps({"save": save}, ensure_ascii=False)
 
 
+# ── 진단 더 받기 — 같은 응답의 performance 카테고리에 이미 있다(새 호출 0) ──────────────
+# 속도 진단은 "LCP 가 늦다"까지만 말했다. 늦게 뜨는 그것이 **무엇**이고(LCP 요소), 무엇이 그
+# 앞을 막는지(렌더 차단·지연 로드), 무엇을 줄이면 얼마나 빨라지는지(줄일 시간 순)가 여기 있다.
+# {Lighthouse audit id: (이름표, 고칠 것)} — 이름표·고칠 것의 정본은 여기 한 벌이다(판정은
+# scoring.vitals_diag, 화면은 d.diag_audits 로 받는다).
+# Lighthouse 13 이 여러 진단을 *-insight 로 갈아 끼웠다(13.0.0 "remove audits replaced by
+# performance insights" — https://github.com/GoogleChrome/lighthouse/blob/main/changelog.md).
+# 12 로 잰 행과 13 으로 잰 행이 같은 이름으로 남게 새 id 는 DIAG_ALIASES 로 옛 id 에 접는다.
+DIAG_AUDITS = {
+    "lcp-lazy-loaded":           ("LCP 이미지 지연 로드", "가장 큰 이미지에 loading=\"lazy\" 가 걸려 "
+                                  "늦게 받습니다. 그 이미지에서는 lazy 를 빼고 fetchpriority=\"high\" "
+                                  "를 주세요."),
+    "render-blocking-resources": ("렌더 차단 자원", "첫 화면을 막는 CSS·JS 입니다. 첫 화면에 쓰는 "
+                                  "CSS 만 인라인하고 나머지는 뒤로 미루세요(defer·async·media)."),
+    "unsized-images":            ("크기 없는 이미지", "width·height(또는 aspect-ratio)가 없어 그려지며 "
+                                  "화면을 밉니다. 값을 지정해 자리를 미리 잡으세요."),
+    "third-party-summary":       ("서드파티 스크립트", "남의 스크립트(태그·위젯·광고)가 메인 스레드를 "
+                                  "잡습니다. 안 쓰는 것은 빼고, 쓰는 것은 상호작용 뒤에 불러오세요."),
+    "unused-javascript":         ("안 쓰는 JS", "받기만 하고 실행하지 않는 코드가 큽니다. 페이지별로 "
+                                  "쪼개 필요한 것만 보내세요(코드 분할)."),
+    "unused-css-rules":          ("안 쓰는 CSS", "이 페이지에서 안 쓰는 규칙이 큽니다. 공용 CSS 를 "
+                                  "쪼개거나 안 쓰는 규칙을 걷어 내세요."),
+    "font-display":              ("글꼴 표시", "웹 글꼴을 받는 동안 글자가 안 보입니다. "
+                                  "font-display: swap(또는 optional)을 주세요."),
+    "long-tasks":                ("긴 작업", "메인 스레드를 50ms 넘게 잡는 작업입니다. 그 스크립트를 "
+                                  "쪼개거나 뒤로 미루세요."),
+    "dom-size":                  ("DOM 크기", "요소가 너무 많아 그리기·반응이 느립니다. 화면 밖 목록은 "
+                                  "나눠 그리고 겹겹이 싼 래퍼를 줄이세요."),
+}
+DIAG_ALIASES = {"render-blocking-insight": "render-blocking-resources",
+                "third-parties-insight": "third-party-summary",
+                "font-display-insight": "font-display",
+                "dom-size-insight": "dom-size"}
+# LCP 요소·구간 — 12 는 largest-contentful-paint-element, 13 은 lcp-breakdown-insight.
+_LCP_ELEMENT_AUDITS = ("lcp-breakdown-insight", "largest-contentful-paint-element")
+# 13 의 구간 이름(subpart) → 우리 열쇠. 12 는 이름이 번역 문자열이라 순서로 읽는다(늘 이 순서).
+LCP_PHASES = {"timeToFirstByte": "ttfb", "resourceLoadDelay": "load_delay",
+              "resourceLoadDuration": "load", "elementRenderDelay": "render_delay"}
+# LCP 가 어떻게 발견되나 — 13 의 lcp-discovery-insight 체크리스트. eagerlyLoaded=false 가
+# 12 의 lcp-lazy-loaded 실패와 같은 사실이다.
+_LCP_DISCOVERY = "lcp-discovery-insight"
+_SAVING_KEYS = ("LCP", "FCP", "TBT", "INP")       # metricSavings 중 ms 단위인 것(CLS 는 단위가 다르다)
+
+
+def _walk(obj):
+    """details 안의 dict 를 깊이 우선으로 — 12·13 이 같은 것을 다른 깊이에 둔다."""
+    if isinstance(obj, dict):
+        yield obj
+        for v in obj.values():
+            yield from _walk(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _walk(v)
+
+
+def _item_name(it: dict) -> str:
+    """진단 줄 하나의 이름 — 주소, 없으면 서드파티 이름, 없으면 요소 토막."""
+    ent = it.get("entity")
+    if isinstance(ent, dict):
+        ent = ent.get("text")
+    node = it.get("node") if isinstance(it.get("node"), dict) else {}
+    v = it.get("url") or ent or node.get("snippet") or ""
+    return str(v)[:160]
+
+
+def parse_lcp(lh: dict) -> dict | None:
+    """LCP 요소와 그 앞 구간 → {"snippet", "selector", "phases": {ttfb,load_delay,load,render_delay},
+    "lazy", "discoverable", "priority"} | None(응답에 그 진단이 없다). 모르는 칸은 뺀다."""
+    audits = (lh or {}).get("audits") or {}
+    out: dict = {}
+    for aid in _LCP_ELEMENT_AUDITS:
+        det = (audits.get(aid) or {}).get("details")
+        if not det:
+            continue
+        phases, legacy = {}, []
+        for d in _walk(det):
+            if "snippet" in d and "snippet" not in out:
+                out["snippet"] = str(d.get("snippet") or "")[:200]
+                if d.get("selector"):
+                    out["selector"] = str(d["selector"])[:160]
+            if d.get("subpart") in LCP_PHASES and isinstance(d.get("duration"), (int, float)):
+                phases[LCP_PHASES[d["subpart"]]] = round(d["duration"])
+            elif "phase" in d and isinstance(d.get("timing"), (int, float)):
+                legacy.append(round(d["timing"]))
+        if not phases and len(legacy) == len(LCP_PHASES):
+            phases = dict(zip(LCP_PHASES.values(), legacy))
+        if phases:
+            out["phases"] = phases
+        if out:
+            break
+    lazy = audits.get("lcp-lazy-loaded") or {}
+    if lazy.get("scoreDisplayMode") == "binary" and isinstance(lazy.get("score"), (int, float)):
+        out["lazy"] = lazy["score"] < 1
+    for d in _walk((audits.get(_LCP_DISCOVERY) or {}).get("details")):
+        for key, name, flip in (("eagerlyLoaded", "lazy", True),
+                                ("requestDiscoverable", "discoverable", False),
+                                ("priorityHinted", "priority", False)):
+            v = d.get(key)
+            if isinstance(v, dict) and isinstance(v.get("value"), bool):
+                out[name] = (not v["value"]) if flip else v["value"]
+    return out or None
+
+
+def parse_diag(lh: dict) -> str | None:
+    """Lighthouse 결과 → diag_json | None.
+
+    {"lcp": parse_lcp, "items": [{id, fail, ms, kb, n, val, items}]} — id 는 DIAG_AUDITS 의
+    열쇠(13 의 *-insight 는 옛 id 로 접는다), fail 은 Lighthouse 가 통과 못 했다고 한 것,
+    ms 는 줄일 수 있는 시간(metricSavings 의 LCP·FCP·TBT·INP 중 큰 값, 없으면
+    overallSavingsMs), kb 는 줄일 수 있는 양, n 은 줄 수, val 은 진단의 대표 숫자(DOM 요소 수·
+    긴 작업 중 가장 긴 것 ms), items 는 이름 상위 3개. **줄일 시간이 큰 순**(같으면 kb 순).
+    판정(무엇을 말할지)은 여기서 안 한다 — scoring.vitals_diag. 진단이 하나도 없는 응답은
+    None(안 봤다), 봤는데 걸린 것이 없으면 {"items": []}.
+    """
+    audits = (lh or {}).get("audits") or {}
+    ids = {**{a: a for a in DIAG_AUDITS}, **DIAG_ALIASES}
+    seen = [aid for aid in ids if aid in audits]
+    lcp = parse_lcp(lh)
+    if not seen and not lcp:
+        return None
+    by: dict[str, dict] = {}
+    for aid in seen:
+        a = audits.get(aid) or {}
+        if a.get("scoreDisplayMode") in _IMG_SKIP_MODES:
+            continue
+        details = a.get("details") or {}
+        rows = _detail_items(details)
+        ms = max((v for k, v in (a.get("metricSavings") or {}).items()
+                  if k in _SAVING_KEYS and isinstance(v, (int, float))), default=None)
+        if ms is None and isinstance(details.get("overallSavingsMs"), (int, float)):
+            ms = details["overallSavingsMs"]
+        kb = details.get("overallSavingsBytes")
+        if not isinstance(kb, (int, float)):
+            kb = ((details.get("debugData") or {}).get("wastedBytes"))
+        if not isinstance(kb, (int, float)):
+            kb = sum(it["wastedBytes"] for it in rows
+                     if isinstance(it.get("wastedBytes"), (int, float)))
+        score = a.get("score")
+        fail = isinstance(score, (int, float)) and score < 1
+        key = lambda it: -max((it.get(k) for k in ("wastedMs", "wastedBytes", "blockingTime",
+                                                   "mainThreadTime", "duration")
+                               if isinstance(it.get(k), (int, float))), default=0)
+        rows = sorted(rows, key=key)
+        val = a.get("numericValue") if ids[aid] == "dom-size" else None
+        if ids[aid] == "long-tasks":
+            val = max((it["duration"] for it in rows
+                       if isinstance(it.get("duration"), (int, float))), default=None)
+        row = {"id": ids[aid], "fail": fail, "ms": round(ms) if ms else 0,
+               "kb": round(kb / 1024) if kb else 0, "n": len(rows),
+               "val": round(val) if isinstance(val, (int, float)) else None,
+               "items": [n for it in rows[:3] if (n := _item_name(it))]}
+        if not (fail or row["ms"] or row["kb"] or row["n"]):
+            continue                     # 통과했고 줄일 것도 없다 — 적지 않는다
+        # 12·13 이 한 응답에 같이 오면(전환기) 새 진단(*-insight)을 남긴다
+        if ids[aid] not in by or aid in DIAG_ALIASES:
+            by[ids[aid]] = row
+    if lcp and lcp.get("lazy") and "lcp-lazy-loaded" not in by:
+        # 13 에는 lcp-lazy-loaded 진단이 없다 — 체크리스트에서 읽은 사실을 같은 이름으로 적는다
+        by["lcp-lazy-loaded"] = {"id": "lcp-lazy-loaded", "fail": True, "ms": 0, "kb": 0, "n": 1,
+                                 "val": None, "items": [lcp["snippet"]] if lcp.get("snippet") else []}
+    items = sorted(by.values(), key=lambda x: (-x["ms"], -x["kb"], x["id"]))
+    return json.dumps({**({"lcp": lcp} if lcp else {}), "items": items}, ensure_ascii=False)
+
+
+# ── 접근성·권장사항 — 같은 호출에 category 둘을 더하면 온다(추가 비용 0) ──────────────
+# 실패 항목의 이름표 {Lighthouse audit id: 이름}. 자주 걸리는 것만 둔다 — 여기 없는 id 는
+# 화면이 id 그대로(식별자) 보인다. 점수는 Lighthouse 가 낸 값이고 우리가 다시 매기지 않는다.
+CAT_AUDITS = {
+    "color-contrast": "글자와 바탕의 대비가 낮음", "image-alt": "alt 없는 이미지",
+    "link-name": "이름 없는 링크", "button-name": "이름 없는 버튼",
+    "label": "레이블 없는 입력 칸", "html-has-lang": "<html lang> 없음",
+    "html-lang-valid": "<html lang> 값이 틀림", "meta-viewport": "확대를 막는 viewport",
+    "heading-order": "제목 단계를 건너뜀", "document-title": "<title> 없음",
+    "target-size": "누를 자리가 너무 작음", "aria-allowed-attr": "쓸 수 없는 ARIA 속성",
+    "aria-required-attr": "빠진 필수 ARIA 속성", "aria-valid-attr-value": "ARIA 속성 값이 틀림",
+    "aria-hidden-focus": "숨긴 영역 안에 초점이 감", "duplicate-id-aria": "ARIA 가 가리키는 id 중복",
+    "list": "목록 구조가 틀림", "listitem": "목록 밖의 <li>", "tabindex": "0 보다 큰 tabindex",
+    "frame-title": "제목 없는 iframe", "select-name": "이름 없는 선택 상자",
+    "landmark-one-main": "main 영역 없음", "skip-link": "건너뛰기 링크가 안 감",
+    "is-on-https": "HTTPS 가 아님", "errors-in-console": "콘솔에 오류가 찍힘",
+    "deprecations": "없어질 API 를 씀", "third-party-cookies": "서드파티 쿠키를 씀",
+    "image-aspect-ratio": "이미지 비율이 찌그러짐", "image-size-responsive": "이미지 해상도가 낮음",
+    "inspector-issues": "브라우저 Issues 패널에 문제", "valid-source-maps": "소스맵이 틀림",
+    "csp-xss": "CSP 가 XSS 를 못 막음", "has-hsts": "HSTS 없음",
+    "redirects-http": "HTTP 를 HTTPS 로 안 넘김", "charset": "문자 인코딩 선언 없음",
+    "doctype": "doctype 없음", "geolocation-on-start": "열자마자 위치 권한을 물음",
+    "notification-on-start": "열자마자 알림 권한을 물음", "paste-preventing-inputs": "붙여 넣기를 막는 입력 칸",
+}
+CATEGORIES = {"accessibility": "접근성", "best-practices": "권장사항"}
+# PSI 의 Agentic Browsing 카테고리(Lighthouse 13.3 부터, PSI API 는 13.4.1 부터) — 점수가 아니라
+# "점검 N개 중 X개 통과"로 읽는다("does not have a weighted average score from 0 to 100" —
+# https://developer.chrome.com/docs/lighthouse/agentic-browsing/scoring). 구글이 실험이라 적은
+# 제안 표준 기준이라 **참고 칸**으로만 둔다 — 기회·판정을 만들지 않는다.
+AGENTIC = "agentic-browsing"
+_REF_SKIP_MODES = ("notApplicable", "informative", "manual", "error")
+
+
+def _cat_refs(lh: dict, cat: str) -> list[tuple[str, dict]]:
+    """그 카테고리에 속한 진단 중 통과·실패를 말할 수 있는 것 — (id, audit)."""
+    refs = ((lh.get("categories") or {}).get(cat) or {}).get("auditRefs") or []
+    audits = lh.get("audits") or {}
+    out = []
+    for ref in refs:
+        a = audits.get((ref or {}).get("id")) or {}
+        if a.get("scoreDisplayMode") in _REF_SKIP_MODES \
+                or not isinstance(a.get("score"), (int, float)):
+            continue
+        out.append((ref["id"], a))
+    return out
+
+
+def parse_cats(lh: dict) -> str | None:
+    """Lighthouse 결과 → cat_json | None. {카테고리: {"score": 0~100, "fail": [{id, n}]}} —
+    응답에 온 카테고리만 싣는다(옛 호출에는 없다 — None 은 '안 봤다')."""
+    out = {}
+    for cat in CATEGORIES:
+        score = ((lh.get("categories") or {}).get(cat) or {}).get("score")
+        if not isinstance(score, (int, float)):
+            continue
+        fail = [{"id": aid, "n": len(_detail_items(a.get("details") or {}))}
+                for aid, a in _cat_refs(lh, cat) if a["score"] < 1]
+        out[cat] = {"score": round(score * 100), "fail": fail}
+    return json.dumps(out, ensure_ascii=False) if out else None
+
+
+def parse_agentic(lh: dict) -> str | None:
+    """Lighthouse 결과 → agentic_json | None. {"pass": X, "total": N, "fail": [id]} — 해당 없음·
+    참고용 진단은 N 에서 뺀다(Lighthouse 가 분수를 세는 방식 그대로)."""
+    if AGENTIC not in ((lh or {}).get("categories") or {}):
+        return None
+    refs = _cat_refs(lh, AGENTIC)
+    fail = [aid for aid, a in refs if a["score"] < 1]
+    return json.dumps({"pass": len(refs) - len(fail), "total": len(refs), "fail": fail},
+                      ensure_ascii=False)
+
+
+SHOT_MAX = 200_000        # 썸네일(data: 주소) 글자 상한 — 넘으면 안 남긴다(보통 수십 KB 다)
+
+
+def parse_shot(lh: dict) -> str | None:
+    """'구글이 연 모습' — final-screenshot 의 data: 주소. page_vitals 칸이 아니라
+    page_vital_shots 로 간다(주소·기기마다 최신 한 장)."""
+    data = (((lh or {}).get("audits") or {}).get("final-screenshot") or {}).get("details") or {}
+    data = data.get("data")
+    if isinstance(data, str) and data.startswith("data:image/") and len(data) <= SHOT_MAX:
+        return data
+    return None
+
+
+# ── CrUX History — 주마다 한 점, 지난 25주(기본)의 현장 p75 ──────────────────────────
+# https://developer.chrome.com/docs/crux/history-api · PageSpeed 와 다른 서비스
+# (chromeuxreport.googleapis.com)라 키의 Cloud 프로젝트에 'Chrome UX Report API' 가 켜져
+# 있어야 한다. 키가 없으면 못 부른다(무키 호출이 없다) — 그때는 건너뛰고 사유를 notes 에.
+CRUX_API = "https://chromeuxreport.googleapis.com/v1/records:queryHistoryRecord"
+CRUX_METRICS = {"lcp_ms": "largest_contentful_paint", "inp_ms": "interaction_to_next_paint",
+                "cls": "cumulative_layout_shift", "ttfb_ms": "experimental_time_to_first_byte"}
+CRUX_FORM = {"mobile": "PHONE", "desktop": "DESKTOP"}
+CRUX_NO_DATA = 404        # 표본이 모자란 주소 — 실패가 아니라 그 주소의 사실이다
+
+
+def crux_key() -> str | None:
+    """CrUX 를 부를 키 — CRUX_API_KEY 가 있으면 그것, 없으면 PAGESPEED_API_KEY(같은 Cloud
+    프로젝트에 두 API 를 같이 켜 둔 흔한 경우)."""
+    return os.environ.get("CRUX_API_KEY") or os.environ.get("PAGESPEED_API_KEY") or None
+
+
+def parse_crux_history(data: dict) -> list[tuple]:
+    """queryHistoryRecord 응답 → [(metric, period_end, p75)] (metric 은 CRUX_METRICS 의 열쇠).
+
+    p75 는 표본이 모자란 주에 null 로 온다 — None 으로 남긴다(0 이 아니다). CLS 는 문자열로
+    온다("CLS uses strings, even if they look like numbers")."""
+    rec = (data or {}).get("record") or {}
+    ends = []
+    for cp in rec.get("collectionPeriods") or []:
+        d = (cp or {}).get("lastDate") or {}
+        try:
+            ends.append(f"{int(d['year']):04d}-{int(d['month']):02d}-{int(d['day']):02d}")
+        except (KeyError, TypeError, ValueError):
+            ends.append(None)
+    out = []
+    for col, name in CRUX_METRICS.items():
+        p75s = (((rec.get("metrics") or {}).get(name) or {}).get("percentilesTimeseries")
+                or {}).get("p75s") or []
+        for end, v in zip(ends, p75s):
+            if not end:
+                continue
+            try:
+                v = None if v is None else float(v)
+            except (TypeError, ValueError):
+                v = None
+            if v is not None and v != v:          # "NaN"
+                v = None
+            out.append((col, end, v))
+    return out
+
+
+def fetch_crux_history(target: str, form_factor: str, key: str, *, origin: bool = False,
+                       timeout: int | None = None) -> dict:
+    """주소(또는 오리진) 하나·기기 하나의 25주. {"rows": [...]} | {"status": n, "error": 사유}."""
+    import requests
+    body = {("origin" if origin else "url"): target, "formFactor": form_factor,
+            "metrics": list(CRUX_METRICS.values())}
+    try:
+        r = requests.post(CRUX_API, params={"key": key}, json=body,
+                          timeout=timeout or serp_adapter.TIMEOUTS["psi"])
+    except Exception as e:
+        return {"status": None, "error": f"{type(e).__name__}: {e}"[:160]}
+    if r.status_code != 200:
+        detail = ""
+        try:
+            detail = ((r.json().get("error") or {}).get("message") or "")[:100]
+        except Exception:
+            pass
+        return {"status": r.status_code,
+                "error": f"HTTP {r.status_code}" + (f" · {detail}" if detail else "")}
+    try:
+        return {"rows": parse_crux_history(r.json())}
+    except ValueError as e:
+        return {"status": None, "error": f"응답을 못 읽었습니다: {e}"[:160]}
+
+
+def collect_crux_history(conn, project_id: int, rows: list[dict], want: list[str],
+                         *, throttle: float = 0.0) -> tuple[int, str]:
+    """이번에 잰 페이지들의 CrUX History 를 적재한다 → (성공한 호출 수, notes 조각).
+
+    현장 값이 **그 페이지 것**인 주소만 주소로 묻는다 — 사이트 전체 값으로 대신 받은 주소
+    (origin_fallback)는 물어도 404 다. 그런 주소가 하나라도 있으면 오리진을 한 번 묻는다.
+    부수 조회다: 실패해도 속도 행은 이미 저장됐고 단계는 안 죽는다. 권한·한도(403·429·400)는
+    남은 호출도 똑같이 죽으므로 거기서 멈추고 사유를 남긴다.
+    """
+    import time
+    from urllib.parse import urlsplit
+    key = crux_key()
+    if not key:
+        return 0, "crux=skip:no_key "
+    jobs, seen = [], set()
+    for r in rows:
+        if r.get("error") or r.get("strategy") not in CRUX_FORM or r["strategy"] not in want:
+            continue
+        has_field = any(r.get(c) is not None for c in _FIELD) or r.get("field_cls") is not None
+        u = urlsplit(r["url"])
+        org = f"{u.scheme}://{u.netloc}"
+        job = ((r["url"], False) if has_field and not r.get("origin_fallback") else (org, True))
+        if (job, r["strategy"]) not in seen:
+            seen.add((job, r["strategy"]))
+            jobs.append((job[0], job[1], CRUX_FORM[r["strategy"]]))
+    calls = saved = nodata = 0
+    stop = ""
+    for i, (target, origin, form) in enumerate(jobs):
+        got = fetch_crux_history(target, form, key, origin=origin)
+        if "rows" in got:
+            calls += 1
+            saved += db.write_crux_history(
+                conn, project_id, [(target, int(origin), form, m, end, v)
+                                   for m, end, v in got["rows"]])
+        elif got.get("status") == CRUX_NO_DATA:
+            calls += 1
+            nodata += 1
+        else:
+            stop = got["error"]
+            print(f"  ! CrUX History: {stop} — 추세는 건너뜁니다(속도 행은 저장됐습니다)",
+                  file=sys.stderr)
+            break
+        if throttle and i < len(jobs) - 1:
+            time.sleep(throttle)
+    note = (f"crux=skip:{stop.replace(' ', '_')[:60]} " if stop and not calls
+            else f"crux={saved}rows/{calls}calls" + (f"/nodata={nodata}" if nodata else "")
+            + (f"/stop:{stop.replace(' ', '_')[:40]}" if stop else "") + " ")
+    return calls, note
+
+
 QUOTA_STATUS = 429
 QUOTA_REASON = ("PageSpeed 오늘 한도를 다 썼습니다. 내일 다시 "
                 "(PAGESPEED_API_KEY 를 넣으면 한도가 커집니다)")
@@ -266,7 +637,27 @@ def parse(url: str, strategy: str, data: dict) -> dict:
     row["lab_cls"] = round(v, 3) if isinstance(v, (int, float)) else None
     row["seo_score"], row["seo_json"] = parse_seo(lh)
     row["img_json"] = parse_images(lh)
+    row["diag_json"] = parse_diag(lh)
+    row["cat_json"] = parse_cats(lh)
+    row["agentic_json"] = parse_agentic(lh)
+    v = lh.get("lighthouseVersion")
+    row["lh_version"] = str(v)[:20] if v else None
+    row["shot"] = parse_shot(lh)          # page_vitals 칸이 아니다 — db.write_page_vital_shots
     return row
+
+
+# 한 호출에 싣는 카테고리(PSI 는 안 주면 performance 만 돈다). 값은 PSI 의 category 열거
+# (PERFORMANCE·SEO·ACCESSIBILITY·BEST_PRACTICES·AGENTIC_BROWSING —
+# https://pagespeedonline.googleapis.com/$discovery/rest?version=v5)의 소문자·붙임표 꼴이다.
+PSI_CATEGORIES = ("performance", "seo", "accessibility", "best-practices", AGENTIC)
+_AGENTIC_OK = [True]      # 이번 실행에서 agentic-browsing 을 실을지 — 400 을 한 번 맞으면 끈다
+
+
+def _err_detail(r) -> str:
+    try:
+        return ((r.json().get("error") or {}).get("message") or "")[:120]
+    except Exception:
+        return ""
 
 
 def fetch(url: str, strategy: str, *, timeout: int | None = None) -> dict:
@@ -274,13 +665,24 @@ def fetch(url: str, strategy: str, *, timeout: int | None = None) -> dict:
     import requests
     # category 는 여러 번 싣는다(PSI 는 반복 키로 받는다) — seo 는 같은 호출에 얹혀 공짜다.
     params = [("url", url), ("strategy", strategy),
-              ("category", "performance"), ("category", "seo")]
+              *(("category", c) for c in PSI_CATEGORIES if c != AGENTIC or _AGENTIC_OK[0])]
     key = os.environ.get("PAGESPEED_API_KEY")
     if key:
         params.append(("key", key))
     try:
         r = requests.get(API, params=params,
                          timeout=timeout or serp_adapter.TIMEOUTS["psi"])
+        if r.status_code == 400 and ("category", AGENTIC) in params \
+                and not unmeasurable(_err_detail(r)):
+            # agentic-browsing 은 새 카테고리다(PSI 가 13.4.1 에서 켰다). 이 값 때문에 호출이
+            # 통째로 거절되면 속도까지 잃는다 — 빼고 한 번 다시 묻는다. 그래서 통과하면 이 값이
+            # 원인이었으니 이번 실행에서는 더 안 싣고, 그래도 400 이면 원인이 다른 데 있다.
+            params.remove(("category", AGENTIC))
+            r2 = requests.get(API, params=params,
+                              timeout=timeout or serp_adapter.TIMEOUTS["psi"])
+            if r2.status_code != 400:
+                _AGENTIC_OK[0] = False
+                r = r2
     except Exception as e:
         return {"url": url, "strategy": strategy, "error": f"{type(e).__name__}: {e}"[:200]}
     if r.status_code != 200:
@@ -403,11 +805,18 @@ def collect(project: str, *,
                 print(f"  ! {QUOTA_REASON} ({quota})", file=sys.stderr)
             checked = str(date.today())
             db.write_page_vitals(conn, p["id"], checked, rows)
+            db.write_page_vital_shots(conn, p["id"], checked, rows)
+            # 부수 조회 — 25주 현장 추세. 한도로 멈춘 날은 안 부른다(같은 키의 한도다).
+            crux_calls, crux_note = ((0, "") if quota else collect_crux_history(
+                conn, p["id"], rows, want, throttle=st.throttle))
+            done += crux_calls
             r.api_calls = done
             measured = sum(1 for x in rows if not x.get("error"))    # 측정 불가는 잰 것이 아니다
             r.notes = (f"urls={len(urls)} strategies={','.join(want)} "
                        f"rows={len(rows)} checked={checked} "
                        + (f"unmeasurable={len(unmeas)} " if unmeas else "")
+                       + crux_note
+                       + ("" if _AGENTIC_OK[0] else "agentic=unsupported ")
                        + f"{st.err_note}"
                        + (f" | quota={QUOTA_STATUS}: {QUOTA_REASON}" if quota else ""))
 

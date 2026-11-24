@@ -1365,6 +1365,10 @@ def _wide(text: str) -> bool:
 LCP_GOOD_MS = 2500
 INP_GOOD_MS = 200
 CLS_GOOD = 0.1
+# 현장 TTFB(첫 바이트까지)의 "좋음" 경계 — p75 0.8초 이하(https://web.dev/articles/ttfb).
+# Core Web Vitals 는 아니지만 LCP 의 앞 구간이라, 넘으면 LCP 를 고칠 자리가 서버 쪽이다.
+# 현장 값(CrUX)만 판정한다 — 실험실의 서버 응답은 측정기 위치를 타서 사용자 값이 아니다.
+TTFB_GOOD_MS = 800
 
 
 def _sec(ms) -> str:
@@ -1386,7 +1390,7 @@ def vitals_advice(rows) -> list[dict]:
         if not r or r.get("error"):
             continue
         dev = "모바일" if r.get("strategy") == "mobile" else "데스크톱"
-        field = r.get("field_lcp_ms") is not None or r.get("field_inp_ms") is not None             or r.get("field_cls") is not None
+        field = r.get("field_lcp_ms") is not None or r.get("field_inp_ms") is not None             or r.get("field_cls") is not None or r.get("field_ttfb_ms") is not None
         src = ("실제 사용자 28일치" if field else LAB_ONCE)
         if field and r.get("origin_fallback"):
             src = "사이트 전체(이 페이지만의 실제 사용자 값은 표본이 모자랍니다)"
@@ -1400,6 +1404,9 @@ def vitals_advice(rows) -> list[dict]:
             bad.append(f"INP {inp}ms (기준 {INP_GOOD_MS}ms)")
         if isinstance(cls, (int, float)) and cls > CLS_GOOD:
             bad.append(f"CLS {cls} (기준 {CLS_GOOD})")
+        ttfb = r.get("field_ttfb_ms") if field else None
+        if isinstance(ttfb, (int, float)) and ttfb > TTFB_GOOD_MS:
+            bad.append(f"TTFB {ttfb}ms (기준 {TTFB_GOOD_MS}ms)")
         if not bad:
             continue
         fix = {"LCP": "가장 큰 이미지·글자 블록이 늦게 뜹니다. 그 자원을 먼저 받게 하고"
@@ -1407,11 +1414,16 @@ def vitals_advice(rows) -> list[dict]:
                "INP": "누른 뒤 화면이 늦게 반응합니다. 메인 스레드를 오래 잡는 스크립트를"
                       " 쪼개거나 뒤로 미루세요.",
                "CLS": "그리는 도중 화면이 밀립니다. 이미지·광고·삽입물에 width/height 를"
-                      " 지정하고 나중에 끼어드는 요소의 자리를 미리 잡으세요."}
+                      " 지정하고 나중에 끼어드는 요소의 자리를 미리 잡으세요.",
+               "TTFB": "서버가 첫 바이트를 늦게 보냅니다. HTML 을 캐시하고(CDN·서버 캐시),"
+                       " 리다이렉트 단계와 서버 처리 시간을 줄이세요."}
         first = bad[0].split()[0]
+        # 같은 응답의 진단이 있으면 고정 문장 뒤에 이 페이지의 자원을 댄다(없으면 그대로)
+        hint = " / ".join(h for m in dict.fromkeys(b.split()[0] for b in bad)
+                          if (h := _diag_hint(r, m)))
         out.append({"tag": "속도", "level": "bad" if len(bad) > 1 else "warn",
                     "now": f"{dev} " + " · ".join(bad) + f", {src}",
-                    "fix": fix.get(first, "")})
+                    "fix": fix.get(first, "") + (f" 이 페이지에서는: {hint}." if hint else "")})
     return out
 
 
@@ -1458,6 +1470,208 @@ def image_weight_advice(rows) -> list[dict]:
            + (f" · 큰 것: {', '.join(urls)}" if urls else ""))
     return [{"tag": IMAGE_WEIGHT_TAG, "level": "warn", "now": now,
              "fix": " ".join(dict.fromkeys(L[x["id"]][1] for x in big))}]
+
+
+def vitals_diag(row) -> dict:
+    """속도 행 하나의 진단(page_vitals.diag_json) → {"lcp": {...}|None, "items": [...]}.
+
+    items 는 collect_vitals.parse_diag 가 줄일 시간이 큰 순으로 적은 것에 이름표·고칠 것
+    (collect_vitals.DIAG_AUDITS — 정본)을 붙인 것이다. 모르는 id 는 버린다(이름 없는 영어 id 가
+    화면에 새지 않게). 안 본 행(diag_json NULL)·못 읽는 값은 빈 결과다.
+    """
+    try:
+        d = json.loads((row or {}).get("diag_json") or "null") or {}
+    except (ValueError, TypeError):
+        d = {}
+    import collect_vitals          # 이름표의 정본 — 여기 사본을 두지 않는다
+    L = collect_vitals.DIAG_AUDITS
+    items = [{**x, "label": L[x["id"]][0], "fix": L[x["id"]][1]}
+             for x in d.get("items") or [] if isinstance(x, dict) and x.get("id") in L]
+    return {"lcp": d.get("lcp") if isinstance(d.get("lcp"), dict) else None, "items": items}
+
+
+# 지표마다 그 지표를 움직이는 진단 — 권고가 "그 자원을 먼저 받게 하고" 같은 고정 문장에서
+# 멈추지 않고 **이 페이지의 어느 자원**인지 말하게 한다. 왼쪽은 vitals_advice 의 지표 이름.
+_DIAG_OF = {"LCP": ("lcp-lazy-loaded", "render-blocking-resources", "unused-javascript",
+                    "unused-css-rules", "font-display"),
+            "INP": ("third-party-summary", "long-tasks", "dom-size", "unused-javascript"),
+            "CLS": ("unsized-images",)}
+_LCP_PHASE_LABEL = {"ttfb": "서버 응답(TTFB)", "load_delay": "자원을 늦게 발견(로드 지연)",
+                    "load": "자원 받는 시간", "render_delay": "받은 뒤 그리기 지연"}
+
+
+def _res_name(u: str) -> str:
+    """진단 줄의 자원 이름 — 주소면 파일 이름만(전체 주소는 diag_json 에 남는다)."""
+    u = str(u or "")
+    if not u.startswith(("http://", "https://")):
+        return u if len(u) <= 80 else u[:79] + "…"
+    n = unquote(urlsplit(u).path.rstrip("/").rsplit("/", 1)[-1]) or urlsplit(u).netloc
+    return n if len(n) <= 60 else "…" + n[-59:]
+
+
+def _diag_hint(row, metric: str) -> str:
+    """그 지표에 걸린 이 페이지의 자원 한 줄('' = 진단이 없거나 걸린 것이 없다)."""
+    d = vitals_diag(row)
+    parts = []
+    lcp = d["lcp"] or {}
+    if metric == "LCP" and lcp.get("snippet"):
+        parts.append(f"LCP 요소는 {lcp['snippet']}")
+        ph = lcp.get("phases") or {}
+        if ph:
+            k = max(ph, key=lambda x: ph[x])
+            parts.append(f"가장 긴 구간은 {_LCP_PHASE_LABEL.get(k, k)} {_sec(ph[k])}")
+    for x in d["items"]:
+        if x["id"] not in _DIAG_OF.get(metric, ()) or not (x.get("fail") or x.get("ms")):
+            continue
+        names = ", ".join(dict.fromkeys(_res_name(n) for n in x.get("items") or []))
+        parts.append(x["label"] + (f"({names})" if names and x["id"] != "lcp-lazy-loaded" else "")
+                     + (f" 줄일 수 있는 시간 {x['ms']:,}ms" if x.get("ms") else ""))
+    return " · ".join(parts)
+
+
+# 지난 측정 대비 나빠짐 — 같은 주소·같은 기기·같은 범위(이 페이지 값 대 사이트 전체 값)끼리만
+# 견준다. 범위가 다른 두 값은 다른 것을 잰 것이라 비교가 아니다. 현장 p75 는 20% 이상,
+# 실험실 점수는 10점 이상 떨어졌을 때만 말한다(실험실은 한 번 잰 값이라 몇 점은 흔들린다).
+VITALS_REGRESS_P75 = 0.20
+VITALS_REGRESS_LAB = 10
+# (칸, 이름, '좋음' 경계 상수 이름) — 경계는 위 한 벌을 읽는다.
+_REGRESS_FIELDS = (("field_lcp_ms", "LCP", "LCP_GOOD_MS"), ("field_inp_ms", "INP", "INP_GOOD_MS"),
+                   ("field_cls", "CLS", "CLS_GOOD"), ("field_ttfb_ms", "TTFB", "TTFB_GOOD_MS"))
+
+
+def vitals_regression(prev, cur) -> dict | None:
+    """같은 범위의 앞 행·지금 행 → 나빠진 것 | None.
+
+    {"changes": [{metric, prev, cur, pct, over}], "lab": {prev, cur, drop}|None}. over 는 지금
+    값이 '좋음' 경계를 넘었나 — 20% 나빠졌어도 아직 기준 안이면 참고일 뿐이다. 범위
+    (origin_fallback)가 다르거나 어느 한쪽을 못 쟀으면 None(견줄 수 없다). 실험실 점수는
+    Lighthouse 판(lh_version)이 둘 다 적혀 있는데 서로 다르면 견주지 않는다 — 판이 바뀌면
+    채점이 바뀐다.
+    """
+    if not prev or not cur or prev.get("error") or cur.get("error"):
+        return None
+    if int(bool(prev.get("origin_fallback"))) != int(bool(cur.get("origin_fallback"))):
+        return None
+    changes = []
+    g = globals()
+    for col, name, good in _REGRESS_FIELDS:
+        a, b = prev.get(col), cur.get(col)
+        if not isinstance(a, (int, float)) or not isinstance(b, (int, float)) or a <= 0:
+            continue
+        pct = (b - a) / a
+        if pct >= VITALS_REGRESS_P75:
+            changes.append({"metric": name, "prev": a, "cur": b, "pct": round(pct * 100),
+                            "over": b > g[good]})
+    lab = None
+    a, b = prev.get("lab_score"), cur.get("lab_score")
+    va, vb = prev.get("lh_version"), cur.get("lh_version")
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)) \
+            and a - b >= VITALS_REGRESS_LAB and not (va and vb and va != vb):
+        lab = {"prev": a, "cur": b, "drop": a - b}
+    return {"changes": changes, "lab": lab} if changes or lab else None
+
+
+def vitals_regressions(conn: sqlite3.Connection, project_id: int) -> dict:
+    """최신 측정일의 행마다 그 앞 측정과 견준다 → {url: {strategy: {prev_date, changes, lab}}}.
+
+    앞 행은 같은 주소·기기의 **바로 앞 잰 날**(못 잰 행은 건너뛴다)이다. 나빠진 것이 없는
+    주소는 열쇠가 없다. 별도 기준선 저장소는 없다 — page_vitals 가 날짜별로 쌓인 것을 읽는다.
+    """
+    d = conn.execute("SELECT MAX(checked_date) FROM page_vitals WHERE project_id=?",
+                     (project_id,)).fetchone()[0]
+    out: dict = {}
+    if not d:
+        return out
+    for cur in conn.execute("SELECT * FROM page_vitals WHERE project_id=? AND checked_date=?"
+                            " AND error IS NULL", (project_id, d)).fetchall():
+        prev = conn.execute(
+            "SELECT * FROM page_vitals WHERE project_id=? AND url=? AND strategy=?"
+            " AND checked_date<? AND error IS NULL ORDER BY checked_date DESC LIMIT 1",
+            (project_id, cur["url"], cur["strategy"], d)).fetchone()
+        got = vitals_regression(dict(prev) if prev else None, dict(cur))
+        if got:
+            out.setdefault(cur["url"], {})[cur["strategy"]] = {"prev_date": prev["checked_date"],
+                                                               **got}
+    return out
+
+
+def crux_trend(conn: sqlite3.Connection, project_id: int) -> dict:
+    """CrUX History(crux_history) → {대상: {form_factor: {metric: [[period_end, p75], ...]}}}.
+
+    대상은 페이지 주소나 오리진(https://host), 점은 옛 주부터. 표본이 모자란 주(p75 NULL)는
+    점을 안 만든다 — 0 으로 그리면 '빨라졌다'로 읽힌다. 안 받은 사이트는 빈 dict.
+    """
+    out: dict = {}
+    for r in conn.execute(
+            "SELECT url, form_factor, metric, period_end, p75 FROM crux_history"
+            " WHERE project_id=? AND p75 IS NOT NULL ORDER BY url, form_factor, metric, period_end",
+            (project_id,)):
+        out.setdefault(r["url"], {}).setdefault(r["form_factor"], {}) \
+           .setdefault(r["metric"], []).append([r["period_end"], r["p75"]])
+    return out
+
+
+def crux_then_now(series, since: str | None = None) -> dict | None:
+    """추세 한 줄([[날짜, p75], ...]) → {"then": [날짜, 값], "now": [날짜, 값], "pct"} | None.
+
+    since 를 주면 '그때'는 그 날 이전의 마지막 점이다(고치기 전 값) — 없으면 첫 점. 점이 둘
+    미만이면 None. 현장 값으로 '그때·지금'을 말하는 자리(관찰 중·요청문)가 읽는다.
+    """
+    pts = [p for p in series or [] if p and p[1] is not None]
+    if len(pts) < 2:
+        return None
+    then = pts[0]
+    if since:
+        before = [p for p in pts if p[0] <= since]
+        then = before[-1] if before else pts[0]
+    now = pts[-1]
+    if then[0] == now[0]:
+        return None
+    return {"then": then, "now": now,
+            "pct": round((now[1] - then[1]) / then[1] * 100) if then[1] else None}
+
+
+# 월별 검색량(keywords.monthly_json) 읽기 — 계절성과 최근 추세. 판정에 쓰는 두 문턱:
+# 가장 큰 달이 12달 중앙값의 VOL_SEASON_RATIO 배 이상이면 '철을 타는 검색어'로 보고(그 달을
+# 말한다), 최근 3달 평균이 그 앞 3달 평균보다 VOL_TREND_PCT 이상 다르면 오름·내림으로 본다.
+# 달 수가 모자라면 말하지 않는다(계절성은 12달, 추세는 6달이 있어야 한다).
+VOL_SEASON_RATIO = 2.0
+VOL_TREND_PCT = 0.20
+
+
+def volume_trend(monthly) -> dict | None:
+    """[[YYYY-MM, 검색량], ...](옛 달부터) 또는 그 JSON → 추세 요약 | None(재료 없음).
+
+    {"months": n, "peak": [ym, v], "seasonal": bool|None, "recent": "up"|"down"|"flat"|None,
+     "recent_pct": int|None}. None 인 칸은 '달 수가 모자라 판정 안 함'이다.
+    """
+    if isinstance(monthly, str):
+        try:
+            monthly = json.loads(monthly)
+        except ValueError:
+            return None
+    pts = [(str(m), v) for m, v in (monthly or [])
+           if isinstance(v, (int, float))] if isinstance(monthly, list) else []
+    if not pts:
+        return None
+    pts.sort()
+    vals = [v for _, v in pts]
+    out = {"months": len(pts), "peak": list(max(pts, key=lambda p: p[1])),
+           "seasonal": None, "recent": None, "recent_pct": None}
+    if len(vals) >= 12:
+        last = sorted(vals[-12:])
+        med = (last[5] + last[6]) / 2
+        peak = max(pts[-12:], key=lambda p: p[1])
+        out["peak"] = list(peak)
+        out["seasonal"] = bool(med > 0 and peak[1] >= med * VOL_SEASON_RATIO)
+    if len(vals) >= 6:
+        a, b = sum(vals[-6:-3]) / 3, sum(vals[-3:]) / 3
+        if a > 0:
+            pct = (b - a) / a
+            out["recent_pct"] = round(pct * 100)
+            out["recent"] = "up" if pct >= VOL_TREND_PCT else "down" if pct <= -VOL_TREND_PCT \
+                else "flat"
+    return out
 
 
 # 목록의 정본은 skill_config 의 ai_bots 다 — 벤더가 봇을 새로 내는 일은 코드
@@ -3799,6 +4013,128 @@ def starved_pages(conn: sqlite3.Connection, project_id: int, *,
     return sorted(out, key=lambda x: (x["links_in"], -x["impressions"]))[:limit]
 
 
+# GA4 가 AI 답변 서비스에서 온 세션을 묶는 기본 채널(2026-05-13 추가). 판정 규칙은 "매체가
+# 정확히 ai-assistant" 이고 구글 AI 요약·AI 모드는 빠진다
+# (https://support.google.com/analytics/answer/9756891). 채널 이름보다 매체가 정본이라 조회는
+# GA4_AI_MEDIUM 으로 거른다 — 이름은 화면 표기용이다.
+GA4_AI_CHANNEL = "AI Assistant"
+GA4_AI_MEDIUM = "ai-assistant"
+GA4_ORGANIC_CHANNEL = "Organic Search"
+
+
+def _ga4_channel_rows(conn: sqlite3.Connection, project_id: int) -> tuple[str | None, dict]:
+    """가장 최근에 채널 조회가 성공한 날과 그날의 {channel: 행}. 안 쟀으면 (None, {})."""
+    import db          # 늦은 import(서로 부른다) — 표식 줄 이름의 정본
+    d = conn.execute("SELECT MAX(snapshot_date) FROM ga4_channels WHERE project_id=?"
+                     " AND channel=?", (project_id, db.GA4_TOTAL_CHANNEL)).fetchone()[0]
+    if not d:
+        return None, {}
+    return d, {r["channel"]: dict(r) for r in conn.execute(
+        "SELECT channel, sessions, active_users, key_events, period_days FROM ga4_channels"
+        " WHERE project_id=? AND snapshot_date=?", (project_id, d))}
+
+
+def ga4_property_state(conn: sqlite3.Connection, project_id: int) -> dict | None:
+    """GA4 속성이 지금 무엇을 말하나 — '속성에 행 0'과 '유기 트래픽 0'을 가른다.
+
+    None = 채널 조회를 한 번도 못 했다(GA4 미연결이거나 이 조회가 생기기 전 수집).
+    state: "empty"      속성 전체 세션이 0 — 태그가 안 붙었거나 다른 속성을 연결했다
+           "no_organic" 방문은 있는데 유기 검색 세션이 0 — 검색 유입이 없는 것이다
+           "ok"         유기 검색 세션이 있다
+    conv_unset 은 ga4_conversions_unset 과 같은 판정이다(전환 이벤트 미설정).
+    """
+    import db          # 늦은 import(서로 부른다) — 표식 줄 이름의 정본
+    d, rows = _ga4_channel_rows(conn, project_id)
+    if not d:
+        return None
+    total = rows[db.GA4_TOTAL_CHANNEL]
+    org = rows.get(GA4_ORGANIC_CHANNEL) or {}
+    s_all, s_org = total["sessions"] or 0, org.get("sessions") or 0
+    return {"date": d, "period_days": total["period_days"],
+            "state": "empty" if s_all <= 0 else "no_organic" if s_org <= 0 else "ok",
+            "sessions_all": s_all, "sessions_organic": s_org,
+            "active_users": total["active_users"] or 0,
+            "active_users_organic": org.get("active_users") or 0,
+            "key_events": total["key_events"] or 0,
+            "conv_unset": ga4_conversions_unset(conn, project_id)}
+
+
+def ga4_conversions_unset(conn: sqlite3.Connection, project_id: int) -> bool:
+    """속성 전체에 전환(key events)이 한 건도 없나 — '전환 이벤트 미설정'.
+
+    전환 이벤트를 안 심은 사이트에서는 **모든** 페이지의 key_events 가 0 이다. 그걸 페이지
+    탓으로 읽으면 '전환 없는 페이지' 표가 사이트 전체로 차고, 승수(value_mult)가 모든 기회를
+    똑같이 GA4_MULT_LO 로 깎는다 — 페이지끼리 가르는 신호가 아닌데 점수만 내려간다.
+    속성 전체 합(ga4_channels 의 '(total)')을 본다. 그 줄이 없는 옛 수집은 유기 스냅샷의
+    합으로 대신한다(유기 전환까지 전부 0 이면 가를 신호가 없기는 마찬가지다). 세션이
+    GA4_NOCONV_MIN_SESSIONS 에 못 미치면 False — 표본이 없어 말하지 않는다.
+    """
+    import db          # 늦은 import(서로 부른다) — 표식 줄 이름의 정본
+    d, rows = _ga4_channel_rows(conn, project_id)
+    snap = _latest(conn, _LATEST_GA4, (project_id,))
+    if d and (not snap or d >= snap):
+        t = rows[db.GA4_TOTAL_CHANNEL]
+        # key_events NULL = 그 출처가 전환을 모른다(analytics_alt) — '미설정'이 아니라 모름이다
+        return (t["sessions"] or 0) >= GA4_NOCONV_MIN_SESSIONS \
+            and t["key_events"] is not None and not t["key_events"]
+    if not snap:
+        return False
+    r = conn.execute("SELECT SUM(sessions) s, SUM(key_events) k FROM ga4_snapshots"
+                     " WHERE project_id=? AND snapshot_date=?", (project_id, snap)).fetchone()
+    # SUM 은 전부 NULL 이면 NULL 이다 — 전환을 모르는 출처를 '전환 이벤트 미설정'으로 말하지 않는다
+    return (r["s"] or 0) >= GA4_NOCONV_MIN_SESSIONS and r["k"] is not None and not r["k"]
+
+
+def ga4_channel_groups(conn: sqlite3.Connection, project_id: int) -> dict | None:
+    """기본 채널 그룹 분해 — {"date", "rows": [{channel, sessions, active_users, key_events,
+    share}], "total": {...}}. 세션 많은 순, share 는 전체 세션 대비 %. 안 쟀으면 None."""
+    import db          # 늦은 import(서로 부른다) — 표식 줄 이름의 정본
+    d, rows = _ga4_channel_rows(conn, project_id)
+    if not d:
+        return None
+    total = rows.pop(db.GA4_TOTAL_CHANNEL)
+    rows.pop(db.GA4_AI_MEASURED, None)       # 우리 표식 줄 — GA4 채널이 아니다
+    s_all = total["sessions"] or 0
+    out = [{"channel": ch, "sessions": r["sessions"] or 0, "active_users": r["active_users"] or 0,
+            "key_events": r["key_events"] or 0,
+            "share": round((r["sessions"] or 0) / s_all * 100, 1) if s_all else None}
+           for ch, r in rows.items()]
+    out.sort(key=lambda x: (-x["sessions"], x["channel"]))
+    return {"date": d, "period_days": total["period_days"], "rows": out,
+            "total": {"sessions": s_all, "active_users": total["active_users"] or 0,
+                      "key_events": total["key_events"] or 0}}
+
+
+def ga4_daily(conn: sqlite3.Connection, project_id: int, *, days: int = 90) -> list[dict]:
+    """날짜별 유기 검색 세션(ga4_daily) — 최근 days 일, 옛 날부터. 안 쟀으면 빈 목록."""
+    rows = conn.execute(
+        "SELECT day, sessions, active_users, key_events FROM ga4_daily WHERE project_id=?"
+        " ORDER BY day DESC LIMIT ?", (project_id, days)).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
+def ga4_ai_channel_check(conn: sqlite3.Connection, project_id: int) -> dict | None:
+    """GA4 의 'AI Assistant' 기본 채널과 우리 AI 출처 목록(skill_config ai_referrers)의 대조.
+
+    {"date", "channel", "channel_sessions", "listed_sessions", "unlisted": [{source, sessions}]}.
+    unlisted 는 GA4 는 AI 로 분류하는데 우리 목록에는 없는 출처다 — 그만큼 우리 'AI 유입'
+    숫자가 작게 나온다(목록에 넣을 후보). None = 이 대조를 안 쟀다.
+    """
+    import db          # 늦은 import(서로 부른다) — 표식 줄 이름의 정본
+    d = conn.execute("SELECT MAX(snapshot_date) FROM ga4_channels WHERE project_id=?"
+                     " AND channel=?", (project_id, db.GA4_AI_MEASURED)).fetchone()[0]
+    if not d:
+        return None
+    rows = [dict(r) for r in conn.execute(
+        "SELECT source, sessions, listed FROM ga4_ai_channel WHERE project_id=? AND snapshot_date=?"
+        " ORDER BY sessions DESC, source", (project_id, d))]
+    return {"date": d, "channel": GA4_AI_CHANNEL,
+            "channel_sessions": sum(r["sessions"] or 0 for r in rows),
+            "listed_sessions": sum(r["sessions"] or 0 for r in rows if r["listed"]),
+            "unlisted": [{"source": r["source"], "sessions": r["sessions"] or 0}
+                         for r in rows if not r["listed"]]}
+
+
 def zero_conversion_pages(conn: sqlite3.Connection, project_id: int, *,
                           limit: int = 20) -> list[dict]:
     """클릭은 GA4_NOCONV_MIN_CLICKS 이상 버는데 GA4 key_events 가 0인 페이지.
@@ -3811,6 +4147,8 @@ def zero_conversion_pages(conn: sqlite3.Connection, project_id: int, *,
     ga4_date = _latest(conn, _LATEST_GA4, (project_id,))
     if not (cur and ga4_date):
         return []
+    if ga4_conversions_unset(conn, project_id):
+        return []        # 전환 이벤트 미설정 — 0 은 페이지의 사실이 아니다(화면이 그렇게 말한다)
     ga4 = _ga4_agg(conn, project_id, ga4_date)
     out = []
     for page, r in _page_agg(conn, project_id, cur, period).items():
@@ -4005,6 +4343,127 @@ def _index_bucket(r: sqlite3.Row) -> tuple[str, str]:
                                       f"중복 페이지를 정리하거나 canonical 을 맞추세요")
     state = r["coverage_state"] or r["indexing_state"] or r["verdict"] or "원인 미상"
     return "not_indexed", f"아직 색인되지 않았습니다({state}). 내부 링크와 사이트맵으로 크롤을 유도하세요"
+
+
+def rich_results_verdict(rich_json) -> dict | None:
+    """URL 검사의 richResultsResult(gsc_index_status.rich_results_json) → 구글 판정 요약.
+
+    {"verdict": PASS|PARTIAL|FAIL|NEUTRAL|…, "types": [리치 결과 유형], "errors": n,
+     "warnings": n, "issues": [{type, name, msg, severity}]} — 오류 먼저. 응답 꼴은
+    https://developers.google.com/webmaster-tools/v1/urlInspection.index/UrlInspectionResult
+    (detectedItems[].richResultType · items[].name · issues[].issueMessage/severity).
+    None = 구글이 리치 결과 항목을 안 줬다(이 주소에서 감지한 구조화 데이터가 없거나 옛 행) —
+    '문제 없음'이 아니다.
+    """
+    try:
+        rich = json.loads(rich_json) if isinstance(rich_json, str) else rich_json
+    except ValueError:
+        return None
+    if not isinstance(rich, dict) or not rich:
+        return None
+    types, issues = [], []
+    for det in rich.get("detectedItems") or []:
+        t = str((det or {}).get("richResultType") or "").strip()
+        if t and t not in types:
+            types.append(t)
+        for it in (det or {}).get("items") or []:
+            for iss in (it or {}).get("issues") or []:
+                sev = str((iss or {}).get("severity") or "").upper()
+                issues.append({"type": t, "name": str(it.get("name") or ""),
+                               "msg": str(iss.get("issueMessage") or ""), "severity": sev})
+    issues.sort(key=lambda x: (x["severity"] != "ERROR", x["type"], x["msg"]))
+    return {"verdict": str(rich.get("verdict") or "").upper() or None, "types": types,
+            "errors": sum(1 for x in issues if x["severity"] == "ERROR"),
+            "warnings": sum(1 for x in issues if x["severity"] == "WARNING"), "issues": issues}
+
+
+GOOGLE_VERDICT_TAG = "구글 판정"
+
+
+def rich_results_line(v: dict | None) -> str:
+    """구글 판정 요약 → 한 줄('' = 구글이 안 줬다). 화면·요청문이 같은 줄을 쓴다."""
+    if not v:
+        return ""
+    return (f"리치 결과 {v['verdict'] or '판정 없음'}"
+            + (f" · 유형 {', '.join(v['types'])}" if v["types"] else "")
+            + f" · 오류 {v['errors']} · 경고 {v['warnings']}")
+
+
+def google_verdict_advice(ix_row) -> list[dict]:
+    """색인 검사 행 → [구글 판정] 진단 한 줄. 구글이 구조화 데이터에 오류·경고를 낸 주소만 선다.
+
+    우리 규칙(SCHEMA_RULES)이 아니라 **구글이 직접 낸 판정**이다 — 둘이 엇갈리면 이쪽이 실제
+    리치 결과를 정한다. 오류는 그 리치 결과가 안 나오는 것이고 경고는 나오되 덜 나오는 것이다.
+    """
+    v = rich_results_verdict((ix_row or {}).get("rich_results_json"))
+    if not v or not v["issues"]:
+        return []
+    top = v["issues"][:3]
+    said = " / ".join(f"{x['type'] or '유형 미상'}: {x['msg']}"
+                      + ("(오류)" if x["severity"] == "ERROR" else "(경고)") for x in top)
+    more = len(v["issues"]) - len(top)
+    return [{"tag": GOOGLE_VERDICT_TAG, "level": "bad" if v["errors"] else "warn",
+             "now": rich_results_line(v) + f" — {said}" + (f" 외 {more}건" if more > 0 else ""),
+             "fix": "구글이 짚은 속성을 그 유형의 구조화 데이터에 채우세요. 오류가 남아 있으면 "
+                    "그 리치 결과는 나오지 않습니다. 고친 뒤 URL 검사로 다시 확인합니다."}]
+
+
+def index_evidence(conn: sqlite3.Connection, project_id: int) -> dict:
+    """최신 색인 점검의 주소마다 구글이 같이 준 근거 → {url: {...}}.
+
+    referring: 구글이 이 주소를 알게 된 페이지(최대 5개)와 referring_n(전체 수),
+    sitemaps: 이 주소가 실린 사이트맵, crawled_as: 읽은 크롤러(MOBILE|DESKTOP),
+    last_crawled, rich: rich_results_verdict, found: 발견 경로 판정 —
+      "none"    사이트맵에도 없고 가리키는 페이지도 구글이 모른다(다시 찾아올 길이 없다)
+      "sitemap" 사이트맵으로만 안다(가리키는 페이지 없음)
+      "links"   가리키는 페이지로 안다
+      None      이 칸 전에 검사한 행(안 받았다)
+    """
+    cur = _latest(conn, _LATEST_IX, (project_id,))
+    out: dict = {}
+    if not cur:
+        return out
+    for r in conn.execute(
+            "SELECT url, referring_urls_json, crawled_as, sitemaps_json, last_crawled,"
+            " rich_results_json FROM gsc_index_status WHERE project_id=? AND checked_date=?",
+            (project_id, cur)):
+        known = r["referring_urls_json"] is not None or r["sitemaps_json"] is not None
+        ref, sm = _as_list(r["referring_urls_json"]), _as_list(r["sitemaps_json"])
+        out[r["url"]] = {
+            "referring": ref[:5], "referring_n": len(ref), "sitemaps": sm[:5],
+            "crawled_as": r["crawled_as"], "last_crawled": r["last_crawled"],
+            "rich": rich_results_verdict(r["rich_results_json"]),
+            "found": None if not known else "links" if ref else "sitemap" if sm else "none"}
+    return out
+
+
+def gsc_sitemaps(conn: sqlite3.Connection, project_id: int) -> dict | None:
+    """서치콘솔에 제출된 사이트맵 — 최신 회차와 그 앞 회차 대비.
+
+    {"date", "prev_date", "rows": [{path, type, is_index, is_pending, last_submitted,
+     last_downloaded, errors, warnings, submitted, d_errors, d_warnings, d_submitted}]}.
+    d_* 는 앞 회차 같은 사이트맵 대비 증감(앞 회차에 없던 것은 None). 오류 많은 순.
+    None = 한 번도 안 받았다. rows 가 비면 '받았고 제출된 사이트맵이 없다' — 그날은 path 가
+    빈 표식 줄 하나만 있다(collect_index 가 남긴다. 없으면 '안 받음'과 못 가른다).
+    """
+    dates = [r[0] for r in conn.execute(
+        "SELECT DISTINCT checked_date FROM gsc_sitemaps WHERE project_id=?"
+        " ORDER BY checked_date DESC LIMIT 2", (project_id,))]
+    if not dates:
+        return None
+    cols = "path, type, is_index, is_pending, last_submitted, last_downloaded, errors, warnings, submitted"
+    get = lambda d: {r["path"]: dict(r) for r in conn.execute(
+        f"SELECT {cols} FROM gsc_sitemaps WHERE project_id=? AND checked_date=? AND path<>''",
+        (project_id, d))}
+    now, prev = get(dates[0]), (get(dates[1]) if len(dates) > 1 else {})
+    rows = []
+    for path, r in now.items():
+        p = prev.get(path)
+        for k in ("errors", "warnings", "submitted"):
+            r["d_" + k] = (r[k] - p[k]) if p and r[k] is not None and p[k] is not None else None
+        rows.append(r)
+    rows.sort(key=lambda x: (-(x["errors"] or 0), -(x["warnings"] or 0), x["path"]))
+    return {"date": dates[0], "prev_date": dates[1] if len(dates) > 1 else None, "rows": rows}
 
 
 def index_issues(conn: sqlite3.Connection, project_id: int) -> list[dict]:
@@ -5963,6 +6422,10 @@ def value_mult(metrics: dict) -> float:
     sessions, key_events = metrics.get("ga4_sessions"), metrics.get("ga4_key_events")
     if sessions is None or key_events is None:
         return 1.0
+    if metrics.get("ga4_conv_unset"):
+        # 속성 전체에 전환이 0(전환 이벤트 미설정) — 이 페이지의 0 은 신호가 아니다.
+        # 깎지 않는다(ga4_conversions_unset).
+        return 1.0
     clicks = metrics.get("ga4_clicks")
     if clicks is None or clicks < GA4_NOCONV_MIN_CLICKS or sessions < GA4_NOCONV_MIN_SESSIONS:
         return 1.0
@@ -6070,8 +6533,13 @@ def _ga4_metrics(ctx: dict, *, query: str | None = None, page: str | None = None
     if not g:
         return {}
     pg = (ctx.get("page_agg") or {}).get(page)
+    # 전환 이벤트 미설정 여부는 사이트의 사실이라 ctx 가 한 번만 센다
+    if "_ga4_conv_unset" not in ctx:
+        ctx["_ga4_conv_unset"] = bool(ctx.get("conn") is not None and ctx.get("pid") is not None
+                                      and ga4_conversions_unset(ctx["conn"], ctx["pid"]))
     return {"ga4_clicks": pg["clk"] if pg else None,
-            "ga4_sessions": g["sessions"], "ga4_key_events": g["key_events"]}
+            "ga4_sessions": g["sessions"], "ga4_key_events": g["key_events"],
+            **({"ga4_conv_unset": True} if ctx["_ga4_conv_unset"] else {})}
 
 
 def _coverage_rows(ctx: dict) -> list[dict]:

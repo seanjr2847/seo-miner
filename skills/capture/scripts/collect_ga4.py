@@ -121,6 +121,31 @@ def scoped(f, scope):
     return {"andGroup": {"expressions": [f, pf]}} if f else pf
 
 
+# 날짜별 유기 세션 — date 차원(값은 YYYYMMDD). 28일 합계 한 줄로는 "어느 날 꺾였나"를 못 말한다.
+DAILY_METRICS = ("sessions", "activeUsers", "keyEvents")
+# 채널 그룹 — 채널 필터 없이 sessionDefaultChannelGroup 으로 가른다. metricAggregations=TOTAL 로
+# 속성 전체 합(totals 줄)을 같이 받는다: 그 합이 '속성에 행 0'(태그 미설치·다른 속성)과
+# '유기 트래픽 0'을 가르고, key events 합 0 이 '전환 이벤트 미설정'을 가른다
+# (scoring.ga4_property_state · ga4_conversions_unset). 지표 이름은
+# https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema
+# (activeUsers = "The number of distinct users who visited your site or app").
+CHANNEL_METRICS = ("sessions", "activeUsers", "keyEvents")
+CHANNEL_DIM = "sessionDefaultChannelGroup"
+
+
+def _day(value: str) -> str:
+    """GA4 date 차원(YYYYMMDD) → YYYY-MM-DD."""
+    v = str(value or "")
+    return f"{v[:4]}-{v[4:6]}-{v[6:8]}" if len(v) == 8 and v.isdigit() else v
+
+
+def _ai_channel_filter() -> dict:
+    """GA4 가 'AI Assistant' 채널로 분류한 세션 — 판정 규칙이 "매체가 정확히 ai-assistant" 라
+    채널 이름이 아니라 매체로 거른다(scoring.GA4_AI_MEDIUM 주석의 출처)."""
+    return {"filter": {"fieldName": "sessionMedium",
+                       "stringFilter": {"matchType": "EXACT", "value": scoring.GA4_AI_MEDIUM}}}
+
+
 # AI 유입 부가 조회 — sessionSource(세션을 시작시킨 출처, 보통 참조 호스트)×landingPage.
 # 두 지표 다 합산 가능한 카운트류라 _merge_landing 의 n_additive 는 전부다.
 AI_REFERRAL_METRICS = ("sessions", "keyEvents")
@@ -331,7 +356,8 @@ def collect(project: str, *,
         n_bd = len(BREAKDOWN_DIMS)
         print(f"[ga4] properties/{prop_id}  window {start} ~ {end} (period={days}d)")
         print(f"[ga4] API 호출 계획: 유기 스냅샷 1회 + 전체 세션 1회 + "
-              f"분해 {n_bd}회({', '.join(BREAKDOWN_DIMS)}) + AI 유입 1회 = 최대 {3 + n_bd}회")
+              f"분해 {n_bd}회({', '.join(BREAKDOWN_DIMS)}) + AI 유입 1회 + 날짜별 1회 + "
+              f"채널 그룹 1회 + AI 채널 출처 1회 = 최대 {6 + n_bd}회")
         if st.dry_run:
             return st.noop(rows=0)
 
@@ -434,8 +460,68 @@ def collect(project: str, *,
                 print(f"[주의] AI 유입이 {AI_REFERRAL_LIMIT:,}행에서 잘렸습니다 — "
                       "세션 상위만 담겼습니다.")
 
+        # 아래 셋도 부수 호출이다 — 하나가 실패해도 본체와 나머지는 산다. 실패한 조회는 적재를
+        # 안 한다(빈 값으로 덮으면 "쟀고 0"이라고 거짓말한다).
+        def _optional_resp(label: str, body: dict):
+            nonlocal calls
+            try:
+                resp_ = _run_report(data_svc, prop_id, body)
+            except HttpError as e:
+                status = getattr(getattr(e, "resp", None), "status", None)
+                st.fail(f"수집을 건너뜁니다 ({e}). 본체 스냅샷은 그대로 저장됩니다.",
+                        item=label, kind=type(e).__name__,
+                        status=status if isinstance(status, int) else None)
+                return None
+            calls += 1
+            return resp_
+
+        def _vals(row, n):
+            return [float(row["metricValues"][i]["value"]) for i in range(n)]
+
+        daily_raw = _optional("날짜별 유기 세션", {
+            "dateRanges": [date_range], "dimensions": [{"name": "date"}],
+            "metrics": [{"name": m} for m in DAILY_METRICS],
+            "dimensionFilter": scoped(ORGANIC_FILTER, scope), "limit": 1000})
+        ch_resp = _optional_resp("채널 그룹", {
+            "dateRanges": [date_range], "dimensions": [{"name": CHANNEL_DIM}],
+            "metrics": [{"name": m} for m in CHANNEL_METRICS],
+            "metricAggregations": ["TOTAL"], "limit": 1000,
+            **({"dimensionFilter": scoped(None, scope)} if scope else {})})
+        ch_rows = ch_total = None
+        if ch_resp is not None:
+            ch_rows = [(r_["dimensionValues"][0]["value"], *_vals(r_, len(CHANNEL_METRICS)))
+                       for r_ in ch_resp.get("rows", []) or []]
+            tot = (ch_resp.get("totals") or [None])[0]
+            # totals 줄이 없으면(행 0 이면 GA4 가 안 준다) 0 이다 — 채널 행을 더해 지어내지 않는다:
+            # 고유 방문자는 채널끼리 더하면 같은 사람을 여러 번 센다.
+            ch_total = tuple(_vals(tot, len(CHANNEL_METRICS))) if tot else (
+                sum(x[1] for x in ch_rows), 0, sum(x[3] for x in ch_rows))
+            print(f"[ga4] fetched {len(ch_rows)} channel groups (전체 세션 {int(ch_total[0]):,})")
+            if not ch_total[0]:
+                print("[주의] 이 속성에 이 기간 세션이 한 건도 없습니다 — 태그가 붙었는지, "
+                      "다른 속성을 연결한 건 아닌지 확인하세요(유기 트래픽 0 과 다른 일입니다).")
+            elif not raw_rows:
+                print("[ga4] 방문은 있는데 유기 검색 세션이 0 입니다(속성은 살아 있습니다).")
+        aich_raw = _optional("AI 채널 출처", {
+            "dateRanges": [date_range], "dimensions": [{"name": "sessionSource"}],
+            "metrics": [{"name": "sessions"}], "limit": 1000,
+            "dimensionFilter": scoped(_ai_channel_filter(), scope)})
+
         snap = str(date.today())
         with st.record("ga4") as r:
+            if daily_raw is not None:
+                db.write_ga4_daily(conn, p["id"], (
+                    (_day(x["dimensionValues"][0]["value"]), *_vals(x, len(DAILY_METRICS)))
+                    for x in daily_raw))
+            if ch_rows is not None:
+                db.write_ga4_channels(conn, p["id"], snap, days, ch_rows, ch_total)
+            if aich_raw is not None:
+                merged_src: dict[str, float] = {}
+                for x in aich_raw:
+                    s_ = (x["dimensionValues"][0]["value"] or "").strip().lower()
+                    merged_src[s_] = merged_src.get(s_, 0.0) + float(x["metricValues"][0]["value"])
+                db.write_ga4_ai_channel(conn, p["id"], snap, days, (
+                    (s_, n_, ai_host(s_, hosts) is not None) for s_, n_ in merged_src.items()))
             db.write_ga4_snapshot(conn, p["id"], snap, days,
                                   ((lp, vals[0], sessions_all.get(lp, vals[0]), vals[1], vals[2],
                                     vals[3], vals[4], vals[5])
@@ -455,6 +541,10 @@ def collect(project: str, *,
                        + "".join(f"{d}=skip " for d in BREAKDOWN_DIMS
                                  if d not in dict(bd_results))
                        + f"ai_ref={'skip' if ai_merged is None else len(ai_merged)} "
+                       + f"daily={'skip' if daily_raw is None else len(daily_raw)} "
+                       + f"channels={'skip' if ch_rows is None else len(ch_rows)} "
+                       + (f"property_sessions={int(ch_total[0])} " if ch_total is not None else "")
+                       + f"ai_channel={'skip' if aich_raw is None else len(aich_raw)} "
                        + f"calls={calls} window={start}~{end} {st.err_note}")
 
         print(f"saved ga4 snapshot {snap} ({len(main)} landing pages)")
@@ -567,11 +657,33 @@ def _selfcheck() -> None:
 
     # 5. 정상 경로 — 유기 필터가 실제로 실리는지, 유기/전체가 따로 담기는지, 분해 세 축.
     class _Req:
-        def __init__(self, rows):
-            self.rows = rows
+        def __init__(self, rows, totals=None):
+            self.rows, self.totals = rows, totals
 
         def execute(self):
-            return {"rows": self.rows}
+            return {"rows": self.rows, **({"totals": self.totals} if self.totals else {})}
+
+    DAILY_ROWS = [
+        {"dimensionValues": [{"value": "20261101"}],
+         "metricValues": [{"value": "12"}, {"value": "10"}, {"value": "1"}]},
+        {"dimensionValues": [{"value": "20261102"}],
+         "metricValues": [{"value": "18"}, {"value": "15"}, {"value": "1"}]},
+    ]
+    CHANNEL_ROWS = [
+        {"dimensionValues": [{"value": "Organic Search"}],
+         "metricValues": [{"value": "30"}, {"value": "25"}, {"value": "2"}]},
+        {"dimensionValues": [{"value": "Direct"}],
+         "metricValues": [{"value": "90"}, {"value": "70"}, {"value": "5"}]},
+        {"dimensionValues": [{"value": "AI Assistant"}],
+         "metricValues": [{"value": "10"}, {"value": "9"}, {"value": "0"}]},
+    ]
+    CHANNEL_TOTALS = [{"dimensionValues": [{"value": "RESERVED_TOTAL"}],
+                       "metricValues": [{"value": "130"}, {"value": "98"}, {"value": "7"}]}]
+    # GA4 가 AI 로 분류한 출처 — 우리 목록에 있는 것(chatgpt.com)과 없는 것(newai.example)
+    AI_CH_ROWS = [
+        {"dimensionValues": [{"value": "chatgpt.com"}], "metricValues": [{"value": "7"}]},
+        {"dimensionValues": [{"value": "NewAI.example"}], "metricValues": [{"value": "3"}]},
+    ]
 
     ORGANIC_ROWS = [
         {"dimensionValues": [{"value": "/a"}],
@@ -616,11 +728,26 @@ def _selfcheck() -> None:
         def __init__(self, ai_rows=None):
             self.seen: list[dict] = []
             self.ai_rows = AI_ROWS if ai_rows is None else ai_rows
+            self.daily_rows, self.channel_rows = DAILY_ROWS, CHANNEL_ROWS
+            self.channel_totals = CHANNEL_TOTALS
 
         def runReport(self, property, body):
             assert property == "properties/999", property
             self.seen.append(body)
             dims = [d["name"] for d in body["dimensions"]]
+            if dims == ["date"]:                               # 날짜별 — 유기 필터
+                assert body["dimensionFilter"] == ORGANIC_FILTER, body
+                assert [m["name"] for m in body["metrics"]] == list(DAILY_METRICS), body
+                return _Req(self.daily_rows)
+            if dims == [CHANNEL_DIM]:                          # 채널 그룹 — 필터 없음, 합계 줄 요청
+                assert "dimensionFilter" not in body, "채널 그룹 조회에 필터가 섞였다"
+                assert body["metricAggregations"] == ["TOTAL"], body
+                return _Req(self.channel_rows, self.channel_totals)
+            if dims == ["sessionSource"]:                      # AI 채널 출처 — 매체로 거른다
+                f_ = body["dimensionFilter"]["filter"]
+                assert (f_["fieldName"], f_["stringFilter"]["value"]) == (
+                    "sessionMedium", scoring.GA4_AI_MEDIUM), body
+                return _Req(AI_CH_ROWS)
             if dims == ["sessionSource", "landingPage"]:       # AI 유입 — 채널 필터가 없어야 한다
                 assert body["dimensionFilter"] == _ai_filter(ai_referrers()), body
                 assert "Organic Search" not in str(body), "AI 유입 조회에 유기 필터가 섞였다"
@@ -648,7 +775,8 @@ def _selfcheck() -> None:
     svc = _Svc()
     res = collect("g4", days=14, conn=conn, data_svc=svc)
     assert (res.ok, res.skipped, res.rows) == (True, False, 2), res
-    assert len(svc.props.seen) == 6, "유기 1 + 전체 1 + 분해 3 + AI 유입 1 = 6회가 아니다"
+    assert len(svc.props.seen) == 9, \
+        "유기 1 + 전체 1 + 분해 3 + AI 유입 1 + 날짜별 1 + 채널 1 + AI 채널 출처 1 = 9회가 아니다"
 
     pid = conn.execute("SELECT id FROM projects WHERE name='g4'").fetchone()["id"]
     saved = {r["landing_page"]: dict(r) for r in
@@ -682,7 +810,30 @@ def _selfcheck() -> None:
 
     run_row = conn.execute("SELECT api_calls, notes FROM runs WHERE project_id=? AND kind='ga4'",
                            (pid,)).fetchone()
-    assert run_row["api_calls"] == 6, dict(run_row)
+    assert run_row["api_calls"] == 9, dict(run_row)
+    for part in ("daily=2", "channels=3", "property_sessions=130", "ai_channel=2"):
+        assert part in run_row["notes"], run_row["notes"]
+
+    # 5b. 날짜별·채널·AI 채널 — 날짜는 YYYY-MM-DD, 합계 줄은 GA4 의 totals 그대로(채널을 더한
+    # 값이 아니다: 고유 방문자 98 ≠ 25+70+9), AI 채널 출처는 우리 목록 포함 여부가 갈린다.
+    assert _day("20261101") == "2026-11-01" and _day("x") == "x"
+    daily = [tuple(r) for r in conn.execute(
+        "SELECT day, sessions, active_users, key_events FROM ga4_daily WHERE project_id=?"
+        " ORDER BY day", (pid,))]
+    assert daily == [("2026-11-01", 12, 10, 1.0), ("2026-11-02", 18, 15, 1.0)], daily
+    ch = {r["channel"]: (r["sessions"], r["active_users"], r["key_events"]) for r in conn.execute(
+        "SELECT * FROM ga4_channels WHERE project_id=?", (pid,))}
+    assert ch[db.GA4_TOTAL_CHANNEL] == (130, 98, 7.0), ch
+    assert ch["Organic Search"] == (30, 25, 2.0) and ch[db.GA4_AI_MEASURED][0] == 10, ch
+    aich = {r["source"]: (r["sessions"], r["listed"]) for r in conn.execute(
+        "SELECT * FROM ga4_ai_channel WHERE project_id=?", (pid,))}
+    assert aich == {"chatgpt.com": (7, 1), "newai.example": (3, 0)}, aich
+    st_ = scoring.ga4_property_state(conn, pid)
+    assert (st_["state"], st_["sessions_all"], st_["active_users"], st_["conv_unset"]) == (
+        "ok", 130, 98, False), st_
+    chk = scoring.ga4_ai_channel_check(conn, pid)
+    assert (chk["channel_sessions"], chk["listed_sessions"]) == (10, 7), chk
+    assert chk["unlisted"] == [{"source": "newai.example", "sessions": 3}], chk
     assert "device=" in run_row["notes"] and "country=" in run_row["notes"] \
         and "newvsreturning=" in run_row["notes"], run_row["notes"]
     assert "ai_ref=2" in run_row["notes"], run_row["notes"]
@@ -754,6 +905,69 @@ def _selfcheck() -> None:
                         (pid6,)).fetchone()["c"] == 1, "0 을 잰 날이 '안 잰 날'과 뭉쳤다"
     assert conn.execute("SELECT COUNT(*) c FROM ga4_ai_measured WHERE project_id=?",
                         (pid5,)).fetchone()["c"] == 1, "g5 는 AI 조회가 성공했는데 표시가 없다"
+
+    # 7c-2. 채널 조회가 실패한 날은 적재하지 않는다 — 빈 값으로 덮으면 '속성에 행 0'이라고 거짓말한다.
+    class _ChDownProps(_Props):
+        def runReport(self, property, body):
+            if [d["name"] for d in body["dimensions"]] == [CHANNEL_DIM]:
+                raise HttpError(type("R", (), {"status": 500, "reason": "x"})(), b"boom")
+            return super().runReport(property, body)
+
+    class _ChDownSvc(_Svc):
+        def __init__(self):
+            self.props = _ChDownProps()
+
+    conn.execute("INSERT INTO projects(name, domain, locale, ga4_property) "
+                 "VALUES('g9', 'g9.com', 'ko-KR', '999')")
+    conn.commit()
+    res9 = collect("g9", conn=conn, data_svc=_ChDownSvc())
+    pid9 = conn.execute("SELECT id FROM projects WHERE name='g9'").fetchone()["id"]
+    assert res9.ok and res9.rows == 2, res9
+    assert conn.execute("SELECT COUNT(*) c FROM ga4_channels WHERE project_id=? AND channel=?",
+                        (pid9, db.GA4_TOTAL_CHANNEL)).fetchone()["c"] == 0, "실패한 채널 조회를 적재했다"
+    assert scoring.ga4_property_state(conn, pid9) is None
+    notes9 = conn.execute("SELECT notes FROM runs WHERE project_id=? AND kind='ga4' "
+                          "ORDER BY id DESC LIMIT 1", (pid9,)).fetchone()["notes"]
+    assert "channels=skip" in notes9 and "daily=2" in notes9, notes9
+
+    # 7d. '속성에 행 0' 대 '유기 트래픽 0' — 유기 스냅샷은 둘 다 비지만 다른 일이다.
+    class _EmptyProps(_Props):
+        def __init__(self, channel_rows, totals):
+            super().__init__(ai_rows=[])
+            self.channel_rows, self.channel_totals, self.daily_rows = channel_rows, totals, []
+
+        def runReport(self, property, body):
+            dims = [d["name"] for d in body["dimensions"]]
+            if dims in (["date"], [CHANNEL_DIM]) or dims[0] == "sessionSource":
+                if dims == ["sessionSource"]:
+                    return _Req([])
+                return super().runReport(property, body)
+            return _Req([])          # 유기·전체·분해 — 행 없음
+
+    class _EmptySvc(_Svc):
+        def __init__(self, channel_rows, totals):
+            self.props = _EmptyProps(channel_rows, totals)
+
+    for name, rows_, totals_, want in (
+            ("g7", [], None, "empty"),
+            ("g8", [CHANNEL_ROWS[1]], [{"metricValues": [{"value": "90"}, {"value": "70"},
+                                                         {"value": "0"}]}], "no_organic")):
+        conn.execute("INSERT INTO projects(name, domain, locale, ga4_property) "
+                     "VALUES(?, ?, 'ko-KR', '999')", (name, name + ".com"))
+        conn.commit()
+        res_ = collect(name, conn=conn, data_svc=_EmptySvc(rows_, totals_))
+        assert res_.ok and res_.rows == 0, res_
+        pid_ = conn.execute("SELECT id FROM projects WHERE name=?", (name,)).fetchone()["id"]
+        got_ = scoring.ga4_property_state(conn, pid_)
+        assert got_ and got_["state"] == want, (name, got_)
+    # g8 은 세션 90 에 전환 0 — 전환 이벤트 미설정으로 본다. g7(세션 0)은 표본이 없어 말 안 함
+    assert scoring.ga4_conversions_unset(conn, pid_) is True
+    pid7 = conn.execute("SELECT id FROM projects WHERE name='g7'").fetchone()["id"]
+    assert scoring.ga4_conversions_unset(conn, pid7) is False
+    # 채널 조회가 실패한 날은 표식이 없다 — '안 쟀다'(None)이지 '속성이 비었다'가 아니다
+    assert scoring.ga4_property_state(conn, pid5) is not None
+    conn.execute("DELETE FROM ga4_channels WHERE project_id=?", (pid5,))
+    assert scoring.ga4_property_state(conn, pid5) is None
 
     # 8. dry-run 은 호출도 저장도 없다.
     conn.execute("DELETE FROM runs")

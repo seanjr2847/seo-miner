@@ -827,6 +827,9 @@ def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
         "daily": daily, "daily_stats": daily_stats,
         "device_gap": scoring.device_gap(conn, pid),
         "index_issues": scoring.index_issues(conn, pid),
+        # URL 검사가 같이 준 근거(발견 경로·크롤러·구글 판정)와 서치콘솔 사이트맵 목록
+        "index_evidence": scoring.index_evidence(conn, pid),
+        "gsc_sitemaps": scoring.gsc_sitemaps(conn, pid),
         "device_date": device_date, "index_date": index_date,
         "rules": {"page1": scoring.PAGE1, "striking_lo": scoring.STRIKING_LO,
                   "striking_hi": scoring.STRIKING_HI,
@@ -836,7 +839,8 @@ def _axis_gsc(conn, pid: int, cfg: dict, at: str | None) -> dict:
                   # 속도 기준 — 화면이 숫자를 적으면 판정과 두 벌이 된다
                   "lcp_good_ms": scoring.LCP_GOOD_MS,
                   "inp_good_ms": scoring.INP_GOOD_MS,
-                  "cls_good": scoring.CLS_GOOD},
+                  "cls_good": scoring.CLS_GOOD,
+                  "ttfb_good_ms": scoring.TTFB_GOOD_MS},
         # KPI 추이도 비교 짝과 같은 period_days만 — 28일치 사이에 90일치가 끼면
         # 그래프·Δ가 전부 거짓이 된다. SQL이 이미 period_days로 걸렀으므로 p 필드는 뺀다.
         "trend": [dict(r) for r in conn.execute(
@@ -1141,6 +1145,13 @@ def _axis_ga4(conn, pid: int, at: str | None) -> dict:
     ga4_funnel, ga4_channels = scoring.ga4_funnel(conn, pid, cur, period)
 
     out = {"ga4_date": ga4_date, "zero_conv_pages": zero_conv_pages, "ga4_intent": ga4_intent,
+           # 속성 상태('행 0' 대 '유기 0')·전환 이벤트 미설정·채널 그룹·날짜별·AI 채널 대조.
+           # 넷 다 None/빈 값이 '안 쟀다'다 — 화면은 그때 그 줄을 안 그린다.
+           "ga4_state": scoring.ga4_property_state(conn, pid),
+           "ga4_conv_unset": scoring.ga4_conversions_unset(conn, pid),
+           "ga4_channel_groups": scoring.ga4_channel_groups(conn, pid),
+           "ga4_daily": scoring.ga4_daily(conn, pid),
+           "ga4_ai_channel": scoring.ga4_ai_channel_check(conn, pid),
            **_ai_referrals(conn, pid)}
     if ga4_funnel:
         out.update({"ga4_funnel": ga4_funnel, "ga4_channels": ga4_channels,
@@ -1360,16 +1371,50 @@ def _axis_vitals(conn, pid: int) -> dict:
     # (collect_vitals.SEO_AUDITS)이 갖고 여기서 같이 보낸다. 화면이 사본을 들면 새 항목이
     # 영어 id 로 뜬다.
     labels = {k: list(v) for k, v in collect_vitals.SEO_AUDITS.items()}
+    # 진단·접근성 이름표도 만드는 쪽(collect_vitals)이 정본이다 — 같은 이유로 같이 보낸다.
+    extra = {"diag_audits": {k: list(v) for k, v in collect_vitals.DIAG_AUDITS.items()},
+             "cat_audits": dict(collect_vitals.CAT_AUDITS),
+             "cat_names": dict(collect_vitals.CATEGORIES),
+             "crux_form": dict(collect_vitals.CRUX_FORM)}
     d = conn.execute("SELECT MAX(checked_date) d FROM page_vitals WHERE project_id=?",
                      (pid,)).fetchone()["d"]
     if not d:
-        return {"vitals_date": None, "vitals": {}, "seo_audits": labels, "serp_titles": {}}
+        return {"vitals_date": None, "vitals": {}, "seo_audits": labels, "serp_titles": {},
+                "vitals_regress": {}, "crux_trend": {}, "vitals_shots": {}, **extra}
     out: dict[str, dict] = {}
     for r in q(conn, "SELECT * FROM page_vitals WHERE project_id=? AND checked_date=?",
                (pid, d)):
         out.setdefault(r["url"], {})[r["strategy"]] = r
     return {"vitals_date": d, "vitals": out, "seo_audits": labels,
-            "serp_titles": _own_serp_titles(conn, pid, out)}
+            "serp_titles": _own_serp_titles(conn, pid, out),
+            # 지난 측정 대비 나빠진 것·CrUX 주별 추세·'구글이 연 모습' — 판정은 scoring 이 한다
+            "vitals_regress": scoring.vitals_regressions(conn, pid),
+            "crux_trend": scoring.crux_trend(conn, pid),
+            "vitals_shots": _vital_shots(conn, pid, out), **extra}
+
+
+# 화면에 싣는 썸네일 합계 상한(글자) — 한 장이 수십 KB 라 잰 페이지가 많으면 페이로드가 붓는다.
+SHOTS_BUDGET = 600_000
+
+
+def _vital_shots(conn, pid: int, vitals: dict) -> dict:
+    """'구글이 연 모습' 썸네일 {url: {strategy: {date, data}}} — 이번에 잰 주소 것만,
+    SHOTS_BUDGET 안에서. 넘치는 주소는 통째로 뺀다(한 기기만 실으면 기기 비교가 안 된다)."""
+    out: dict = {}
+    used = 0
+    by: dict = {}
+    for r in conn.execute("SELECT url, strategy, checked_date, data FROM page_vital_shots"
+                          " WHERE project_id=?", (pid,)):
+        if r["url"] in vitals:
+            by.setdefault(r["url"], {})[r["strategy"]] = {"date": r["checked_date"],
+                                                         "data": r["data"]}
+    for url in sorted(by):
+        size = sum(len(x["data"]) for x in by[url].values())
+        if used + size > SHOTS_BUDGET:
+            continue
+        used += size
+        out[url] = by[url]
+    return out
 
 
 def _own_serp_titles(conn, pid: int, urls) -> dict:
@@ -2109,9 +2154,12 @@ def _cluster_keywords(conn, pid: int, opps: list[dict]) -> dict[str, list[dict]]
         if cl in out:
             continue
         out[cl] = q(conn,
-            """SELECT keyword, volume FROM keywords
+            """SELECT keyword, volume, monthly_json FROM keywords
                 WHERE project_id=? AND is_active=1 AND COALESCE(cluster,'(미분류)')=?
                 ORDER BY volume IS NULL, volume DESC, keyword LIMIT 30""", (pid, cl))
+        for r in out[cl]:
+            # 월별 검색량은 판정(계절성·최근 추세)만 싣는다 — 원자료 12칸을 키워드마다 실을 일은 없다
+            r["trend"] = scoring.volume_trend(r.pop("monthly_json", None))
     # 쓰기 전 카니벌 예방 — 이미 있는 우리 페이지와 검색결과가 겹치는 키워드에 reinforce 를 단다
     # (scoring.coverage 가 판정한다). 요청문이 "새 글 말고 그 페이지 보강"을 말한다.
     if out:
@@ -2154,6 +2202,10 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
         for pr in prows:
             q_of_url.setdefault(pr["page"], []).append((pr["impressions"] or 0, qq))
     page_audits = {}
+    ix_date = scoring._latest(conn, scoring._LATEST_IX, (pid,))
+    ix_by_url = {r["url"]: {"rich_results_json": r["rich_results_json"]} for r in conn.execute(
+        "SELECT url, rich_results_json FROM gsc_index_status WHERE project_id=? AND checked_date=?"
+        " AND rich_results_json IS NOT NULL", (pid, ix_date))} if ix_date else {}
     if audit_date:
         renders = render.latest(conn, pid)     # 헤드리스 렌더 줄(없으면 빈 dict — 호스팅)
         for a in (dict(r) for r in db.latest_page_audits(conn, pid)):
@@ -2167,6 +2219,8 @@ def _axis_query_pages(conn, pid: int, p, at: str | None, *, opps: list[dict],
                                               site_type=dict(p).get("type") or "")
             # 진단이 아닌 '알아 둘 것'(끝난 마크업·공유 카드·셀 수 있는 신뢰 신호) — 요청문이 사실로 싣는다
             a["info"] = scoring.page_info(a, site_type=dict(p).get("type") or "")
+            # 구글이 직접 낸 구조화 데이터 판정(URL 검사) — 오류·경고가 있는 주소만 한 줄
+            a["advice"] = a["advice"] + scoring.google_verdict_advice(ix_by_url.get(a["url"]))
             # 추출성은 AI 맥락에서만 뜻이 있다 — 일반 진단(advice)에 섞으면 모든 화면의
             # 진단표가 부푼다. 따로 싣고 [AI 인용] 화면만 진단표에 넘긴다. 챗봇 기준이다:
             # 그 화면은 챗봇 인용이고, 구글 AI 요약 기준 문구는 요청문이 따로 쓴다.

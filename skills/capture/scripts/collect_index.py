@@ -80,7 +80,72 @@ def to_row(url: str, result: dict) -> dict:
     row.update({col: idx.get(api) for api, col in FIELDS.items()})
     rich = result.get("richResultsResult")
     row["rich_results_json"] = json.dumps(rich, ensure_ascii=False) if rich else None
+    # 같이 오는데 버리던 것 — 구글이 이 주소를 어디서 알았나(referringUrls·sitemap)와 어느
+    # 크롤러로 읽었나(crawledAs: DESKTOP|MOBILE). 색인 결과가 온 행은 빈 목록도 '[]' 로 남긴다:
+    # "구글이 가리키는 페이지를 하나도 모른다"는 그 자체가 근거다(scoring.index_evidence).
+    if idx:
+        row["referring_urls_json"] = json.dumps(
+            [str(u) for u in idx.get("referringUrls") or []], ensure_ascii=False)
+        row["sitemaps_json"] = json.dumps(
+            [str(u) for u in idx.get("sitemap") or []], ensure_ascii=False)
+        crawled = str(idx.get("crawledAs") or "").upper()
+        row["crawled_as"] = crawled if crawled in CRAWLED_AS else None
     return row
+
+
+# crawledAs 의 값(https://developers.google.com/webmaster-tools/v1/urlInspection.index/UrlInspectionResult).
+# CRAWLING_USER_AGENT_UNSPECIFIED 는 '모름'이라 적지 않는다.
+CRAWLED_AS = ("DESKTOP", "MOBILE")
+
+
+def _int(v) -> int | None:
+    """구글 int64 는 JSON 문자열로 오기도 한다 — 숫자로. 못 읽으면 None(0 이 아니다)."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def sitemap_rows(resp: dict) -> list[dict]:
+    """sitemaps.list 응답 → gsc_sitemaps 행들. 필드는
+    https://developers.google.com/webmaster-tools/v1/sitemaps (WmxSitemap). contents[].indexed 는
+    "Deprecated; do not use" 라 안 읽는다. 제출된 사이트맵이 하나도 없으면 path 가 빈 표식 줄
+    하나를 돌려준다 — 그래야 '받았고 0'이 '안 받음'과 갈린다(scoring.gsc_sitemaps)."""
+    out = []
+    for s in (resp or {}).get("sitemap") or []:
+        if not (s or {}).get("path"):
+            continue
+        sub_ = [_int(c.get("submitted")) for c in s.get("contents") or []]
+        sub_ = [x for x in sub_ if x is not None]
+        out.append({"path": str(s["path"]), "type": s.get("type"),
+                    "is_index": int(bool(s.get("isSitemapsIndex"))),
+                    "is_pending": int(bool(s.get("isPending"))),
+                    "last_submitted": s.get("lastSubmitted"),
+                    "last_downloaded": s.get("lastDownloaded"),
+                    "errors": _int(s.get("errors")), "warnings": _int(s.get("warnings")),
+                    "submitted": sum(sub_) if sub_ else None})
+    return out or [{"path": ""}]
+
+
+def collect_sitemaps(conn, project_id: int, service, prop: str, checked: str) -> str:
+    """서치콘솔 사이트맵 목록을 회차마다 적재한다 → notes 조각. 1콜, 금전 비용 없음.
+
+    부수 조회다 — 실패해도 색인 검사 결과는 이미 저장됐고 단계는 안 죽는다. 실패한 날은
+    적재하지 않는다(빈 목록으로 덮으면 '제출된 사이트맵 없음'이라고 거짓말한다)."""
+    try:
+        resp = service.sitemaps().list(siteUrl=prop).execute()
+    except Exception as e:                       # 권한·한도·옛 클라이언트 — 어느 쪽이든 건너뛴다
+        status = getattr(getattr(e, "resp", None), "status", None)
+        why = f"HTTP_{status}" if status is not None else type(e).__name__
+        print(f"  ! 사이트맵 목록: {why} — 건너뜁니다(색인 검사 결과는 저장됐습니다)",
+              file=sys.stderr)
+        return f"sitemaps=skip:{why} "
+    rows = sitemap_rows(resp)
+    db.write_gsc_sitemaps(conn, project_id, checked, rows)
+    n = sum(1 for r in rows if r["path"])
+    bad = sum(1 for r in rows if (r.get("errors") or 0) > 0)
+    print(f"[index] 제출된 사이트맵 {n}개" + (f" · 오류 있는 것 {bad}개" if bad else ""))
+    return f"sitemaps={n} "
 
 
 def collect(project: str, *,
@@ -172,7 +237,11 @@ def collect(project: str, *,
 
             checked = str(date.today())
             db.write_index_status(conn, p["id"], checked, rows)
-            r.notes = (f"urls={len(rows)}/{len(urls)} checked={checked} {st.err_note}"
+            # 사이트맵 목록 — 검사가 권한·한도로 멈춘 날은 안 부른다(같은 속성의 같은 문이다)
+            sm_note = "" if stop else collect_sitemaps(conn, p["id"], service, prop, checked)
+            if sm_note and "skip" not in sm_note:
+                r.api_calls += 1
+            r.notes = (f"urls={len(rows)}/{len(urls)} checked={checked} {sm_note}{st.err_note}"
                        + (f" {run_verdict.abort_note(stop)}" if stop else ""))
 
         if stop:

@@ -32,6 +32,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import unicodedata
 from datetime import datetime, timedelta, timezone
@@ -194,6 +195,26 @@ def _num(obj: dict, key: str, cast=float):
         return None
 
 
+def monthly_series(ms) -> str | None:
+    """search_volume 의 monthly_searches → keywords.monthly_json('[[YYYY-MM, 검색량], ...]', 옛 달부터).
+
+    항목은 {year, month, search_volume} 이고 데이터가 없으면 null 이다. 기본 12달이지만 달 수와
+    순서는 보장되지 않는다(문서의 예시는 최신 달부터) — 여기서 날짜로 정렬한다.
+    https://docs.dataforseo.com/v3/keywords_data/google_ads/search_volume/live/
+    같은 응답에 이미 들어 있던 값이다(추가 비용 0) — 여태 search_volume 한 칸만 읽고 버렸다.
+    읽는 쪽은 scoring.volume_trend(계절성·최근 추세). 쓸 달이 없으면 None(기존 값을 안 덮는다).
+    """
+    out = {}
+    for m in ms if isinstance(ms, list) else []:
+        try:
+            y, mo, v = int(m["year"]), int(m["month"]), m["search_volume"]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if isinstance(v, (int, float)) and 1 <= mo <= 12:
+            out[f"{y:04d}-{mo:02d}"] = int(v)
+    return json.dumps(sorted(out.items()), ensure_ascii=False) if out else None
+
+
 def _kw(it: dict) -> str:
     return str(_find(it, "keyword") or "").strip()
 
@@ -351,6 +372,7 @@ def collect(project: str, *,
                 if kw:
                     metrics.setdefault(kw, {})["volume"] = _num(it, "search_volume", int)
                     metrics[kw]["cpc"] = _num(it, "cpc")
+                    metrics[kw]["monthly"] = monthly_series(it.get("monthly_searches"))
 
             # 난이도는 부차적이다 — 여기서 죽어도 이미 사 온 볼륨은 적재한다.
             try:
@@ -390,9 +412,11 @@ def collect(project: str, *,
                               SET volume     = COALESCE(?, volume),
                                   difficulty = COALESCE(?, difficulty),
                                   cpc        = COALESCE(?, cpc),
+                                  monthly_json = COALESCE(?, monthly_json),
                                   metrics_at = ?
                             WHERE id=?""",
-                        (m.get("volume"), m.get("difficulty"), m.get("cpc"), stamp, r["id"]))
+                        (m.get("volume"), m.get("difficulty"), m.get("cpc"), m.get("monthly"),
+                         stamp, r["id"]))
                     got += 1
             updated += got
             print(f"  {loc}: asked={len(group)} filled={got}")

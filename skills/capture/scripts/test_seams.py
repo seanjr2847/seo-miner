@@ -1039,19 +1039,97 @@ def test_seam_20_speed_thresholds_single_source():
     site = (ctx["views"] / "site.html").read_text("utf-8")
     assert "R.lcp_good_ms" in site and "R.inp_good_ms" in site and "R.cls_good" in site, (
         "site.html 이 속도 기준을 페이로드에서 안 받는다")
+    assert "R.ttfb_good_ms" in site, "site.html 이 TTFB 기준을 페이로드에서 안 받는다"
+    # 요청문의 기준 줄도 같은 상수다 — 줄에 숫자를 직접 적으면 판정과 두 벌이 된다
+    import inspect
+
+    import brief
+    bl = inspect.getsource(brief._vitals_lines)
+    for const in ("LCP_GOOD_MS", "INP_GOOD_MS", "CLS_GOOD", "TTFB_GOOD_MS"):
+        assert f"scoring.{const}" in bl, f"brief 기준 줄이 scoring.{const} 를 안 읽는다"
     # 속도 섹션 안에 기준 숫자 리터럴이 없어야 한다
     i = site.index("속도 (Core Web Vitals)")
     j = site.index("let ST_AUDITS", i)
-    for lit in ("2500", "2.5", "200ms 이내", "0.1 이내"):
+    for lit in ("2500", "2.5", "200ms 이내", "0.1 이내", "800ms"):
         assert lit not in site[i:j], f"속도 기준 숫자가 화면에 박혀 있다: {lit}"
     # gather() 가 실제로 실어 보내는 값을 본다 — 소스에 그렇게 적혀 있는지가 아니라.
     rules = _gather("_seam20").get("rules") or {}
     for key, const in (("lcp_good_ms", "LCP_GOOD_MS"), ("inp_good_ms", "INP_GOOD_MS"),
-                       ("cls_good", "CLS_GOOD")):
+                       ("cls_good", "CLS_GOOD"), ("ttfb_good_ms", "TTFB_GOOD_MS")):
         assert rules.get(key) == getattr(scoring, const), (
             f"gather() 의 rules 가 {key} 를 scoring.{const} 로 안 싣는다: {rules.get(key)!r}")
+    assert scoring.TTFB_GOOD_MS == 800, "TTFB '좋음' 경계(web.dev/articles/ttfb)와 다르다"
     assert (scoring.LCP_GOOD_MS, scoring.INP_GOOD_MS, scoring.CLS_GOOD) == (2500, 200, 0.1), (
         "구글이 공개한 기준값과 다르다 — 바꿀 이유가 있으면 여기 주석에 적는다")
+
+
+def test_seam_w04a_speed_diag_labels_ride_the_payload():
+    """w04-a) 속도 진단·접근성 이름표는 만드는 쪽(collect_vitals) 한 벌이고 화면은 페이로드로 받는다.
+
+    화면이 사본을 들면 Lighthouse 가 진단을 갈아 끼울 때(12 → 13 의 *-insight) 한쪽만 낡는다.
+    수집기가 적는 id, 판정이 읽는 표(scoring._DIAG_OF), 화면이 읽는 키가 같은 한 벌인지 본다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import collect_vitals
+    import scoring
+    site = (ctx["views"] / "site.html").read_text("utf-8")
+    d = _gather("_seamw04a")
+    for key, src in (("diag_audits", collect_vitals.DIAG_AUDITS), ("cat_audits", collect_vitals.CAT_AUDITS),
+                     ("cat_names", collect_vitals.CATEGORIES), ("crux_form", collect_vitals.CRUX_FORM)):
+        assert set(d.get(key) or {}) == set(src), f"gather() 가 {key} 를 collect_vitals 에서 안 싣는다"
+        assert f"d.{key}" in site, f"site.html 이 {key} 를 페이로드에서 안 읽는다"
+    for key in ("vitals_regress", "crux_trend", "vitals_shots", "index_evidence", "gsc_sitemaps"):
+        assert key in d and f"d.{key}" in site, f"{key}: 페이로드와 site.html 이 어긋난다"
+    # 이름표 사본이 화면에 없어야 한다(이름표는 한국어 문장이라 겹칠 일이 없다)
+    for label, _fix in collect_vitals.DIAG_AUDITS.values():
+        assert label not in site, f"진단 이름표 사본이 site.html 에 있다: {label}"
+    for label in collect_vitals.CAT_AUDITS.values():
+        assert label not in site, f"접근성 이름표 사본이 site.html 에 있다: {label}"
+    # 접는 표(13 의 새 id → 옛 id)의 오른쪽, 지표 → 진단 표의 값은 전부 이름표에 있는 id 다
+    assert set(collect_vitals.DIAG_ALIASES.values()) <= set(collect_vitals.DIAG_AUDITS)
+    for ids in scoring._DIAG_OF.values():
+        assert set(ids) <= set(collect_vitals.DIAG_AUDITS), ids
+    # CrUX 지표 열쇠 — 수집기가 적는 것과 화면·요청문이 읽는 것이 같다
+    import brief
+    keys = set(collect_vitals.CRUX_METRICS)
+    assert {k for k, _ in brief._CRUX_NAMES} == keys, "brief 가 읽는 CrUX 지표가 수집기와 다르다"
+    assert set(re.findall(r'\["(\w+)", "[A-Z]+"\]', site[site.index("const VIT_CRUX"):][:200])) == keys, (
+        "site.html 의 VIT_CRUX 가 수집기의 CrUX 지표와 다르다")
+    # 상대 악화 기준은 scoring 한 벌 — 화면이 20%·10점을 다시 세지 않는다
+    i = site.index("function vitRegress")
+    assert not re.search(r"(0\.2|20|10)", site[i:site.index("const vitJson", i)].split("*/")[-1]), (
+        "화면이 상대 악화 기준을 직접 센다")
+
+
+def test_seam_w04b_ga4_markers_and_conversion_gate_single_source():
+    """w04-b) GA4 표식 줄('(total)'·'(ai-assistant)')은 db 한 벌, 전환 이벤트 미설정 판정은 scoring 한 벌.
+
+    표식 이름을 읽는 쪽이 따로 적으면 '쟀고 0'과 '안 쟀다'가 다시 뭉친다. 화면은 판정을 다시
+    하지 않고 d.ga4_conv_unset·d.ga4_state 만 읽는다. AI 채널은 채널 이름이 아니라 매체로 거른다.
+    """
+    ctx = _load()
+    if ctx is None:
+        return
+    import collect_ga4
+    import scoring
+    src = (SCRIPTS / "scoring.py").read_text("utf-8")
+    for lit in ('"(total)"', '"(ai-assistant)"'):
+        assert lit not in src, f"scoring 이 GA4 표식 줄 이름 {lit} 을 따로 적는다 — db 의 상수를 읽는다"
+        assert lit not in (SCRIPTS / "collect_ga4.py").read_text("utf-8"), lit
+    f = collect_ga4._ai_channel_filter()["filter"]
+    assert (f["fieldName"], f["stringFilter"]["value"]) == ("sessionMedium", scoring.GA4_AI_MEDIUM)
+    d = _gather("_seamw04b", ga4=True)
+    site = (ctx["views"] / "site.html").read_text("utf-8")
+    an = (ctx["views"] / "analysis.html").read_text("utf-8")
+    for key, view, name in (("ga4_conv_unset", site, "site"), ("ga4_state", an, "analysis"),
+                            ("ga4_channel_groups", an, "analysis"), ("ga4_daily", an, "analysis"),
+                            ("ga4_ai_channel", an, "analysis")):
+        assert key in d, f"gather() 에 {key} 가 없다"
+        assert f"d.{key}" in view, f"{name}.html 이 {key} 를 안 읽는다"
+    # 화면이 전환 0 을 직접 세어 '미설정'을 판정하지 않는다
+    assert "key_events === 0" not in an and "key_events == 0" not in an
 
 
 def test_seam_21_prompt_categories_single_source():
@@ -5970,10 +6048,16 @@ def test_seam_w12b_analytics_source_branch_writes_the_ga4_shape_and_names_its_so
     c.execute("INSERT INTO ga4_snapshots(project_id, snapshot_date, period_days, landing_page,"
               " sessions, sessions_all, key_events, total_revenue, engagement_rate)"
               " VALUES(1,'2026-11-02',28,'/a',?,50,0,0,0.5)", (scoring.GA4_NOCONV_MIN_SESSIONS + 5,))
+    # 다른 페이지엔 전환이 있다 — 속성 전체가 0 이면 '전환 이벤트 미설정'이라 표가 안 선다(w04)
+    c.execute("INSERT INTO ga4_snapshots(project_id, snapshot_date, period_days, landing_page,"
+              " sessions, sessions_all, key_events, total_revenue, engagement_rate)"
+              " VALUES(1,'2026-11-02',28,'/b',40,40,3,0,0.6)")
     assert [r["page"] for r in scoring.zero_conversion_pages(c, 1)] == ["https://x.com/a"]
     c.execute("UPDATE ga4_snapshots SET key_events=NULL, total_revenue=NULL, source=?", (ids[0],))
     assert scoring.zero_conversion_pages(c, 1) == [], \
         "전환을 모르는 출처의 페이지를 '전환 0' 기회로 세웠다"
+    assert not scoring.ga4_conversions_unset(c, 1), \
+        "전환을 모르는 출처(NULL)를 '전환 이벤트 미설정'으로 말한다 — 모름과 0 이 섞였다"
     c.close()
 
 
