@@ -5669,7 +5669,7 @@ def _create_mod(name: str):
     return __import__(name)
 
 
-def test_seam_create_jsonld_rules_live_in_one_place():
+def test_seam_w11a_create_jsonld_rules_live_in_one_place():
     """create 커밋 전 JSON-LD 검사) 규칙의 정본은 jsonld_check.value_issues 하나다.
 
     한쪽 끝은 create 의 훅(check_jsonld.py)이고 다른 끝은 SKILL.md 의 run 절차다. 훅이 규칙을
@@ -5690,7 +5690,7 @@ def test_seam_create_jsonld_rules_live_in_one_place():
     assert jsonld_check.has_errors([{"level": "warn"}]) is False
 
 
-def test_seam_create_keys_match_doctor_and_skill():
+def test_seam_w11b_create_keys_match_doctor_and_skill():
     """create 선택 기능의 키) 키 이름은 쓰는 모듈의 KEY_ENV, 켜짐 판정은 doctor 가 같은 이름으로 읽는다.
 
     IndexNow·대표 이미지는 키가 없으면 건너뛴다. 모듈이 읽는 이름과 doctor 가 '켜졌다'고 말하는
@@ -5724,7 +5724,7 @@ def test_seam_create_keys_match_doctor_and_skill():
         assert need in named, f"create SKILL.md 가 {need} 를 안 가리킨다 — 있어도 아무도 안 돌린다"
 
 
-def test_seam_create_merge_paths_all_notify_indexnow():
+def test_seam_w11c_create_merge_paths_all_notify_indexnow():
     """IndexNow) 머지를 확인하는 길 셋(커밋이 기본 브랜치에 있음·PR 머지·손으로 merged)이 전부 알림을 지난다.
 
     적는 쪽(`done --url` → 노트의 `[url …]`)과 읽는 쪽(indexnow.urls_in)도 한 표기다. 한 길만
@@ -5742,7 +5742,7 @@ def test_seam_create_merge_paths_all_notify_indexnow():
     assert indexnow.urls_in(indexnow.note_with_urls("메모", urls)) == urls
 
 
-def test_seam_report_print_rules_open_every_view():
+def test_seam_w11d_report_print_rules_open_every_view():
     """인쇄(PDF)) 박제본을 인쇄하면 숨긴 화면이 전부 펴지고, 쪽은 화면 '사이'에서만 넘어간다.
 
     첫 화면은 main 의 첫 자식이 아니다(표지·축·배너가 앞에 있다) — `.view:first-child` 로 첫 쪽

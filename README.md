@@ -231,6 +231,7 @@ flowchart LR
 | `/capture report` | 그 시점 화면을 자립형 HTML로 박제 |
 | `/capture ask` | 자유 질문 — Brain 조회 또는 서치콘솔 즉석 조회로 수치로 답함 |
 | `/create profile` | 리포의 관례(스택·콘텐츠 위치·메타 방식·보이스) 발견·캐싱 |
+| `/create newsite` | 측정 전 사이트의 구조 계획 요청문 (URL 트리 뼈대·@type·첫 측정 계획, 숫자 없음) |
 | `/create plan` | 기회 → 작업 배치 (쓰기 전에 리포 git log와 대조) |
 | `/create run` | 실제 파일 변경 → 브랜치 → 커밋(`[opp #id]`) → PR |
 | `/create status` | 작성 이력·머지 여부 |
