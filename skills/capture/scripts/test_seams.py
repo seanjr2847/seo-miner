@@ -4077,6 +4077,147 @@ def test_seam_125_image_weight_rides_from_vitals_to_page_diagnosis():
         "셸 폴백 요청문이 by_tag 를 tag 로 찾지 않는다"
 
 
+def test_seam_w03a_retired_schema_types_are_one_table():
+    """끝난 리치 결과 유형은 한 벌(scoring.RETIRED_TYPES)이고, 어디서도 그 유형을 권하지 않는다.
+
+    예전엔 같은 파일 안에서 엇갈렸다: 처방은 "Article·FAQPage·LocalBusiness 중 하나"를 넣으라
+    하고, 다른 주석은 FAQ 리치 결과가 안 나온다고 적었고, create 규칙은 "FAQPage/HowTo 를 관례대로
+    추가"였다. 표·권장 목록·말하는 글이 따로 놀면 각 파일은 멀쩡한데 한쪽은 넣으라 하고 한쪽은
+    소용없다고 한다. 여기서 세 끝을 한 번에 본다.
+    """
+    import schema_vocab
+    import scoring
+    retired = set(scoring.RETIRED_TYPES)
+    # ① 표 — 끝난 유형은 속성 검사(SCHEMA_RULES)도 권장 목록도 아니다. 전부 schema.org 유형이다
+    assert not retired & set(scoring.SCHEMA_RULES), retired & set(scoring.SCHEMA_RULES)
+    pool = {t for ts in scoring.SITE_SCHEMA_TYPES.values() for t in ts} \
+        | set(scoring.SCHEMA_FOR_ARTICLE) | set(scoring.SCHEMA_FALLBACK)
+    assert not retired & pool, f"끝난 유형을 권한다: {retired & pool}"
+    assert (retired | pool) <= set(schema_vocab.PARENTS), (retired | pool) - set(schema_vocab.PARENTS)
+    for t, row in scoring.RETIRED_TYPES.items():
+        feature, since, src = row
+        assert feature and re.fullmatch(r"\d{4}-\d{2}-\d{2}", since) \
+            and src.startswith("https://developers.google.com/"), (t, row)
+    # ② 권장 목록의 열쇠 = 사이트 타입 한 벌(WEIGHTS). 타입이 늘면 권장도 정해야 한다
+    assert set(scoring.SITE_SCHEMA_TYPES) == set(scoring.WEIGHTS), \
+        set(scoring.SITE_SCHEMA_TYPES) ^ set(scoring.WEIGHTS)
+    # ③ 말하는 글 — 끝난 유형의 이름이 나오는 줄은 '끝났다·넣지 않는다'를 말하는 줄뿐이다.
+    #    (주석과 표 자체는 뺀다. 파이썬은 # 줄, 표는 RETIRED_TYPES 블록.)
+    says_gone = ("리치 결과", "않", "RETIRED_TYPES")
+    files = [SCRIPTS / n for n in ("scoring.py", "brief.py", "plays.py", "dashboard.py", "play_pr.py")]
+    files += sorted((ROOT / "skills").rglob("*.md"))
+    files += sorted((ROOT / "skills" / "capture" / "templates").rglob("*.html"))
+    files += sorted((ROOT / "skills" / "capture" / "templates").rglob("*.js"))
+    name = re.compile(r"\b(" + "|".join(map(re.escape, sorted(retired))) + r")\b")
+    bad = []
+    for f in files:
+        src = f.read_text("utf-8")
+        if f.name == "scoring.py":
+            head, _, rest = src.partition("RETIRED_TYPES = {")
+            src = head + rest.partition("\n}\n")[2]
+        for n, line in enumerate(src.splitlines(), 1):
+            if f.suffix == ".py" and line.lstrip().startswith("#"):
+                continue
+            if name.search(line) and not any(w in line for w in says_gone):
+                bad.append(f"{f.name}:{n}: {line.strip()[:90]}")
+    assert not bad, "끝난 유형을 권하는(또는 끝났다고 말하지 않는) 줄:\n" + "\n".join(bad)
+    # ④ 판정 — 마크업이 없는 페이지에 권하는 유형은 사이트 타입마다 그 표의 것이다
+    row = {"url": "https://x.com/a", "title": "t", "schema_json": "[]", "schema_gaps_json": "[]",
+           "js_shell": 0}
+    for site, want in scoring.SITE_SCHEMA_TYPES.items():
+        fix = next(x["fix"] for x in scoring.page_advice(row, [], domain="x.com", site_type=site)
+                   if x["tag"] == "구조화 데이터")
+        assert all(t in fix for t in want) and not name.search(fix), (site, fix)
+
+
+def test_seam_w03b_page_signals_ride_from_collector_to_brief():
+    """기계 점검이 센 것(page_audits.signals_json)·값 이슈(schema_issues_json)가 수집기 → 칸 →
+    페이로드 → 진단·정보 줄 → 요청문까지 끊기지 않는다.
+
+    끝이 다섯이다: 수집기(collect_page._signals)가 열쇠를 정하고, db 가 칸을 갖고, 판정
+    (scoring.signal_advice·page_info)이 그 열쇠를 읽고, gather 가 사이트 타입을 넘기고(상점 목록
+    규칙은 commerce 에만 선다), 요청문(brief)이 태그의 산출물 틀과 정보 줄을 싣는다. 열쇠 이름
+    하나가 어긋나면 각 파일은 멀쩡한데 그 진단이 조용히 안 선다.
+    """
+    import contextlib
+    import io as _io
+    import sqlite3 as _sq
+
+    import brief
+    import collect_page
+    import dashboard
+    import page_lang
+    import schema_values
+    import scoring
+    ld = {"@context": "https://schema.org", "@type": "Product", "name": "p",
+          "image": "https://x.com/p.png", "offers": {"@type": "Offer", "price": "$9"}}
+    html = ('<html lang="en"><head><title>A page about widgets and prices</title>'
+            '<script type="application/ld+json">' + json.dumps(ld) + "</script></head><body><main>"
+            "<h1>Widgets</h1><h2>a</h2><h4>b</h4><p>" + "word " * 30 + "</p>"
+            '<a href="http://x.com/old">old page</a><img src="http://c.example/i.png" alt="IMG_0001">'
+            "<p>lorem ipsum dolor sit amet consectetur</p>"
+            '<div style="display:none">' + "spam " * 120 + "</div></main></body></html>")
+    a = collect_page.audit_html("https://x.com/a", html, 200,
+                                {"content-type": "text/html; charset=utf-8"})
+    sig = json.loads(a["signals_json"])
+    # ① 열쇠 — 판정이 읽는 최상위 열쇠가 전부 수집기가 쓰는 열쇠다(정규식으로 판정 소스를 읽는다)
+    src = (SCRIPTS / "scoring.py").read_text("utf-8")
+    read = set(re.findall(r'\bsig\.get\("(\w+)"\)', src)) \
+        | set(re.findall(r'_signals_of\(audit\) or \{\}\)\.get\("(\w+)"\)', src))
+    assert read and read <= set(sig), f"판정이 수집기에 없는 열쇠를 읽는다: {read - set(sig)}"
+    assert set(sig["eeat"]) == {k for k, _ in scoring.EEAT_SIGNALS}, \
+        set(sig["eeat"]) ^ {k for k, _ in scoring.EEAT_SIGNALS}
+    # ② 값 이슈 코드 — 수집기가 쓰는 코드는 전부 문장이 있고, 판정의 고치는 법 표도 그 코드다
+    codes = {i["code"] for i in json.loads(a["schema_issues_json"])}
+    assert codes and codes <= set(schema_values.ISSUES), codes - set(schema_values.ISSUES)
+    assert set(scoring._SCHEMA_ISSUE_FIX) <= set(schema_values.ISSUES)
+    assert schema_values.MERCHANT_CODES and schema_values.MERCHANT_CODES <= set(schema_values.ISSUES)
+    # ③ 칸 → 페이로드 → 진단. 사이트 타입이 gather 에서 판정까지 간다(상점 목록 규칙)
+    said = {}
+    for site in ("commerce", "saas"):
+        c = _sq.connect(":memory:")
+        c.row_factory = _sq.Row
+        c.executescript(db.SCHEMA)
+        c.execute("INSERT INTO projects(id,name,type,domain) VALUES(1,'_w03',?,'x.com')", (site,))
+        db.write_page_audits(c, 1, "2026-11-01", [a])
+        null = _io.StringIO()
+        with contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
+            d = dashboard.gather(c, db.get_project(c, "_w03"))
+        c.close()
+        said[site] = d["page_audits"]["https://x.com/a"]
+    adv = said["commerce"]["advice"]
+    tags = {x["tag"] for x in adv}
+    for t in ("혼합 콘텐츠", "채움 글", "제목 구조", "링크 품질", "숨긴 텍스트"):
+        assert t in tags, f"수집기가 센 것으로 [{t}] 진단이 안 선다: {sorted(tags)}"
+    shop = " ".join(x["now"] for x in adv if x["tag"] == "구조화 데이터")
+    blog = " ".join(x["now"] for x in said["saas"]["advice"] if x["tag"] == "구조화 데이터")
+    assert "shippingDetails" in shop and "shippingDetails" not in blog, \
+        f"사이트 타입이 판정까지 안 간다(상점 목록 규칙): commerce={shop!r} saas={blog!r}"
+    assert "숫자가 아닙니다" in blog, blog
+    assert any("공유 카드 태그" in x for x in said["commerce"]["info"]), said["commerce"].get("info")
+    # ④ 말하는 쪽 — 새 태그마다 산출물 틀이 있고(화면 폴백 by_tag), 개발 쪽 일은 글의 요청문에서 갈린다
+    emitted = {x["tag"] for x in scoring.signal_advice(a)}
+    assert set(scoring.SIGNAL_TAGS) >= emitted - {"본문", "이미지"}, emitted
+    assert set(scoring.SIGNAL_TAGS) <= set(brief.DELIVER_BY_TAG), \
+        set(scoring.SIGNAL_TAGS) - set(brief.DELIVER_BY_TAG)
+    assert set(scoring.SIGNAL_TECH_TAGS) <= set(scoring.SIGNAL_TAGS) \
+        and set(scoring.SIGNAL_TECH_TAGS) <= set(brief.TECH_TAGS)
+    # ⑤ 요청문 — 정보 줄이 '지금 이 페이지 상태'에 사실로 실린다(진단 표가 아니라)
+    body = brief.build({"id": 1, "kind": "ctr_gap", "target": "widgets", "score": 50,
+                        "metrics": {"impressions": 500, "position": 5.0, "ctr": 0.2}, "reasoning": ""},
+                       {"query_pages": {"widgets": [{"page": "https://x.com/a", "impressions": 500,
+                                                     "clicks": 1, "position": 5.0}]},
+                        "page_audits": {"https://x.com/a": said["commerce"]}}, "en-US")["body"]
+    state = body.split("## 지금 이 페이지 상태", 1)[1].split("\n## ", 1)[0]
+    assert "공유 카드 태그" in state and "신뢰 신호" in state, state
+    # ⑥ 언어별 목록은 page_lang 한 벌 — 수집기·판정이 앵커·alt 낱말을 따로 갖지 않는다
+    for f in ("collect_page.py", "scoring.py", "collect_crawl.py", "brief.py"):
+        s = (SCRIPTS / f).read_text("utf-8")
+        hit = [w for w in ("click here", "こちら", "hier klicken") if w in s]
+        assert not hit, f"{f} 가 일반 앵커 목록의 사본을 갖는다: {hit}"
+    assert set(page_lang.GENERIC_ANCHORS) == set(page_lang.JUNK_ALT_WORDS), "언어 표의 언어가 서로 다르다"
+
+
 def test_seam_128_first_page_of_opportunities_is_one_number():
     """128) [개요] 목록의 첫 화면 줄 수는 한 벌이다 — 서버(brief.FIRST_PAGE)가 그 안에 새 글 몫을
     내고(brief.surface_new), 화면(셸 처리 큐의 QUEUE_PAGE)이 그만큼 보여 준다.

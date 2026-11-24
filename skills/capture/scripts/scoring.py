@@ -2260,10 +2260,10 @@ def robots_directives(audit: dict) -> dict:
 
     출처는 사람이 찾아갈 자리의 이름이다('meta robots'·'meta googlebot'·'X-Robots-Tag 헤더').
     nosnippet 은 max-snippet:0 도 같다(구글 문서: "Equivalent to nosnippet")."""
-    sig = (_signals_of(audit) or {}).get("meta") or {}
+    meta = (_signals_of(audit) or {}).get("meta") or {}
     srcs = [("meta robots", _robots_tokens(audit.get("robots") or ""))]
-    srcs += [(f"meta {bot}", _robots_tokens(v, bot)) for bot, v in (sig.get("bots") or {}).items()]
-    srcs.append(("X-Robots-Tag 헤더", _robots_tokens(sig.get("x_robots") or "")))
+    srcs += [(f"meta {bot}", _robots_tokens(v, bot)) for bot, v in (meta.get("bots") or {}).items()]
+    srcs.append(("X-Robots-Tag 헤더", _robots_tokens(meta.get("x_robots") or "")))
     out = {"noindex": None, "nosnippet": None}
     for name, toks in srcs:
         mine = [d for bot, d in toks if bot in _ROBOTS_FOR_GOOGLE]
@@ -2338,6 +2338,10 @@ def _canonical_target_advice(audit: dict) -> list[dict]:
 
 
 # ── 기계 점검 — 수집기가 센 것(page_audits.signals_json)의 판정 ───────────────
+# signal_advice 가 새로 내는 태그(이미 있던 [본문]·[이미지] 는 빼고). 요청문은 태그마다 산출물
+# 틀을 갖고(brief.DELIVER_BY_TAG), 개발 쪽 일(SIGNAL_TECH_TAGS)은 글의 요청문에서 가른다.
+SIGNAL_TAGS = ("혼합 콘텐츠", "메타 태그", "채움 글", "제목 구조", "링크 품질", "숨긴 텍스트")
+SIGNAL_TECH_TAGS = ("혼합 콘텐츠", "메타 태그")
 # 이만큼 넘는 숨긴 글만 말한다 — 그 아래는 대개 말풍선·닫힌 알림창 한두 개다.
 HIDDEN_TEXT_MIN = 100
 # 일반 앵커는 이만큼부터 — 한두 개는 목록 끝의 '더 보기'라 어느 사이트에나 있다.

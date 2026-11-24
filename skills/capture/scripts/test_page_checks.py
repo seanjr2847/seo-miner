@@ -465,6 +465,10 @@ def test_page_info_counts_signals_without_scoring():
     assert "있음 저자 표기, 저자 페이지 링크" in info and "없음 저자 마크업의 소개 주소" in info, info
     assert "Flesch Reading Ease" in info and f"문장당 {s['read']['wps']}낱말" in info, info
     assert "점" not in info.replace("점수 아님", ""), f"신뢰 신호를 점수로 말한다: {info}"
+    # 남의 사이트의 /about 으로 가는 링크는 이 사이트의 소개 페이지가 아니다
+    ext = _audit('<main><h1>h</h1><a href="https://other.example/about">Their about page</a>'
+                 '<a href="https://other.example/author/x">x</a></main>')
+    assert not _sig(ext)["eeat"]["about_link"] and not _sig(ext)["eeat"]["author_link"], _sig(ext)["eeat"]
     # 정보 줄은 진단(고칠 것)에 섞이지 않는다
     assert not any("og:" in x["now"] or "Flesch" in x["now"] for x in _advice(a)), _advice(a)
     # 공식이 없는 언어는 문장 길이만
