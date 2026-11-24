@@ -2896,6 +2896,11 @@ def test_ai_answers_full_text_citations_and_old_rows():
     assert scoring.ai_answers(conn, pid, "다른 질문")["checks"] == []
     # 화면 줄이 읽는 런과 같은 런이다
     assert scoring.latest_ai_run(conn, pid)["id"] == r.id
+    # 카나리아가 막은 회차(답 0건, runs 한 줄만)가 뒤에 와도 답이 있는 회차를 읽는다 — 안 그러면 화면이 빈다
+    blocked = db.start_run(conn, pid, "ai")
+    db.finish_run(conn, blocked, notes="돈 쓰기 전에 건너뜀 | 중단: DataForSEO 잔액 없음 ($-0.30)")
+    assert scoring.latest_ai_run(conn, pid)["id"] == r.id, "답이 없는 회차를 골랐다"
+    assert scoring.ai_answers(conn, pid, "다른 질문")["checks"] == []
     conn.close()
 
 

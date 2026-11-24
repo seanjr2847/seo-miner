@@ -6129,9 +6129,14 @@ def ai_seen_summary(seen_checks: int, seen_miss: int, unseen: int, fan: dict) ->
 
 def latest_ai_run(conn: sqlite3.Connection, project_id: int) -> sqlite3.Row | None:
     """이 사이트의 가장 최근 ai 런 — [AI 인용] 화면의 질문별 줄(dashboard._axis_ai)이 읽는 런.
-    화면 줄과 그 답변 전문(ai_answers)이 같은 런을 읽도록 이 한 곳에서 고른다."""
+    화면 줄과 그 답변 전문(ai_answers)이 같은 런을 읽도록 이 한 곳에서 고른다.
+
+    답이 한 건도 없는 런은 건너뛴다 — 잔액·키 카나리아가 막은 회차도 runs 한 줄(note_blocked)을
+    남기는데, 그걸 고르면 화면이 빈 목록이 된다. 2026-11-24 호스팅 theotherskin: 09:44 회차가
+    242건을 받고, 10:18 회차가 잔액 없음으로 건너뛰자 [AI 인용] 질문 목록이 0줄이 됐다."""
     return conn.execute(
-        "SELECT id, started_at, finished_at FROM runs WHERE project_id=? AND kind='ai' "
+        "SELECT id, started_at, finished_at FROM runs r WHERE project_id=? AND kind='ai' "
+        "AND EXISTS (SELECT 1 FROM ai_checks c WHERE c.run_id=r.id) "
         "ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
 
 
