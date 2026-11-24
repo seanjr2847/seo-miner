@@ -18,6 +18,10 @@ StageResult 를 그대로 호출자에게 넘긴다.
   ai          : 유료 AI 인용 체크. 키 없으면 건너뜀.
   competitors : 유료 DataForSEO Labs 역키워드. 키 없으면 건너뜀.
   backlinks   : 유료 백링크 프로필·링크 교집합. 키 없으면 건너뜀.
+  local       : 유료 지역 업체(구글 비즈니스 프로필·지도 순위·격자·리뷰). 사이트 종류가 지역
+                비즈니스일 때만 돈다. 지도 칸이 선 검색어를 rank 가 먼저 알아야 한다.
+  merchant    : 유료 쇼핑 가격 분포. 사이트 종류가 쇼핑몰·브랜드일 때만 돈다. 쇼핑 칸이 선
+                검색어를 rank 가 먼저 알아야 한다.
   gaps        : scoring.py load <project> (수집 결과를 읽어 기회 데이터 적재).
   plays       : 열린 기회를 페이지별 할 일로 묶고 증거·AI 수정안을 붙인다 (plays.py). 기회가
                 선 뒤여야 하고, 페이지 점검(pages)이 막 읽은 값을 못 읽었을 때의 대체로 쓴다.
@@ -64,6 +68,8 @@ import collect_ga4         # noqa: E402
 import collect_gap         # noqa: E402
 import collect_gsc         # noqa: E402
 import collect_index       # noqa: E402
+import collect_local       # noqa: E402
+import collect_merchant    # noqa: E402
 import collect_metrics     # noqa: E402
 import collect_page        # noqa: E402
 import collect_serp        # noqa: E402
@@ -179,6 +185,9 @@ STAGES = (
     _stage("ai",          "",                            collect_ai.collect,      True, collect_ai),
     _stage("competitors", "경쟁사 검색어·트래픽 몫",          collect_gap.collect,     True, collect_gap),
     _stage("backlinks",   "프로필·앵커·링크 교집합",     collect_backlinks.collect, True, collect_backlinks),
+    # 사이트 종류가 맞을 때만 도는 선택 유료 단계 — 종류가 다르면 스스로 건너뛴다(수집기가 판정).
+    _stage("local",       "프로필·지도 순위·리뷰",        collect_local.collect,   True, collect_local),
+    _stage("merchant",    "쇼핑 칸 상품 가격 분포",       collect_merchant.collect, True, collect_merchant),
     _stage("gaps",        "외부 호출 없음",           load_opportunities,      False),
     _stage("plays",       "이번 달 할 일: 페이지 읽기·수정안", plays.collect, True, plays),
     _stage("pages",       "제목·설명·본문·구조화 데이터", collect_page.collect, False, collect_page),
@@ -225,7 +234,8 @@ GROUPS = (
      "views": ("aicite", "aisum")},
     {"id": "site", "name": "사이트 건강", "stages": ("index", "crawl", "vitals"),
      "every_hours": WEEKLY_HOURS, "views": ("site",)},
-    {"id": "compete", "name": "경쟁·링크", "stages": ("competitors", "backlinks"),
+    {"id": "compete", "name": "경쟁·링크",
+     "stages": ("competitors", "backlinks", "local", "merchant"),
      "every_hours": 720, "views": ("competitors", "backlinks")},
     {"id": "admin", "name": "관리", "stages": (), "every_hours": None,
      "views": ("history", "guide", "settings")},
@@ -243,6 +253,8 @@ RUNNABLE_GROUPS = tuple(g["id"] for g in GROUPS if g["every_hours"] is not None)
 #   competitors 경쟁사 목록이 rank 의 수확(harvest_comp → competitors.auto_rank)이다 —
 #               scoring.rivals 로 읽는다. 이미 있는 키워드·GSC 쿼리는 걸러 낸다
 #   backlinks   링크 교집합의 경쟁사가 competitors 의 자동 탐지(auto_labs)까지다
+#   local       지도 칸이 선 검색어(rank 의 serp_features)로 지도 순위·격자를 잰다
+#   merchant    쇼핑 칸이 선 검색어(rank 의 serp_features)의 상품 가격을 본다
 #   pages       기회에 걸린 페이지부터 본다 (collect_page.target_urls → opportunities)
 #   vitals      pages 와 같은 URL 목록 — 어느 페이지를 손댈지가 먼저 정해져야 같은 페이지를 잰다
 #   plays       기회(gaps)로 후보를 고르고, 우리 페이지를 못 읽으면 페이지 점검(pages)의 값으로 선다
@@ -255,6 +267,8 @@ AFTER = {
     "rank": ("keywords", "metrics"),
     "competitors": ("gsc", "keywords", "rank"),
     "backlinks": ("competitors",),
+    "local": ("rank",),
+    "merchant": ("rank",),
     "pages": ("gaps",),
     "vitals": ("pages",),
     "plays": ("gaps", "pages"),
@@ -493,7 +507,7 @@ def parse_opts(items: list[str] | None) -> dict[str, dict]:
 # 카나리아 — 돈 쓰기 전 무료 점검 한 번. 이게 없어서 잔액 0 인 계정이 키워드마다
 # 402 를 맞고 "완료"로 끝났다 (8/30·9/1·9/2 자동 런).
 MIN_BALANCE = 1.0                       # 이보다 적으면 유료 단계는 어차피 실패한다
-DFS_STAGES = ("metrics", "rank", "competitors", "backlinks")
+DFS_STAGES = ("metrics", "rank", "competitors", "backlinks", "local", "merchant")
 
 
 def paid_estimate(name: str, project: str | None = None) -> float:

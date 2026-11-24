@@ -985,6 +985,69 @@ def post_dataforseo(path: str, body: list, timeout: int | None = None) -> tuple[
     return (task.get("result") or []), cost
 
 
+# ── 과제형 엔드포인트(task_post → task_get) — Live 가 없는 축 ──────────────────
+# 구글 리뷰(business_data/google/reviews)와 구글 쇼핑 상품(merchant/google/products)은 Live 가
+# 없다(문서의 메뉴에 Task POST·Tasks Ready·Task GET 뿐). 순위 대기열(post_serp_tasks)은 순위
+# 전용 파서에 묶여 있어 여기 범용 한 벌을 둔다 — 인증·오류 판정은 위와 같은 자리다.
+def post_dataforseo_task(path: str, body: list) -> tuple[str, float]:
+    """과제 하나를 맡긴다. 반환: (task id, 실청구액). 돈은 맡길 때 센다."""
+    if not has_dataforseo():
+        raise RuntimeError("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set")
+    r = _dfs_call(requests.post, f"https://api.dataforseo.com/v3{path}", auth=_dfs_auth(),
+                  timeout=TIMEOUTS["dataforseo"], json=body)
+    raise_for(r, "DataForSEO")
+    data = r.json()
+    task = _check_dataforseo_task(data)
+    if not task.get("id"):
+        raise RuntimeError("과제 번호를 받지 못했습니다")
+    return str(task["id"]), float(task.get("cost") or data.get("cost") or 0.0)
+
+
+def get_dataforseo_task(path: str) -> tuple[str, list | str | None]:
+    """맡긴 과제 하나를 받는다(받기는 무료). path 는 /v3 뒤 경로 + task id.
+    반환 (상태, 값) — get_serp_task 와 같은 네 상태: done(result 배열)·waiting·gone·error."""
+    r = _dfs_call(requests.get, f"https://api.dataforseo.com/v3{path}", auth=_dfs_auth(),
+                  timeout=TIMEOUTS["dataforseo"])
+    if r.status_code == 404:
+        return "gone", why(r) or "Task Not Found"
+    raise_for(r, "DataForSEO")
+    data = r.json()
+    task = (data.get("tasks") or [{}])[0]
+    code = int(task.get("status_code") or 0)
+    if code in _TASK_WAITING:
+        return "waiting", None
+    if code in _TASK_GONE:
+        return "gone", str(task.get("status_message") or code)
+    try:
+        task = _check_dataforseo_task(data)
+    except Fatal:
+        raise
+    except RuntimeError as e:
+        return "error", str(e)
+    return "done", (task.get("result") or [])
+
+
+def wait_dataforseo_tasks(paths: dict, *, timeout_s: float, get=None,
+                          clock=time.monotonic, sleep=time.sleep) -> dict:
+    """{키: task_get 경로} 를 전부 올 때까지 두드린다(상한 timeout_s). 반환 {키: (상태, 값)} —
+    상한에 걸린 것은 ("waiting", None) 으로 남는다. get 은 시험이 갈아 끼우는 자리."""
+    get = get or get_dataforseo_task
+    out: dict = {}
+    left = dict(paths)
+    deadline = clock() + timeout_s
+    while left:
+        for k in sorted(left, key=str):
+            state, val = get(left[k])
+            if state != "waiting":
+                out[k] = (state, val)
+                del left[k]
+        if not left or clock() >= deadline:
+            break
+        sleep(QUEUE_POLL)
+    out.update({k: ("waiting", None) for k in left})
+    return out
+
+
 # 잔액 카나리아의 짧은 기억 — 호스팅 워커는 한 스윕에서 사이트 여럿을 연달아 돌고, 키는
 # 서버 키 하나다. 사이트마다·단계마다 잔액을 다시 묻지 않게 몇 분만 기억한다. 키마다 따로
 # 기억한다(사용자 키가 섞이면 남의 잔액으로 판정한다) — 키 원문 대신 해시로.

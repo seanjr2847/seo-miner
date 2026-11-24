@@ -1429,6 +1429,43 @@ NAP_HEAD = "## 이름·주소·전화(NAP) 대조: 지도 칸이 선 검색어"
 NAP_DELIVER = ("이름·주소·전화 대조표: 자리 | 이름 | 주소 | 전화 세 줄(사이트 본문·마크업·구글 "
                "비즈니스 프로필). 본문·마크업 줄은 페이지를 열어 그대로 옮겨 적고, 프로필 줄은 "
                "[사람 확인]으로 비워 둡니다. 두 자리가 다르면 어느 쪽에 맞출지까지")
+# 지역 업체 수집(collect_local)이 프로필을 조회한 사이트 — 프로필 줄이 사람 칸이 아니라 잰 값이다.
+NAP_DELIVER_MEASURED = ("이름·주소·전화 대조표: 자리 | 이름 | 주소 | 전화 세 줄(사이트 본문·마크업·구글 "
+                        "비즈니스 프로필). 본문·마크업 줄은 페이지를 열어 그대로 옮겨 적고, 프로필 줄은 "
+                        "아래 조회 값을 그대로 옮깁니다. 두 자리가 다르면 어느 쪽에 맞출지까지")
+
+
+def _gbp(ctx: dict) -> dict | None:
+    """조회한 구글 비즈니스 프로필(ctx['local'] — collect_local.axis). 없거나 못 찾았으면 None."""
+    return (ctx.get("local") or {}).get("gbp") or None
+
+
+def nap_deliver(ctx: dict) -> str:
+    """이 사이트의 NAP 산출물 문장 — 프로필을 조회했으면 잰 값, 아니면 [사람 확인]."""
+    return NAP_DELIVER_MEASURED if _gbp(ctx) else NAP_DELIVER
+
+
+def _local_lines(ctx: dict) -> list[str]:
+    """지역 업체 수집이 잰 것 — 프로필 값·리뷰(같은 지도 칸 상위 업체 대비)·등재 출처.
+    판정(뒤졌나)과 목록(로케일별 플랫폼)·경고 문장은 collect_local 한 곳이고 여기는 줄만 만든다."""
+    loc = ctx.get("local") or {}
+    L: list[str] = []
+    g = _gbp(ctx)
+    if g:
+        L.append(f"- 구글 비즈니스 프로필(조회 {loc.get('checked')}): "
+                 + " | ".join(str(g.get(k) or "(없음)") for k in ("name", "address", "phone"))
+                 + " — 대조표의 프로필 줄에 이 값을 그대로 옮깁니다.")
+    for b in (loc.get("reviews") or {}).get("bench") or []:
+        if b.get("behind"):
+            L.append(f"- {b['what']} {b['mine']:g}, 같은 지도 칸 상위 {b['n']}곳의 중앙값 "
+                     f"{b['median']:g}: 지도 칸 순서는 리뷰도 봅니다. 이 차이를 한 줄로 적습니다.")
+    if any(b.get("behind") for b in (loc.get("reviews") or {}).get("bench") or []) and loc.get("gating"):
+        L.append(f"- {loc['gating']}.")
+    rest = [x for x in loc.get("platforms") or []][1:]
+    if rest:
+        L.append(f"- 이 지역에서 같이 볼 등재·리뷰 출처: {', '.join(rest)}. 이름·주소·전화가 "
+                 "같은 글자인지는 [사람 확인]입니다(이 도구는 구글만 조회합니다).")
+    return L
 
 
 def _nap_lines(ctx: dict) -> list[str]:
@@ -1470,9 +1507,10 @@ def _nap_lines(ctx: dict) -> list[str]:
             "본문·마크업·프로필의 이름·주소·전화가 같은 곳을 말하는지 봅니다. 층·호 표기, 대표 번호와 "
             "지점 번호, 영문 상호처럼 한 글자만 달라도 다른 곳으로 읽힐 수 있습니다.",
             "- 대조표는 '만들어 줄 것'의 이름·주소·전화 대조표입니다. 본문 줄은 꼬리말·연락처 "
-            f"페이지에서, 마크업 줄은 LocalBusiness 의 {nap} 에서 옮깁니다. 프로필 줄([사람 확인])은 "
-            "사람이 프로필을 열어 대조합니다.",
-            known, ""]
+            f"페이지에서, 마크업 줄은 LocalBusiness 의 {nap} 에서 옮깁니다. "
+            + ("프로필 줄은 아래 조회 값입니다." if _gbp(ctx) else
+               "프로필 줄([사람 확인])은 사람이 프로필을 열어 대조합니다."),
+            known, *_local_lines(ctx), ""]
 
 
 def _fanout(o: dict, ctx: dict) -> list[str]:
@@ -4316,8 +4354,8 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         want = [CANON_FIRST.format(url=url, canon=canon)] + list(want)
     # 지도 칸 검색어 — NAP 대조표도 이 번호 목록에 오른다(산출물의 정본은 여기 한 곳이다).
     # NAP 절(_nap_lines)은 _serp_feature_lines 와 같은 조건(상위와 견주는 꼴)에서만 선다.
-    if s["slot"] and _local_pack(o, ctx) and NAP_DELIVER not in want:
-        want = list(want) + [NAP_DELIVER]
+    if s["slot"] and _local_pack(o, ctx) and nap_deliver(ctx) not in want:
+        want = list(want) + [nap_deliver(ctx)]
     L += ["## 만들어 줄 것", *(f"{i + 1}. {x}" for i, x in enumerate(want))]
     L += _aio_cited_missing_lines(o, ctx, want)
     if kind == "rank_decay" and shape == "fix_page":

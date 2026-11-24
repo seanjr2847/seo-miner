@@ -1,0 +1,85 @@
+<script type="application/json" class="section-def">
+{"id": "sm-shop", "view": "competitors", "after": "sm-local"}
+</script>
+<!-- 쇼핑 칸 — 사이트 종류가 쇼핑몰·브랜드일 때만 선다(페이로드 d.merchant 가 null 이면 감춘다).
+     두 배포 공통: 값은 전부 페이로드(collect_merchant.axis)에서 온다. 4분류의 이름·문구는 서버의
+     한 벌(collect_merchant.CLASSES)을 label 로 받아 그린다 — 여기 사본을 두지 않는다.
+     접는 것은 셸의 hidden(data-mode)이라 이 섹션은 hidden 을 만지지 않고 shp-none 으로 감춘다. -->
+<style>
+/* 이 화면 상자는 12열 격자이고 원본 섹션은 display:contents 다 — 같은 꼴로 풀어 카드가 격자 칸을
+   직접 받는다. 섹션 자체는 늘 선다(빈 사이트에서도 [전체] 탭의 섹션이다) — 감추는 것은 카드다.
+   display:contents 는 id 특이도가 [hidden] 을 이기므로 접힌 것에 display:none 을 따로 준다. */
+#view-competitors > #sm-shop { display:contents; }
+#view-competitors > #sm-shop[hidden] { display:none; }
+#sm-shop > .card { grid-column:1 / -1; min-width:0; margin:0; }
+#sm-shop.shp-none > .card { display:none; }
+@media print { #view-competitors > #sm-shop[hidden] { display:contents; } }
+#sm-shop h2 { font:650 var(--fs-3)/1.4 var(--sans); color:var(--ink); margin:0; }
+#sm-shop h3 { font:600 var(--fs-2)/1.4 var(--sans); color:var(--ink); margin:var(--sp-5) 0 var(--sp-2); }
+#sm-shop .shp-s, #sm-shop .shp-note { font:400 var(--fs-1)/1.6 var(--sans); color:var(--sub);
+  margin:2px 0 0; max-width:74ch; }
+#sm-shop .shp-note { margin-top:var(--sp-3); }
+#sm-shop .dett td a { max-width:38ch; }
+</style>
+<section id="sm-shop" class="shp-none" data-mode="manage">
+  <div class="card">
+    <h2>쇼핑 칸</h2>
+    <p class="shp-s" id="shp-sub"></p>
+    <div id="shp-body"></div>
+  </div>
+</section>
+<script>
+"use strict";
+VIEW("sm-shop", d => {
+  const box = $("sm-shop"), M = d.merchant;
+  box.classList.toggle("shp-none", !M);
+  if (!M) return;
+  const n = v => v == null ? "-" : num(v);
+  const money = (v, cur) => v == null ? "-" : `${Number(v).toLocaleString("ko-KR", {maximumFractionDigits: 2})} ${esc(cur || "")}`;
+  const table = (heads, rows) => `<div class="tw"><table class="dett"><thead><tr>${
+    heads.map(h => `<th${h[1] ? ' class="n"' : ""}>${esc(h[0])}</th>`).join("")}</tr></thead><tbody>${
+    rows.join("")}</tbody></table></div>`;
+  $("shp-sub").textContent = M.checked
+    ? `쇼핑 칸이 선 검색어의 상위 상품 가격과 우리 노출입니다 · ${M.checked} 기준`
+    : "쇼핑 칸이 선 검색어에서 우리 페이지와 노출을 봅니다. 상품 가격은 아직 확인하지 않았습니다.";
+  let h = "";
+  if ((M.no_product || []).length) {
+    h += "<h3>쇼핑 칸이 뜨는데 상품 마크업이 없는 페이지</h3>" + table(
+      [["검색어"], ["우리 페이지"], ["빠진 것"]],
+      M.no_product.map(r => `<tr><td>${esc(r.keyword)}</td><td><a href="${esc(r.url)}" target="_blank" rel="noopener">${
+        esc(r.url.replace(/^https?:\/\//, ""))}</a></td><td>${esc(r.why)}</td></tr>`)) +
+      `<p class="shp-note">쇼핑 칸은 가격·재고가 적힌 상품 마크업(Product 와 그 안의 offers)을 읽습니다. 없으면 그 자리에 들어갈 재료가 없습니다.</p>`;
+  }
+  const cls = (M.classes || []).filter(c => c.label);
+  if (cls.length) {
+    h += "<h3>오가닉 대 쇼핑 노출</h3>" + table(
+      [["검색어"], ["오가닉 순위", 1], ["노출"]],
+      cls.map(c => `<tr><td>${esc(c.keyword)}</td><td class="n">${
+        c.position == null ? "순위 밖" : n(c.position) + "위"}</td><td>${esc(c.label)}</td></tr>`));
+  }
+  const mk = (M.markets || []).filter(m => m.dist);
+  if (mk.length) {
+    h += "<h3>상위 상품 가격 분포</h3>" + table(
+      [["마켓"], ["검색어"], ["상품 수", 1], ["최저", 1], ["중앙값", 1], ["최고", 1], ["우리 가격"], ["판매처 상위"]],
+      mk.map(m => {
+        const t = m.dist, o = t.ours[0];
+        return `<tr><td>${m.market === "google_shopping" ? "구글 쇼핑" : esc(m.market)}</td>` +
+          `<td>${esc(m.keyword)}</td><td class="n">${n(t.n)}</td>` +
+          `<td class="n">${money(t.min, t.currency)}</td><td class="n">${money(t.median, t.currency)}</td>` +
+          `<td class="n">${money(t.max, t.currency)}</td>` +
+          `<td>${o ? `${money(o.price, t.currency)} · 더 싼 상품 ${n(o.cheaper)}개` : "우리 상품 없음"}</td>` +
+          `<td>${esc((m.sellers || []).slice(0, 3).map(s => `${s[0]} ${s[1]}개`).join(", ") || "-")}</td></tr>`;
+      }));
+  }
+  if ((M.copied || []).length) {
+    h += "<h3>다른 판매처와 글자까지 같은 상품 설명</h3>" + table(
+      [["검색어"], ["우리 상품"], ["같은 설명을 쓴 판매처"]],
+      M.copied.map(c => `<tr><td>${esc(c.keyword)}</td><td>${esc(c.title)}</td><td>${
+        esc(c.sellers.join(", "))}</td></tr>`)) +
+      `<p class="shp-note">제조사 설명을 그대로 쓰면 같은 글이 여러 판매처에 있습니다. 우리만 아는 것(실측·사용 후기·비교)을 설명에 넣습니다.</p>`;
+  }
+  if (!h) h = `<p class="shp-note">쇼핑 칸이 선 추적 검색어가 아직 없습니다. 순위 확인을 돌리면 쇼핑 칸이 선 검색어가 잡힙니다.</p>`;
+  if (M.last_note) h += `<p class="shp-note">${esc(M.last_note)}</p>`;
+  $("shp-body").innerHTML = h;
+});
+</script>
