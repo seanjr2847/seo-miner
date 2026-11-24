@@ -1473,8 +1473,8 @@ def fact_lines(f: dict) -> list[dict]:
             else "만료됐습니다")
     soft = f.get("soft404") or {}
     if soft.get("soft") is not None:
-        add("site", "없는 주소", f"HTTP {soft.get('status')} — "
-            + ("200 을 줍니다(소프트 404)" if soft["soft"] else "없다고 답합니다"))
+        add("site", "없는 주소", "200 을 줍니다(소프트 404)" if soft["soft"]
+            else f"없다고 답합니다(HTTP {soft.get('status')})")
     if f.get("rate_limited"):
         add("site", "속도 제한", f"{f['rate_limited']:,}장을 못 봤습니다(429·503)")
     trust = f.get("trust") or {}

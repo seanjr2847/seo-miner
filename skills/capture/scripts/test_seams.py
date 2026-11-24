@@ -3074,6 +3074,59 @@ const stIxStop = () => null, stBlocked = () => 0;
         f"심각한 갈래가 있는데 띠가 그것을 말하지 않는다 — 많은 쪽을 골랐다: {p['msg']}")
 
 
+def test_seam_site_crawl_facts_lines_come_from_the_server():
+    """[사이트 점검]의 「크롤이 사이트에 대해 본 것」은 서버가 만든 줄을 그리기만 한다.
+
+    만드는 쪽은 collect_crawl.fact_lines(→ crawl_runs.facts_json), 그리는 쪽은 site.html 의
+    CR_facts. 줄 이름을 화면에 적으면 사본이다 — 서버가 줄을 하나 더해도 화면은 안 고쳐도 되고,
+    에이전트용 줄(g="agent")은 「기회가 아니다」라는 말 아래에 선다. facts_json 이 없는 옛 회차·
+    깨진 값에서는 아무것도 안 그린다(접힘째 숨는다).
+    """
+    import collect_crawl
+    import crawl_site
+    site = (ROOT / "skills" / "capture" / "templates" / "views" / "site.html").read_text("utf-8")
+    facts = {"robots": {"status": 200, "state": "ok", "crawl_delay": 3, "rsl": "https://s.kr/l.xml"},
+             "sitemap": {"files": [{"format": "urlset"}], "listed": 12, "seeds": 12,
+                         "fallback": True, "capped": False},
+             "host": {"http": "redirect", "alt_host": "dup", "cert_days": 40, "hsts": False},
+             "soft404": {"status": 404, "soft": 0}, "rate_limited": 2,
+             "trust": {k: None for k in crawl_site.TRUST_PAGES},
+             "latency": {"p50": 400, "p95": 1900, "n": 30}, "maps": 1, "webmcp": 0,
+             "well_known": [{"path": p, "name": n, "found": 0} for p, n, _ in crawl_site.WELL_KNOWN],
+             "markdown": {"accept": 0, "sibling": None}}
+    lines = collect_crawl.fact_lines(facts)
+    assert {l["g"] for l in lines} == {"site", "agent"} and all(l["k"] and l["v"] for l in lines), lines
+    block = _view_block("site.html", "function CR_facts(d)")
+    for l in lines:
+        assert l["k"] not in block, f"CR_facts 가 사실 줄 이름을 손으로 적었다: {l['k']}"
+    # 다른 화면 글에 안 나오는 이름으로 사본을 본다(robots.txt·사이트맵 같은 말은 본문에도 있다)
+    for name in ("Markdown 협상", "RSL 라이선스", "WebMCP 표식", "TLS 인증서", "응답 지연"):
+        assert any(l["k"] == name for l in lines) and name not in site,             f"site.html 에 사실 줄 이름 사본이 있다: {name}"
+    assert "CR_facts(d)" in _view_block("site.html", "function renderCrawl(d)"), \
+        "renderCrawl 이 사실 줄을 안 그린다"
+    stubs = "const esc = s => String(s).replace(/</g, '&lt;');\n"
+
+    def draw(run: dict):
+        d = {"crawl": {"run": run}}
+        return _node_views(stubs + _view_block("site.html", "function CR_facts(d)") + "\n"
+                           + f"console.log(JSON.stringify(CR_facts({json.dumps(d, ensure_ascii=False)})));")
+    html = draw({"facts_json": json.dumps({"lines": lines}, ensure_ascii=False)})
+    if html is None:
+        print("  (node 가 없어 건너뜀)")
+        return
+    for l in lines:
+        assert l["k"] in html and l["v"].replace("<", "&lt;") in html, f"사실 줄이 화면에 안 섰다: {l}"
+    first_agent = next(l["k"] for l in lines if l["g"] == "agent")
+    last_site = [l["k"] for l in lines if l["g"] == "site"][-1]
+    assert html.index(last_site) < html.index("기회 목록에 올리지 않습니다") < html.index(first_agent), \
+        "에이전트용 줄이 「기회가 아니다」라는 말 아래에 서지 않는다"
+    only_site = draw({"facts_json": json.dumps({"lines": [l for l in lines if l["g"] == "site"]},
+                                               ensure_ascii=False)})
+    assert "기회 목록에 올리지 않습니다" not in only_site, "에이전트용 줄이 없는데 그 안내가 섰다"
+    for run in ({}, {"facts_json": None}, {"facts_json": "{깨진"}, {"facts_json": "{}"}):
+        assert draw(run) == "", f"사실이 없는 회차에서 무언가 그렸다: {run}"
+
+
 def test_seam_crawl_intl_kinds_one_table():
     """다국어 갈래(collect_crawl.INTL_KINDS)도 이름표·심각도 한 벌을 화면과 요청문이 같이 본다.
 
