@@ -946,6 +946,67 @@ def test_llms_txt_three_states_and_google_caveat():
     assert "- llms.txt: 없음." in botb, botb
 
 
+def test_ai_bot_brief_separates_server_refusal_from_robots_block():
+    """robots.txt 가 막는 것과 서버(방화벽)가 거절하는 것은 고칠 자리가 다르다.
+
+    한 표의 다른 칸에 놓고, 서버 쪽은 "robots.txt 가 아니라 방화벽"이라고 따로 말한다.
+    그 결과가 우리 쪽에서 봇 이름만 실어 요청해 본 것이라는 한계도 같이 싣는다.
+    안 물은 회차(server 키가 없거나 전부 None)는 표도 문구도 예전 그대로다.
+    """
+    import ai_access
+
+    def bot(ua, purpose, engine, rule, **kw):
+        return {"bot": ua, "purpose": purpose, "engine": engine, "vendor": None, "rule": rule, **kw}
+    srv = lambda v, st: {"verdict": v, "status": st, "detail": f"HTTP {st}",   # noqa: E731
+                         "label": ai_access.SERVER_VERDICT[v]}
+    ctx = {"ai_bots": [
+        bot("OAI-SearchBot", "search", "ChatGPT 검색", "Disallow: /", server=None),
+        bot("PerplexityBot", "search", "Perplexity", None, server=srv("refused", 403)),
+        bot("Claude-User", "user", "Claude", None, server=srv("served", 200)),
+        bot("GPTBot", "training", "OpenAI 모델 학습", "Disallow: /", server=None,
+            ua_notes=[{"line": "User-agent: GPTBot/1.1", "applied": True}]),
+        bot("ChatGPT-User", "user", "ChatGPT", "Disallow: /", server=None, may_ignore=True),
+        bot("OAI-AdsBot", "other", "ChatGPT 광고 랜딩 확인", "Disallow: /", server=None)],
+        "ai_server_caveat": ai_access.SERVER_CAVEAT,
+        "content_signals": [{"line": "Content-Signal: search=yes, ai-train=no", "agents": ["*"]}]}
+    body = brief.build(_opp("ai_bot_blocked", "OAI-SearchBot"), ctx)["body"]
+    assert "| 크롤러 | 용도 | 엔진 | 지금 | 막는 줄 | 서버 반응 |" in body, body
+    assert "| PerplexityBot | 검색·인용 색인 | Perplexity | 허용 | - | 거절함 (HTTP 403) |" in body, body
+    assert "| Claude-User | 사용자 요청 페치 | Claude | 허용 | - | 응답함 |" in body, body
+    assert "| OAI-SearchBot | 검색·인용 색인 | ChatGPT 검색 | 차단: 인용 막힘 | Disallow: / | - |" in body, body
+    assert "robots.txt 는 열어 두었지만 서버가 거절한 크롤러: PerplexityBot" in body, body
+    assert "방화벽(WAF)" in body and ai_access.SERVER_CAVEAT in body, body
+    # 기타 용도(광고 랜딩 확인)는 '용도 모름'이 아니다 — 인용과 무관하다고 말한다
+    assert "| OAI-AdsBot | 기타 | ChatGPT 광고 랜딩 확인 | 차단: 인용과 무관 |" in body, body
+    # 비표준 UA 줄 — 원문과 고칠 꼴
+    assert "`User-agent: GPTBot/1.1`" in body and "`User-agent: GPTBot`" in body, body
+    # 벤더가 robots.txt 를 안 따를 수 있다고 적은 봇
+    assert "ChatGPT-User" in body and "따르지 않을 수 있다" in body, body
+    # Content-Signal — 원문 그대로, 판정 없음
+    assert "`Content-Signal: search=yes, ai-train=no`" in body and "판정하지 않습니다" in body, body
+
+    # 안 물은 회차 — 예전 표 그대로, 서버 얘기 없음
+    old = brief.build(_opp("ai_bot_blocked", "OAI-SearchBot"), {"ai_bots": [
+        bot("OAI-SearchBot", "search", "ChatGPT 검색", "Disallow: /")]})["body"]
+    assert "| 크롤러 | 용도 | 엔진 | 지금 | 막는 줄 |\n" in old + "\n", old
+    assert "서버 반응" not in old and "방화벽" not in old and "Content-Signal" not in old, old
+
+
+def test_llms_txt_says_when_the_file_exists_but_is_malformed():
+    """있지만 형식이 깨졌다 — '있음'만 말하면 멀쩡한 줄 안다. 모르는 회차(키 없음)는 예전 그대로."""
+    import ai_access
+    ask = {"ai_bots": [], "ai_by_prompt": [{"prompt": "질문", "engines": "chatgpt",
+                                             "checks": 4, "cited": 0, "mentioned": 1}]}
+    bad = brief.build(_opp("ai_citation_gap", "질문"), {**ask, "llms_txt": {
+        "found": True, "bytes": 20, "head": "x", "problems": ["no_h1", "no_link"]}})["body"]
+    assert "- llms.txt: 있음 (20바이트), 형식이 깨졌습니다: " + ai_access.llms_format_text(
+        ["no_h1", "no_link"]) in bad, bad
+    assert "구글은 이 파일을 쓰지 않습니다" in bad, bad
+    ok = brief.build(_opp("ai_citation_gap", "질문"), {**ask, "llms_txt": {
+        "found": True, "bytes": 1234, "head": "# x", "problems": []}})["body"]
+    assert "- llms.txt: 있음 (1,234바이트)." in ok and "형식이 깨졌" not in ok, ok
+
+
 def test_aio_brief_follows_rank_and_never_asks_for_faq_markup():
     """구글 AI 요약은 AI 전용 마크업이 필요 없고 출처를 순위 시스템에서 고른다.
 

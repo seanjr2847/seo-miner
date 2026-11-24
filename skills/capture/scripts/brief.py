@@ -41,6 +41,7 @@ import json
 import re
 from typing import Callable
 
+import ai_access
 import scoring
 import serp_adapter
 
@@ -2982,6 +2983,11 @@ def _llms_lines(ctx) -> list[str]:
             "Perplexity 쪽에만 도움이 될 수 있습니다.")
     if lt.get("found"):
         size = f" ({_n(lt.get('bytes'))}바이트)" if lt.get("bytes") else ""
+        # 있지만 형식이 깨졌다(H1·링크·길이 — ai_access.llms_format). 판정을 안 한 회차는
+        # problems 키가 없다 — 그때는 예전처럼 "있음"까지만 말한다.
+        bad = ai_access.llms_format_text(lt.get("problems"))
+        if bad:
+            return [f"- llms.txt: 있음{size}, 형식이 깨졌습니다: {bad}. {tail}"]
         return [f"- llms.txt: 있음{size}. {tail}"]
     return [f"- llms.txt: 없음. 인용 공백의 원인으로 보지는 않습니다. {tail}"]
 
@@ -3007,14 +3013,54 @@ def _ev_ai_bot(o, ctx, pages):
             return "차단: 인용 막힘"
         if r.get("purpose") == "training":
             return "학습만 막음. 인용과 무관(권장되는 중간 지점)"
+        if r.get("purpose") == "other":
+            return "차단: 인용과 무관"
         return "차단: 용도 모름"
+
+    # 서버 반응(그 봇 UA 로 홈을 요청해 본 결과) — robots.txt 판정과 다른 칸이다.
+    # 한 봇이라도 물어본 회차에만 칸을 세운다(옛 회차의 표는 그대로다).
+    probed = any(r.get("server") for r in rows)
+
+    def server(r):
+        s = r.get("server")
+        if not s:
+            return "-"
+        st = f" (HTTP {s['status']})" if s.get("status") and s.get("verdict") != "served" else ""
+        return f"{s.get('label') or '모름'}{st}"
 
     L = [f"- robots.txt 판정: {len(rows)}개 크롤러 중 검색·인용용 {len(citing)}개가 "
          f"막혀 있습니다" + (f" (학습용 {len(training)}개 차단은 인용과 무관)" if training else "")
          + "."]
-    L += _table(["크롤러", "용도", "엔진", "지금", "막는 줄"],
+    L += _table(["크롤러", "용도", "엔진", "지금", "막는 줄"] + (["서버 반응"] if probed else []),
                 [[r["bot"], scoring.AI_BOT_PURPOSE.get(r.get("purpose"), "모름"),
-                  r.get("engine") or "-", now(r), r.get("rule") or "-"] for r in rows])
+                  r.get("engine") or "-", now(r), r.get("rule") or "-"]
+                 + ([server(r)] if probed else []) for r in rows])
+    # robots.txt 는 열었는데 서버가 거절한다 — 고칠 자리가 robots.txt 가 아니다
+    refused = [r["bot"] for r in rows if not r.get("rule")
+               and (r.get("server") or {}).get("verdict") in ("refused", "challenge")]
+    if refused:
+        L.append(f"- robots.txt 는 열어 두었지만 서버가 거절한 크롤러: {', '.join(refused)}. "
+                 "이건 robots.txt 의 일이 아니라 방화벽(WAF)·CDN 봇 설정의 일입니다.")
+    if probed and ctx.get("ai_server_caveat"):
+        L.append(f"- {ctx['ai_server_caveat']}")
+    # 토큰만 적지 않은 User-agent 줄 — 읽는 쪽마다 다르게 읽는다(ai_access.ua_notes)
+    for r in rows:
+        for n in r.get("ua_notes") or []:
+            L.append(f"- 비표준 User-agent 줄: `{n['line']}`. 이름에는 버전·괄호를 붙일 수 "
+                     "없습니다(RFC 9309). "
+                     + ("이 판정은 앞머리 이름으로 읽었지만 못 읽는 크롤러도 있습니다. "
+                        if n.get("applied") else f"이 줄은 {r['bot']} 에게 적용되지 않습니다. ")
+                     + f"`User-agent: {r['bot']}` 으로 적으세요.")
+    ignoring = [r["bot"] for r in rows if r.get("rule") and r.get("may_ignore")]
+    if ignoring:
+        L.append(f"- {', '.join(ignoring)}: 벤더 문서가 \"사용자가 시킨 페치라 robots.txt 를 "
+                 "따르지 않을 수 있다\"고 적은 크롤러입니다. 막는 줄이 있어도 실제로는 들어올 "
+                 "수 있습니다.")
+    for cs in ctx.get("content_signals") or []:
+        who = f" (User-agent: {', '.join(cs['agents'])})" if cs.get("agents") else ""
+        L.append(f"- robots.txt 의 Content-Signal 줄{who}: `{cs['line']}`. 가져간 내용의 "
+                 "쓰임새에 대한 의사 표시이고 크롤 허용·차단과는 별개입니다. 적힌 그대로 옮겼고 "
+                 "판정하지 않습니다.")
     if any(r["bot"].lower() == "bingbot" for r in citing):
         L.append("- Bingbot 이 막혀 있습니다. Copilot 인용만의 문제가 아니라 빙 검색 전체에서 "
                  "빠진다는 뜻입니다.")

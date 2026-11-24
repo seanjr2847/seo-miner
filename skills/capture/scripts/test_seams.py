@@ -5660,6 +5660,59 @@ def test_seam_202_ai_engine_table_single_source():
     assert not hits, f"엔진 표 사본: {hits}"
 
 
+def test_seam_ai_access_verdicts_and_payload_keys_single_source():
+    """AI 크롤러 접근 — 판정은 ai_access 한 벌이고, 화면·요청문은 그 이름을 그대로 쓴다.
+
+    이음매가 넷이다. (가) robots.txt 판정: scoring.robots_blocks·_named_in_robots 가 ai_access 를
+    부른다 — urllib.robotparser 로 되돌아가면 `User-agent: bot` 이 다시 GPTBot 을 잡는다.
+    (나) 서버 반응의 판정 이름(served·refused·challenge·unknown)은 ai_access.SERVER_VERDICT 가
+    정본이고, 화면(aicite.html 의 AI_bots)과 요청문(brief._ev_ai_bot)이 견주는 글자가 전부 그 안에
+    있다. (다) 화면이 읽는 페이로드 칸(d.content_signals·d.ai_server_caveat·행의 server/ua_notes/
+    may_ignore·llms 의 problems_text)을 dashboard._axis_ai_bots 가 실제로 낸다. (라) llms.txt 문제의
+    말은 ai_access.LLMS_PROBLEMS 한 벌이다 — 화면·요청문이 문장 사본을 갖지 않는다.
+    """
+    import ai_access
+    import brief
+    import dashboard
+    import scoring
+    for fn in (scoring.robots_blocks, scoring._named_in_robots):
+        src = inspect_src(fn)
+        assert "ai_access." in src and "RobotFileParser" not in src, fn.__name__
+    assert "robotparser" not in (SCRIPTS / "scoring.py").read_text("utf-8").split('"""', 2)[2] \
+        .replace("urllib.robotparser", ""), "scoring 이 robotparser 를 다시 쓴다"
+
+    view = (ROOT / "skills" / "capture" / "templates" / "views" / "aicite.html").read_text("utf-8")
+    m = re.search(r"function AI_bots\(rows, x\) \{(.*?)\n\}\n", view, re.S)
+    assert m, "aicite.html 에 AI_bots(rows, x) 가 없다 — 이 검사가 헛돈다"
+    js = m.group(1)
+    seen = set(re.findall(r'verdict\s*===\s*"(\w+)"', js))
+    assert seen and seen <= set(ai_access.SERVER_VERDICT), seen - set(ai_access.SERVER_VERDICT)
+    ev = inspect_src(brief._ev_ai_bot)
+    lits = set(re.findall(r'"(served|refused|challenge|unknown|blocked|denied|ok)"', ev))
+    assert lits and lits <= set(ai_access.SERVER_VERDICT), lits
+
+    run = {"robots_txt": "User-agent: *\nContent-Signal: ai-train=no\nAllow: /",
+           "llms_txt_found": 1, "llms_txt_bytes": 3, "llms_txt_head": "x",
+           "llms_txt_format": "no_h1",
+           "ai_ua_probe": ai_access.probe_pack({"baseline": 200, "rows": {
+               "OAI-SearchBot": {"verdict": "refused", "status": 403, "detail": "HTTP 403"}}})}
+    d = dashboard._axis_ai_bots({"domain": "x.kr"}, {"crawl": {"run": run}})
+    for key in re.findall(r"\bd\.(content_signals|ai_server_caveat|llms_txt)\b", view):
+        assert key in d, f"화면이 읽는 d.{key} 를 _axis_ai_bots 가 안 낸다"
+    assert {"content_signals", "ai_server_caveat"} <= set(re.findall(r"\bd\.(\w+)", view))
+    row = next(r for r in d["ai_bots"] if r["bot"] == "OAI-SearchBot")
+    for key in set(re.findall(r"\br\.(server|ua_notes|may_ignore|group)\b", js)):
+        assert key in row, f"화면이 읽는 r.{key} 가 봇 행에 없다"
+    for key in set(re.findall(r"\bs\.(verdict|status|label|detail)\b", js)):
+        assert key in row["server"], f"화면이 읽는 server.{key} 가 없다"
+    for key in set(re.findall(r"\blt\.(\w+)", js)):
+        assert key in d["llms_txt"], f"화면이 읽는 llms_txt.{key} 가 없다"
+    for text in ai_access.LLMS_PROBLEMS.values():
+        assert text not in view and text not in (SCRIPTS / "brief.py").read_text("utf-8"), \
+            f"llms.txt 문제 문장의 사본: {text}"
+    assert ai_access.SERVER_CAVEAT not in view, "서버 반응 한계 문장의 사본이 화면에 있다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

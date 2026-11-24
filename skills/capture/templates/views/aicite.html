@@ -62,6 +62,9 @@
 :is(#view-aicite,#view-aisum) [role="button"]:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 /* 표·차트에 딸린 한 줄. */
 .ainote { font-size:var(--fs-1); line-height:1.6; color:var(--sub); margin:12px 0 0; }
+/* AI 크롤러 표 아래 덧말 — robots.txt 줄 원문만 등폭이다(명령·식별자). 한글 문장은 본문 서체 그대로. */
+.aibot-note code { font:400 var(--fs-1)/1.5 var(--mono); padding:1px 6px; border-radius:6px; background:var(--sunk);
+  overflow-wrap:anywhere; }
 #view-aicite .aitb + .ainote { margin-top:12px; }
 
 /* ── 추이 카드: 큰 숫자 셋 + 곡선 ── */
@@ -1528,24 +1531,62 @@ const AI_pairs = () => { AI_solo("ai-mix-sec", "ai-sec"); AI_solo("ai-share-sec"
       화면은 용도 이름도 "인용을 끊는 용도"인지도 다시 정하지 않고 purpose_label·citing 을 그대로 쓴다.
       막힌 것이 위, 그중 검색·인용용이 맨 위다. 옛 박제본·robots.txt 를 못 읽은 크롤은 행이 없다 → 카드째 접는다
       (못 읽은 것을 "전부 열림"으로 읽지 않는다). ── */
-function AI_bots(rows) {
+/* 서버 반응(r.server)은 robots.txt 판정(r.rule)과 **다른 칸**이다 — robots.txt 는 열었는데 방화벽이 그 봇
+   이름을 거절하는 일이 있고, 고칠 자리가 다르다. 판정·이름표는 서버(ai_access)가 정해 보낸다: 화면은
+   server.verdict 로 색만 고르고 글자는 server.label 을 그대로 쓴다. 한 봇도 안 물은 회차(옛 회차)는 칸째 없다.
+   x = {signals, caveat, llms} — Content-Signal 줄 원문(판정 없음)·서버 반응의 한계 한 줄·llms.txt 상태. */
+function AI_bots(rows, x) {
+  x = x || {};
+  const refused = r => !r.rule && r.server && (r.server.verdict === "refused" || r.server.verdict === "challenge");
   const sorted = rows.slice().sort((a, b) =>
-    (!!b.rule - !!a.rule) || (!!b.citing - !!a.citing));
+    (!!b.rule - !!a.rule) || (refused(b) - refused(a)) || (!!b.citing - !!a.citing));
   const cut = sorted.filter(r => r.rule && r.citing).length;
-  const sub = cut
+  const wall = sorted.filter(r => refused(r) && r.citing).length;
+  const probed = sorted.some(r => r.server);
+  const sub = (cut
     ? `검색·인용용 크롤러 <b>${num(cut)}개</b>가 robots.txt 에 막혀 있습니다. 막혀 있으면 그 엔진이 답을 만들 때 우리 글을 못 읽을 수 있습니다.`
     : (sorted.some(r => r.rule)
-      ? "검색·인용용 크롤러는 열려 있습니다. 막힌 것은 학습용이라 인용 항목과 별개입니다."
-      : "robots.txt 가 AI 크롤러를 막지 않습니다.");
-  const body = AI_card(table(
-    ["크롤러", "엔진", "용도?학습용 봇을 막는 것은 인용 항목과 별개입니다. 검색·인용용과 사용자 요청 페치 봇이 막히면 그 엔진 답변의 출처로 실리기 어렵습니다",
-     "robots.txt"],
+      ? "검색·인용용 크롤러는 robots.txt 에서 열려 있습니다. 막힌 것은 인용 항목과 별개입니다."
+      : "robots.txt 가 AI 크롤러를 막지 않습니다."))
+    + (wall ? ` robots.txt 와 별개로, 서버가 그 이름의 요청을 거절한 크롤러가 <b>${num(wall)}개</b> 있습니다.` : "");
+  const srv = r => {
+    const s = r.server;
+    if (!s) return `<span class="muted">-</span>`;
+    const cls = s.verdict === "served" ? "ok" : (s.verdict === "unknown" ? "" : "warn");
+    const st = s.status && s.verdict !== "served" ? ` <span class="muted">HTTP ${esc(s.status)}</span>` : "";
+    return `<span class="badge ${cls}">${esc(s.label || "모름")}</span>${st}`;
+  };
+  const heads = ["크롤러", "엔진", "용도?학습용 봇을 막는 것은 인용 항목과 별개입니다. 검색·인용용과 사용자 요청 페치 봇이 막히면 그 엔진 답변의 출처로 실리기 어렵습니다",
+     "robots.txt"];
+  if (probed) heads.push("서버 반응?그 봇 이름을 실은 요청으로 홈을 한 번 열어 본 결과입니다. robots.txt 가 막은 봇과 학습용 봇은 묻지 않습니다");
+  const table_ = table(heads,
     sorted.map(r => `<tr><td>${esc(r.bot)}</td><td>${esc(r.engine || r.vendor || "-")}</td>
       <td>${esc(r.purpose_label || "모름")}</td>
       <td>${r.rule
         ? `<span class="badge ${r.citing ? "warn" : ""}">막힘</span> <span class="muted">${esc(r.rule)}</span>`
-        : `<span class="badge ok">열림</span>`}</td></tr>`),
-    ""));
+        : `<span class="badge ok">열림</span>`}</td>
+      ${probed ? `<td>${srv(r)}</td>` : ""}</tr>`),
+    "");
+  // 표 아래 덧말 — 있을 때만. 한 줄에 사실 하나.
+  const notes = [];
+  if (probed && x.caveat) notes.push(esc(x.caveat));
+  sorted.forEach(r => (r.ua_notes || []).forEach(n => notes.push(
+    `비표준 User-agent 줄 <code>${esc(n.line)}</code>: 이름에는 버전·괄호를 붙일 수 없습니다. `
+    + (n.applied ? "여기서는 앞머리 이름으로 읽었지만 못 읽는 크롤러도 있습니다. "
+                 : `이 줄은 ${esc(r.bot)} 에게 적용되지 않습니다. `)
+    + `<code>User-agent: ${esc(r.bot)}</code> 으로 적으세요.`)));
+  const loose = sorted.filter(r => r.rule && r.may_ignore).map(r => esc(r.bot));
+  if (loose.length) notes.push(`${loose.join(", ")}: 사용자가 시킨 페치라 robots.txt 를 따르지 않을 수 있다고 벤더 문서가 적은 크롤러입니다. 막는 줄이 있어도 실제로는 들어올 수 있습니다.`);
+  (x.signals || []).forEach(s => notes.push(
+    `robots.txt 의 Content-Signal 줄${s.agents && s.agents.length ? ` (User-agent: ${esc(s.agents.join(", "))})` : ""}: `
+    + `<code>${esc(s.line)}</code> 가져간 내용의 쓰임새에 대한 의사 표시이고 크롤 허용·차단과는 별개입니다. 적힌 그대로이고 판정하지 않습니다.`));
+  const lt = x.llms;
+  if (lt) notes.push(lt.found
+    ? `llms.txt: 있음${lt.bytes ? ` (${num(lt.bytes)}바이트)` : ""}`
+      + (lt.problems_text ? `, 형식이 깨졌습니다: ${esc(lt.problems_text)}.` : ".")
+      + " 구글은 이 파일을 쓰지 않습니다."
+    : "llms.txt: 없음. 구글은 이 파일을 쓰지 않고, 인용이 안 되는 원인으로 보지도 않습니다.");
+  const body = AI_card(table_) + notes.map(n => `<p class="ainote aibot-note">${n}</p>`).join("");
   return {sub, body};
 }
 
@@ -1935,7 +1976,7 @@ VIEW("aicite", function (d) {
   const bots = Array.isArray(d.ai_bots) ? d.ai_bots : [];
   $("ai-bots-sec").hidden = !bots.length;
   if (bots.length) {
-    const b = AI_bots(bots);
+    const b = AI_bots(bots, {signals: d.content_signals, caveat: d.ai_server_caveat, llms: d.llms_txt});
     $("ai-bots-sub").innerHTML = b.sub;
     $("ai-bots-body").innerHTML = b.body;
   }

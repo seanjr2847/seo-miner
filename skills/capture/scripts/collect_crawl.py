@@ -32,6 +32,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import ai_access  # noqa: E402
 import collect_page  # noqa: E402
 import collector  # noqa: E402
 import db  # noqa: E402
@@ -465,8 +466,30 @@ def probe_llms_txt(home: str) -> dict:
     head = text.lstrip()[:200].lower()
     if "html" in (r.get("content_type") or "").lower() or head.startswith(("<!doctype", "<html")):
         return {"found": 0, "bytes": None, "head": None}
+    # format: 있지만 형식이 깨졌나 — 걸린 문제 코드([] 면 멀쩡). 판정은 ai_access 한 곳.
     return {"found": 1, "bytes": r.get("bytes") or len(text.encode()),
-            "head": text.strip()[:LLMS_HEAD] or None}
+            "head": text.strip()[:LLMS_HEAD] or None,
+            "format": ai_access.llms_format(text)}
+
+
+def fetch_as(url: str, ua: str) -> dict:
+    """URL 한 장을 이 UA 로 — 한 런 안의 원문 공유를 타지 않는다(ai_access.http_get).
+    self-check 는 fetch 처럼 이 함수도 갈아끼운다."""
+    return ai_access.http_get(url, ua)
+
+
+def probe_ai_access(home: str, robots_txt: str, *, throttle: float = 0.0) -> dict | None:
+    """AI 봇 UA 로 홈을 봇당 한 번 — 서버(WAF·CAPTCHA)가 그 이름을 어떻게 받나.
+
+    이 크롤이 도는 사이트는 등록된 내 사이트뿐이다(남의 사이트에는 안 한다). robots.txt 가
+    이미 막은 봇과 학습용 봇은 묻지 않는다. 실패는 크롤을 막지 않는다 — 못 물었으면 None.
+    """
+    try:
+        return ai_access.probe_bots(
+            home, scoring.ai_bots(), robots_txt, get=lambda u, ua: fetch_as(u, ua),
+            pause=(lambda: time.sleep(throttle)) if throttle else None)
+    except Exception:
+        return None
 
 
 # ── 크롤 ────────────────────────────────────────────────────────────────────
@@ -1114,6 +1137,8 @@ def collect(project: str, *, dry_run: bool = False, limit: int | None = None,
             # robots.txt 를 받은 김에 /llms.txt 도 한 번 — 크롤 뒤에 받는 이유는 순서다:
             # 시드가 홈일 때 robots.txt 다음 요청은 홈이어야 한다(자체점검이 못 박는다).
             db.write_llms_txt(conn, run_id, probe_llms_txt(home))
+            db.write_ai_ua_probe(conn, run_id, probe_ai_access(home, robots_txt,
+                                                               throttle=st.throttle))
             intl = intl_issues(pages, links, home=home,
                                locales=db.site_locales(conn, p["id"]))
             n_issues = derive_issues(conn, run_id, home=home, chains=chains, extra=intl)
@@ -1240,6 +1265,15 @@ def _selfcheck() -> None:
     boot.close()
 
     orig_fetch = globals()["fetch"]
+    # AI 봇 UA 요청(fetch_as)도 가상으로 — 자체점검이 진짜 네트워크로 나가지 않게.
+    # 요청은 따로 적는다(log 는 크롤이 가져온 주소만 센다). OAI-SearchBot 만 서버가 거절한다.
+    as_log: list[tuple[str, str]] = []
+
+    def _fake_as(url, ua):
+        as_log.append((url, ua))
+        return {"status": 403 if "OAI-SearchBot/" in ua else 200, "final_url": url,
+                "headers": {}, "text": ""}
+    globals()["fetch_as"] = _fake_as
     conn = db.connect()
     pid = conn.execute("SELECT id FROM projects WHERE name='cw'").fetchone()["id"]
 
@@ -1272,6 +1306,17 @@ def _selfcheck() -> None:
 
         # 1. 사이트맵 시드
         assert run1["seed"] == "sitemap", dict(run1)
+
+        # AI 봇 UA 서버 반응 — 홈만, 기준 1회 + 봇당 1회. 학습용 봇은 묻지 않는다.
+        # robots.txt 판정과 다른 칸(ai_ua_probe)에 남는다
+        import json as _json
+        _probe = _json.loads(run1["ai_ua_probe"])
+        assert {u for u, _ in as_log} == {"https://site.kr/"}, as_log
+        assert len(as_log) == len({ua for _, ua in as_log}) == len(_probe["rows"]) + 1, as_log
+        assert not any("GPTBot/" in ua for _, ua in as_log), "학습용 봇까지 물었다"
+        assert _probe["baseline"] == 200, _probe
+        assert _probe["rows"]["OAI-SearchBot"]["verdict"] == "refused", _probe
+        assert _probe["rows"]["PerplexityBot"]["verdict"] == "served", _probe
 
         # 2. 외부 호스트는 가져오지 않는다 — 기록만 한다
         assert "https://ext.com/x" not in log, log
@@ -1350,6 +1395,10 @@ def _selfcheck() -> None:
                   for i in (run1["id"], run2))
         assert (l1["f"], l1["b"], l1["h"]) == (0, None, None), dict(l1)
         assert l2["f"] == 1 and l2["b"] > 0 and l2["h"].startswith("# 사이트"), dict(l2)
+        # 있지만 형식이 깨졌다(링크 없음·50자 미만) — 없는 회차는 형식 칸이 NULL(안 봄)
+        _fm = [conn.execute("SELECT llms_txt_format x FROM crawl_runs WHERE id=?",
+                            (i,)).fetchone()["x"] for i in (run1["id"], run2)]
+        assert _fm == [None, "no_link,too_short"], _fm
         diff = compare(conn, pid)
         assert diff["prev_run_id"] == run1["id"], diff
         new = {(i["kind"], i["url"]) for i in diff["new"]}
@@ -1414,6 +1463,8 @@ def _selfcheck() -> None:
         finally:
             globals()["fetch"] = orig_fetch
     assert probe(200, "# 이름\n" + "가" * 500)["found"] == 1
+    assert probe(200, "# 이름\n" + "가" * 500)["format"] == ["no_link"]
+    assert probe(200, "# 이름\n\n- [문서](https://s.kr/d): " + "가" * 60)["format"] == []
     assert len(probe(200, "# 이름\n" + "가" * 500)["head"]) == LLMS_HEAD
     assert probe(404) == {"found": 0, "bytes": None, "head": None}
     assert probe(410)["found"] == 0

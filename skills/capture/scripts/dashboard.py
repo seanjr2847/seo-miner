@@ -32,6 +32,7 @@ SETUP_SCRIPTS = Path(__file__).resolve().parents[2] / "setup" / "scripts"
 sys.path.insert(0, str(SETUP_SCRIPTS))
 import audit_data  # noqa: E402  (데이터 점검 — 페이로드의 이상한 모양을 d.health 로)
 import brief      # noqa: E402  (요청문 — 기회마다 AI 에 붙여 넣을 브리프를 세운다)
+import ai_access  # noqa: E402  (AI 크롤러 접근 판정 정본)
 import collect_crawl  # noqa: E402  (크롤 이슈 갈래 이름표 정본)
 import collect_vitals  # noqa: E402  (구글이 본 SEO 점검 이름표 정본)
 import collector  # noqa: E402  (프로젝트 설정 읽기 — 수집기와 같은 경로로)
@@ -1240,9 +1241,21 @@ def _axis_ai_bots(p, crawl: dict) -> dict:
     found = run.get("llms_txt_found")
     llms = None if found is None else {"found": bool(found), "bytes": run.get("llms_txt_bytes"),
                                        "head": run.get("llms_txt_head")}
+    # 있지만 형식이 깨졌나 — 본 회차에만 싣는다(옛 회차는 키 자체가 없다 = 안 봄).
+    # problems 는 코드, problems_text 는 그 말(정본 ai_access.LLMS_PROBLEMS — 화면이 사본을 안 갖는다)
+    fmt = ai_access.llms_format_unpack(run.get("llms_txt_format")) if found else None
+    if llms and fmt is not None:
+        llms["problems"] = fmt
+        llms["problems_text"] = ai_access.llms_format_text(fmt)
     home = f"https://{p['domain']}/" if p["domain"] else "https://example.com/"
-    return {"ai_bots": scoring.ai_bot_status(run.get("robots_txt") or "", home),
-            "llms_txt": llms}
+    robots = run.get("robots_txt") or ""
+    # 행마다 server: 그 봇 UA 로 홈을 요청했을 때 서버의 반응(안 물었으면 None).
+    # robots.txt 판정(rule)과 다른 칸이다 — 둘을 뭉치면 어디를 고칠지 모른다.
+    bots = ai_access.attach_server(scoring.ai_bot_status(robots, home), run.get("ai_ua_probe"))
+    return {"ai_bots": bots, "llms_txt": llms,
+            # Content-Signal 줄 원문 — 판정 없이 그대로(ai_access.content_signals)
+            "content_signals": ai_access.content_signals(robots),
+            "ai_server_caveat": ai_access.SERVER_CAVEAT}
 
 
 def _axis_vitals(conn, pid: int) -> dict:

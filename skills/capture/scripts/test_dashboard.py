@@ -392,6 +392,49 @@ def test_gather_ai_bots_carry_purpose_and_llms_three_states():
     conn.close()
 
 
+def test_gather_ai_access_keeps_robots_and_server_in_separate_fields():
+    """크롤 회차 → 페이로드: robots.txt 판정(rule)과 서버 반응(server)은 다른 칸이다.
+
+    뭉치면 "robots.txt 를 고쳐라"와 "방화벽을 봐라"가 한 말이 된다. Content-Signal 줄은
+    원문 그대로, llms.txt 형식 문제는 코드와 말을 같이 싣는다(화면이 사본을 안 갖게).
+    안 물은 회차(옛 회차)는 server 가 None, 형식 키가 없다 — 모름을 '문제 없음'으로 안 읽는다.
+    """
+    import ai_access
+    conn, pid = _brain("aiacc")
+    robots = ("User-agent: *\nContent-Signal: search=yes, ai-train=no\nAllow: /\n\n"
+              "User-agent: GPTBot/1.1\nDisallow: /\n\nUser-agent: PerplexityBot\nDisallow: /")
+    rid = conn.execute("INSERT INTO crawl_runs(project_id,finished_at,seed,robots_txt)"
+                       " VALUES(?,?,'home',?)", (pid, D, robots)).lastrowid
+    conn.commit()
+    d = dashboard.gather(conn, db.get_project(conn, "aiacc"))
+    bots = {r["bot"]: r for r in d["ai_bots"]}
+    assert all(r["server"] is None for r in d["ai_bots"]), "안 물은 회차에 서버 반응을 지어냈다"
+    assert d["content_signals"] == [{"line": "Content-Signal: search=yes, ai-train=no",
+                                     "agents": ["*"]}], d["content_signals"]
+    # 비표준 UA 줄 — 판정은 서되 그 줄을 따로 알린다
+    assert bots["GPTBot"]["rule"] == "Disallow: /" and bots["GPTBot"]["ua_notes"] == [
+        {"line": "User-agent: GPTBot/1.1", "applied": True}], bots["GPTBot"]
+    assert bots["OAI-SearchBot"]["group"] == "*" and bots["PerplexityBot"]["group"] == "PerplexityBot"
+    assert bots["ChatGPT-User"]["may_ignore"] is True and bots["Claude-User"]["may_ignore"] is False
+    db.write_ai_ua_probe(conn, rid, {"baseline": 200, "rows": {
+        "OAI-SearchBot": {"verdict": "refused", "status": 403, "detail": "HTTP 403"},
+        "Claude-User": {"verdict": "served", "status": 200, "detail": None}}})
+    db.write_llms_txt(conn, rid, {"found": 1, "bytes": 9, "head": "# 사이트", "format": ["no_link"]})
+    d = dashboard.gather(conn, db.get_project(conn, "aiacc"))
+    bots = {r["bot"]: r for r in d["ai_bots"]}
+    s = bots["OAI-SearchBot"]
+    assert s["rule"] is None and s["server"]["verdict"] == "refused" and s["server"]["status"] == 403, s
+    assert s["server"]["label"] == ai_access.SERVER_VERDICT["refused"]
+    assert bots["Claude-User"]["server"]["verdict"] == "served"
+    assert bots["GPTBot"]["server"] is None and bots["PerplexityBot"]["server"] is None
+    assert d["ai_server_caveat"] == ai_access.SERVER_CAVEAT
+    assert d["llms_txt"]["problems"] == ["no_link"], d["llms_txt"]
+    assert d["llms_txt"]["problems_text"] == ai_access.LLMS_PROBLEMS["no_link"]
+    db.write_llms_txt(conn, rid, {"found": 1, "bytes": 99, "head": "# 사이트", "format": []})
+    assert dashboard.gather(conn, db.get_project(conn, "aiacc"))["llms_txt"]["problems"] == []
+    conn.close()
+
+
 # ── 축 함수 단독 — gather() 를 통째로 안 돌리고 축 하나만 부른다 ─────────────
 def test_axis_gsc_pairs_same_period_snapshots_only():
     """gather() 가 아니라 _axis_gsc() 자체가 period_days 를 가려 짝짓는지.
