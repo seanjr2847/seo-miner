@@ -90,54 +90,43 @@ def test_collect_ai_cycle_and_failure_summary():
     p_succ_id, p_fail_id = prompt_rows[0]["id"], prompt_rows[1]["id"]
     conn.close()
 
-    orig_post = collect_ai.requests.post
-    orig_env_key = os.environ.get("OPENROUTER_API_KEY")
-    os.environ["OPENROUTER_API_KEY"] = "fake-openrouter-key"
+    # AI 인용 확인은 DataForSEO LLM Responses 로 묻는다 — 그 HTTP 경계(serp_adapter.requests.post)를
+    # 갈아 끼워 응답 꼴(tasks[0].result[0].items[type=message].sections[].annotations)째 흉내 낸다.
+    orig_post = collect_ai.serp_adapter.requests.post
+    saved_dfs = {k: os.environ.get(k) for k in ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")}
+    os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"] = "fake", "fake"
+
+    def task(code, result=None, msg="Ok."):
+        return FakeResponse({"status_code": 20000, "tasks": [
+            {"status_code": code, "status_message": msg, "cost": 0.01, "result": result}]})
 
     def fake_post(url, *args, **kwargs):
-        assert url == collect_ai.OPENROUTER_URL, f"Unexpected URL: {url}"
-        json_body = kwargs.get("json", {})
-        messages = json_body.get("messages", [])
-        user_msg = ""
-        for m in messages:
-            if m.get("role") == "user":
-                user_msg = m.get("content", "")
+        assert "/ai_optimization/chat_gpt/llm_responses/live" in url, f"Unexpected URL: {url}"
+        user_msg = (kwargs.get("json") or [{}])[0].get("user_prompt", "")
         if "ecrett 후기" in user_msg:
-            # annotations에 url_citation 포함 -> cited=1 기대
-            return FakeResponse({
-                "choices": [{
-                    "message": {
-                        "content": "ecrett 서비스는 매우 훌륭합니다. 자세한 내용은 공식 사이트 참고.",
-                        "annotations": [{
-                            "type": "url_citation",
-                            "url_citation": {"url": "https://e.com/review-page",
-                                             "title": "ecrett 리뷰"}
-                        }, {   # 같은 URL 이 또 나온다 — 한 번만 남고, 제목은 먼저 나온 것
-                            "type": "url_citation",
-                            "url_citation": {"url": "https://e.com/review-page",
-                                             "title": "다른 제목"}
-                        }, {   # 제목이 없는 인용, 다른 사이트
-                            "type": "url_citation",
-                            "url_citation": {"url": "https://rival.com/x"}
-                        }]
-                    }
-                }],
-                "usage": {"prompt_tokens": 15, "completion_tokens": 25}
-            })
+            # annotations 에 인용 포함 -> cited=1 기대
+            return task(20000, [{"model_name": "gpt-x", "items": [{"type": "message", "sections": [{
+                "type": "text",
+                "text": "ecrett 서비스는 매우 훌륭합니다. 자세한 내용은 공식 사이트 참고.",
+                "annotations": [
+                    {"url": "https://e.com/review-page", "title": "ecrett 리뷰"},
+                    # 같은 URL 이 또 나온다 — 한 번만 남고, 제목은 먼저 나온 것
+                    {"url": "https://e.com/review-page", "title": "다른 제목"},
+                    # 제목이 없는 인용, 다른 사이트
+                    {"url": "https://rival.com/x", "title": None}]}]}]}])
         elif "실패할 프롬프트" in user_msg:
-            return FakeResponse({"error": "Rate limit exceeded"}, status_code=429)
+            # 그 질문 하나의 거절(task 오류) — 단계를 멈추지 않고 항목 실패로 센다
+            return task(40501, msg="Invalid Field: 'user_prompt'.")
         raise RuntimeError(f"Unexpected prompt in fake_post: {user_msg}")
 
-    collect_ai.requests.post = fake_post
+    collect_ai.serp_adapter.requests.post = fake_post
     try:
         collect_ai.collect("ai_test_proj", engines="chatgpt",
                            samples=1, throttle=0)
     finally:
-        collect_ai.requests.post = orig_post
-        if orig_env_key is not None:
-            os.environ["OPENROUTER_API_KEY"] = orig_env_key
-        else:
-            os.environ.pop("OPENROUTER_API_KEY", None)
+        collect_ai.serp_adapter.requests.post = orig_post
+        for k, v in saved_dfs.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
     conn = db.connect()
     # 1. 성공 프롬프트에 대해 ai_checks 가 기록되고 cited=1 판정되었는지 확인
@@ -508,26 +497,16 @@ def test_collect_ai_today_skip_and_force():
     conn.close()
 
     post_calls = []
-    orig_post = collect_ai.requests.post
-    orig_env_key = os.environ.get("OPENROUTER_API_KEY")
-    os.environ["OPENROUTER_API_KEY"] = "fake-key"
+    orig_post = collect_ai.serp_adapter.post_dataforseo
+    saved_dfs = {k: os.environ.get(k) for k in ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")}
+    os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"] = "fake", "fake"
 
-    def mock_post(url, *args, **kwargs):
-        json_body = kwargs.get("json", {})
-        messages = json_body.get("messages", [])
-        user_msg = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
-        post_calls.append(user_msg)
-        return FakeResponse({
-            "choices": [{
-                "message": {
-                    "content": "응답 내용입니다.",
-                    "annotations": []
-                }
-            }],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 20}
-        })
+    def mock_post(path, body, timeout=None):
+        post_calls.append(body[0]["user_prompt"])
+        return [{"items": [{"type": "message",
+                            "sections": [{"type": "text", "text": "응답 내용입니다."}]}]}], 0.0
 
-    collect_ai.requests.post = mock_post
+    collect_ai.serp_adapter.post_dataforseo = mock_post
 
     try:
         # 1. 기본 실행: p_done_id 는 skip -> p_new_id 만 1회 호출
@@ -544,11 +523,9 @@ def test_collect_ai_today_skip_and_force():
         assert len(post_calls) == 2, f"--force 시 2개 모두 호출되어야 함 (호출수={len(post_calls)})"
         assert set(post_calls) == {"오늘_확인_질문", "오늘_미확인_질문"}
     finally:
-        collect_ai.requests.post = orig_post
-        if orig_env_key is not None:
-            os.environ["OPENROUTER_API_KEY"] = orig_env_key
-        else:
-            os.environ.pop("OPENROUTER_API_KEY", None)
+        collect_ai.serp_adapter.post_dataforseo = orig_post
+        for k, v in saved_dfs.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
 
 def test_collect_ai_rechecks_what_an_aborted_run_asked_today():
@@ -576,21 +553,18 @@ def test_collect_ai_rechecks_what_an_aborted_run_asked_today():
     conn.close()
 
     calls = []
-    orig_post = collect_ai.requests.post
-    orig_env_key = os.environ.get("OPENROUTER_API_KEY")
-    os.environ["OPENROUTER_API_KEY"] = "fake-key"
-    collect_ai.requests.post = lambda url, *a, **kw: (
+    orig_post = collect_ai.serp_adapter.post_dataforseo
+    saved_dfs = {k: os.environ.get(k) for k in ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")}
+    os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"] = "fake", "fake"
+    collect_ai.serp_adapter.post_dataforseo = lambda path, body, timeout=None: (
         calls.append(1),
-        FakeResponse({"choices": [{"message": {"content": "답", "annotations": []}}],
-                      "usage": {}}))[1]
+        ([{"items": [{"type": "message", "sections": [{"type": "text", "text": "답"}]}]}], 0.0))[1]
     try:
         collect_ai.collect("ai_abort_proj", engines="chatgpt", samples=1, throttle=0)
     finally:
-        collect_ai.requests.post = orig_post
-        if orig_env_key is not None:
-            os.environ["OPENROUTER_API_KEY"] = orig_env_key
-        else:
-            os.environ.pop("OPENROUTER_API_KEY", None)
+        collect_ai.serp_adapter.post_dataforseo = orig_post
+        for k, v in saved_dfs.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
     assert len(calls) == 1, "끊긴 회차가 오늘 물은 질문을 '이미 확인'으로 건너뛰었다"
     conn = db.connect()
     assert scoring.ai_prompt_state(conn, p["id"])["unmeasured"] == 0
@@ -625,25 +599,23 @@ def test_collect_ai_asks_unmeasured_and_stale_first():
     conn.commit()
     conn.close()
 
+    # AI 인용 확인은 DataForSEO LLM Responses 로 묻는다 — 그 경계(post_dataforseo)를 갈아 끼운다
     asked = []
-    orig_post = collect_ai.requests.post
-    orig_env_key = os.environ.get("OPENROUTER_API_KEY")
-    os.environ["OPENROUTER_API_KEY"] = "fake-key"
+    orig_post = collect_ai.serp_adapter.post_dataforseo
+    saved_dfs = {k: os.environ.get(k) for k in ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")}
+    os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"] = "fake", "fake"
 
-    def post(url, *a, **kw):
-        asked.append(kw["json"]["messages"][-1]["content"])
-        return FakeResponse({"choices": [{"message": {"content": "답", "annotations": []}}],
-                             "usage": {}})
-    collect_ai.requests.post = post
+    def post(path, body, timeout=None):
+        asked.append(body[0]["user_prompt"])
+        return [{"items": [{"type": "message", "sections": [{"type": "text", "text": "답"}]}]}], 0.0
+    collect_ai.serp_adapter.post_dataforseo = post
     try:
         collect_ai.collect("ai_pick_proj", engines="chatgpt", samples=1, throttle=0,
                            max_prompts=2)
     finally:
-        collect_ai.requests.post = orig_post
-        if orig_env_key is not None:
-            os.environ["OPENROUTER_API_KEY"] = orig_env_key
-        else:
-            os.environ.pop("OPENROUTER_API_KEY", None)
+        collect_ai.serp_adapter.post_dataforseo = orig_post
+        for k, v in saved_dfs.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
     got = {q for q in ("질문1_최근", "질문2_최근", "질문3_안잰것", "질문4_오래된것")
            if any(q in a for a in asked)}
     assert got == {"질문3_안잰것", "질문4_오래된것"},         f"상한 2 에서 안 잰 것·오래된 것을 먼저 묻지 않았다: {sorted(got)}"

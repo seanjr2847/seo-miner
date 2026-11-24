@@ -129,8 +129,8 @@ Claude Code 채팅에 네 줄이면 됩니다.
 
 | 키 | 켜지는 것 |
 |---|---|
-| `OPENROUTER_API_KEY` | AI 인용 확인(`/capture ai`) · 이번 달 할 일의 수정안(`/capture plays`) |
-| `DATAFORSEO_LOGIN` · `DATAFORSEO_PASSWORD` | 순위 추적·경쟁사·백링크(`/capture rank`·`competitors`·`backlinks`) |
+| `OPENROUTER_API_KEY` | 이번 달 할 일의 수정안(`/capture plays`) · AI 인용 질문 만들기 · 경쟁사 판정 |
+| `DATAFORSEO_LOGIN` · `DATAFORSEO_PASSWORD` | 순위 추적·AI 인용 확인·경쟁사·백링크(`/capture rank`·`ai`·`competitors`·`backlinks`) |
 | `SERPER_API_KEY` | 순위 추적의 대체재 |
 
 [설정] → **API 키** 칸에 넣으면 `~/.capture/env` 에 저장되고 모든 스크립트가 읽습니다.
@@ -220,7 +220,7 @@ flowchart LR
 | `/capture keywords` | 자동완성으로 키워드 후보 발굴 → 큐레이션 |
 | `/capture rank` | SERP 순위 스냅샷 + 연관검색어·경쟁사 자동 수확 (유료 키) |
 | `/capture crawl` | 사이트를 넓게 한 바퀴 — 깨진 내부 링크·리다이렉트 사슬·고아 페이지처럼 **한 장만 봐서는 안 나오는 것**. 회차로 남아 직전 대비 신규·해결을 셉니다 (내 사이트라 돈 안 듦) |
-| `/capture ai` | AI 엔진 인용 체크 (OpenRouter) |
+| `/capture ai` | AI 엔진 인용 체크 (DataForSEO LLM Responses) |
 | `/capture competitors` | 경쟁사 탐지·역키워드·트래픽 몫 — 그쪽은 잡았는데 나는 없는 검색어 (DataForSEO Labs, 유료 키). 옛 이름은 `/capture gap` |
 | `/capture backlinks` | 백링크 프로필·참조 도메인·앵커 + 링크 교집합(경쟁사는 받는데 우리는 못 받는 곳) (DataForSEO, 유료 키) |
 | `/capture local` | 지역 비즈니스 전용 — 구글 비즈니스 프로필·소재지 지도 순위·구역별 격자·리뷰(같은 지도 칸 상위 업체 대비)·반경 경쟁 업체. 사이트 종류가 다르면 건너뜁니다 (DataForSEO, 유료 키) |
@@ -316,7 +316,7 @@ flowchart LR
   끝내고 이전 측정을 그대로 둡니다. 한도에 걸리면 기다렸다 다시 칩니다. Google Ads
   한도를 올렸으면 `SEOMINER_DFS_RPM` 으로 알려 주세요.
 - 자동완성은 비공식 엔드포인트라 실패할 수 있습니다(실패 시 건너뛰고 계속).
-- AI 인용 확인은 `OPENROUTER_API_KEY`가 있어야 합니다. 브라우저로 실제 앱을 조작해
+- AI 인용 확인은 DataForSEO 키(`DATAFORSEO_LOGIN`·`DATAFORSEO_PASSWORD`)가 있어야 합니다. 브라우저로 실제 앱을 조작해
   실측하던 `/browse`는 제거됐습니다.
 
 ## 개발

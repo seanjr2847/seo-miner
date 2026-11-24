@@ -155,6 +155,7 @@ def test_balance_canary_still_wins_its_own_reason():
     """잔액 카나리아가 이미 막은 단계의 사유를 지출 상한이 덮지 않는다(둘 다 걸리면 먼저 안 쪽)."""
     conn = _brain()
     _spend(conn, "a", db.now(), 2.0)
+    # OpenRouter 잔액으로 막히는 단계는 이제 plays 다(AI 인용은 2026-11-24 부터 DataForSEO)
     saved = (serp_adapter.has_openrouter, serp_adapter.has_dataforseo, collect_ai.openrouter_ok,
              run_all.paid_estimate)
     serp_adapter.has_openrouter, serp_adapter.has_dataforseo = (lambda: True), (lambda: False)
@@ -162,8 +163,8 @@ def test_balance_canary_still_wins_its_own_reason():
     run_all.paid_estimate = lambda n, project=None: 0.5
     try:
         with caps(site_day=1), contextlib.redirect_stdout(io.StringIO()):
-            b = run_all.preflight([run_all.STAGE_BY_NAME["ai"]], project="a")
-        assert b == {"ai": "OpenRouter 잔액 $0.14"}, b
+            b = run_all.preflight([run_all.STAGE_BY_NAME["plays"]], project="a")
+        assert b == {"plays": "OpenRouter 잔액 $0.14"}, b
     finally:
         (serp_adapter.has_openrouter, serp_adapter.has_dataforseo, collect_ai.openrouter_ok,
          run_all.paid_estimate) = saved

@@ -210,13 +210,23 @@ CAPABILITIES = (
      "owner": "server", "blocking": False},
     {"id": "ai", "name": "AI 인용 확인",
      "desc": "ChatGPT·Perplexity·Gemini가 내 글을 인용하는지 검사",
-     "cost": "유료", "keys": ("OPENROUTER_API_KEY",),
-     "url": "https://openrouter.ai/keys",
-     "fix": "없어도 기회 목록까지는 그대로 갑니다. OpenRouter 키를 넣으면 이 단계가 "
-            "켜집니다. https://openrouter.ai/keys 에서 크레딧을 조금 충전하고 키를 "
-            "만드시면 됩니다.",
+     # 2026-11-24 부터 DataForSEO LLM Responses 로 묻는다(collect_ai.ask) — 순위 확인과 같은 키.
+     "cost": "유료", "keys": ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD"),
+     "url": "https://dataforseo.com",
+     "fix": "없어도 기회 목록까지는 그대로 갑니다. DataForSEO 아이디와 비밀번호를 넣으면 "
+            "이 단계가 켜집니다(순위 확인과 같은 키입니다). https://dataforseo.com 에서 "
+            "가입하고 API Settings 의 API 비밀번호를 넣으시면 됩니다.",
      # 호스팅에선 서버가 낸다. 로컬에서 키가 없으면 이 단계만 건너뛴다 —
      # 무료로 쓰는 사람도 기회 목록까지는 간다.
+     "owner": "server", "blocking": False},
+    {"id": "ai_write", "name": "AI 글쓰기(할 일 수정안·질문 만들기·경쟁사 판정)",
+     "desc": "할 일의 수정안 초안, AI 인용 질문 만들기, 경쟁사 판정을 AI 가 씀",
+     # 지시가 길어 DataForSEO LLM 의 500자 상한에 안 들어간다 — OpenRouter 에 남는다.
+     "cost": "유료", "keys": ("OPENROUTER_API_KEY",),
+     "url": "https://openrouter.ai/keys",
+     "fix": "없어도 기회 목록과 AI 인용 확인은 그대로 갑니다. OpenRouter 키를 넣으면 할 일 "
+            "수정안·질문 만들기·경쟁사 판정이 켜집니다. https://openrouter.ai/keys 에서 "
+            "크레딧을 조금 충전하고 키를 만드시면 됩니다.",
      "owner": "server", "blocking": False},
     {"id": "gsc", "name": "검색 실적 수집",
      "desc": "서치콘솔에서 노출·클릭·평균 순위를 그대로 수집 (필수 연결)",
@@ -510,7 +520,8 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         "keywords": core_ok,
         "brain": core_ok and brain_ok,
         "create": core_ok,
-        "ai": core_ok and keys["openrouter"],
+        "ai": core_ok and keys["dataforseo"],
+        "ai_write": core_ok and keys["openrouter"],
         "gsc": core_ok and all(deps_gsc.values()) and gsc_linked,
         "rank": core_ok and (keys["dataforseo"] or keys["serper"]),
         "vitals": core_ok,

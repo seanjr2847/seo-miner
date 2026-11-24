@@ -3461,14 +3461,19 @@ def test_ai_prompts_are_asked_per_market():
         pass
 
     # 묻기 — 상한은 시장마다고, 질문마다 그 시장으로 묻는다
+    # AI 인용 확인은 DataForSEO 로 묻는다(collect_ai.ask) — 그 키가 있어야 돈다
+    saved_dfs = {k: os.environ.get(k) for k in ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")}
+    os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"] = "fake", "fake"
     seen, real_ask = [], collect_ai.ask
-    collect_ai.ask = lambda model, prompt, key, locale, body=None: seen.append((prompt, locale)) or {
+    collect_ai.ask = lambda e, prompt, locale: seen.append((prompt, locale)) or {
         "content": "답", "citation_urls": [], "usage": {}}
     try:
         collect_ai.collect("mk_ai", engines="chatgpt", samples=1, max_prompts=1, throttle=0,
                            conn=conn)
     finally:
         collect_ai.ask = real_ask
+        for k, v in saved_dfs.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
     locs = sorted(loc for _, loc in seen)
     assert locs == ["en-US", "ko-KR"], f"상한이 시장마다가 아니거나 시장으로 안 묻는다: {seen}"
     assert all(serp_adapter.lang_of(loc) == "ko" or not q.startswith("ko") for q, loc in seen), seen

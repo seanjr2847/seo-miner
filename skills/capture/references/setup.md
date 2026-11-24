@@ -94,18 +94,20 @@ python scripts/gsc_query.py sitemaps --project NAME
 수집기는 `final` + 3일 버퍼다. 지금 현황은 이쪽, 스냅샷 Δ 비교는 저쪽 —
 두 값을 빼서 증감을 말하면 안 된다(capture/SKILL.md 철칙 1).
 
-## 5. OpenRouter (AI 가시성 체크 — 권장)
+## 5. AI 인용 확인(DataForSEO) · AI 글쓰기(OpenRouter)
 
-AI 인용 확인(`/capture ai`)에는 이 키가 필요하다. 나머지 기능은 키 없이 그대로 된다.
+AI 인용 확인(`/capture ai`)은 **DataForSEO LLM Responses** 로 묻는다 — 순위 확인과 같은 키(`DATAFORSEO_LOGIN`/`DATAFORSEO_PASSWORD`)다. 질문·system 문구는 각각 500자까지다(넘으면 거절).
+OpenRouter 키는 지시가 길어 그 상한에 안 들어가는 일 — 할 일 수정안(`/capture plays`)·AI 인용 질문
+만들기·경쟁사 판정 — 에만 쓴다. 나머지 기능은 키 없이 그대로 된다.
 
 1. https://openrouter.ai 가입 → 크레딧 소액 충전 → API 키 발급
 2. 키는 **`~/.capture/env`(KEY=VALUE) 한 곳**에 둔다: `OPENROUTER_API_KEY=sk-or-...`.
    대시보드 [설정] 패널에 붙여넣으면 거기 저장되고, 모든 스크립트가
    `db.load_env()`로 읽는다 — 셸 rc를 편집할 필요가 없다. 이 절의 다른 키(7절
    포함)도 같은 파일이다. 셸에 `export`한 값이 있으면 그쪽이 우선한다(setdefault).
-3. 엔진·모델은 `scripts/skill_config.py`의 `ai_engines` 한 곳에서 관리한다(소비자 앱이 실제로
-   쓰는 모델에 맞춘다 — 기준은 그 표의 주석). `:online` 접미사가 웹검색을 켠다(OpenAI·Google·
-   Anthropic 은 제공자 자체 검색, Perplexity 는 모델에 검색이 들어 있다).
+3. AI 인용 확인의 엔진·모델은 `scripts/skill_config.py`의 `ai_engines` 한 곳에서 관리한다(플랫폼·
+   DataForSEO model_name — 소비자 앱이 실제로 쓰는 모델에 맞춘다, 기준은 그 표의 주석). 웹검색은
+   collect_ai.llm_body 가 켠다(제공자 자체 검색, Perplexity 는 모델에 검색이 들어 있다).
 4. 비용 감각: 한 번 묻는 추정 단가는 같은 표의 `usd` 다. 질문 수 × 표본 × 그 합이 한 회차다.
    실청구액은 회차마다 `runs.cost_estimate_usd` 에 응답이 말한 값으로 남는다. 반드시
    `--dry-run`으로 호출 수 확인 후 실행.

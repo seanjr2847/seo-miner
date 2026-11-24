@@ -172,26 +172,31 @@ CONFIG: dict = {
 
     # AI 인용 확인 엔진 — 이 표 한 벌이 정본이다. 엔진 id 는 ai_checks.engine 에 남고
     # 화면(shell/03-parts.js 의 ENG_NAME)이 그 id 로 이름·로고를 찾는다(test_seam_202).
-    #   model    OpenRouter 슬러그. 시간이 지나면 바뀐다 — 바꿀 때는 여기 한 곳.
+    #   platform DataForSEO LLM Responses 의 플랫폼(/v3/ai_optimization/{platform}/llm_responses/live)
+    #   model    그 플랫폼의 model_name. 목록은 .../{platform}/llm_responses/models (무료 GET) —
+    #            시간이 지나면 바뀐다, 바꿀 때는 여기 한 곳. 버전 없는 이름은 최신 버전으로 풀린다.
     #   default  사이트가 surfaces_ai 로 고르지 않았을 때 묻는 엔진인가
-    #   usd      한 번 묻는 **추정** 단가($) — 잔액 카나리아만 쓴다. 실청구는 응답 usage.cost.
+    #   usd      한 번 묻는 **추정** 단가($) — 잔액 카나리아만 쓴다. 실청구는 응답의 task.cost.
     #   body     요청에 더 싣는 값(소비자 앱의 기본 모드를 흉내 내는 자리)
-    # 기준은 "사람이 그 앱을 그냥 열었을 때 받는 답"이다(2026-10-23 OpenRouter 목록):
-    #   chatgpt  chat-latest 는 OpenAI 가 ChatGPT 에 쓰는 Instant 모델을 따라가는 별칭이다.
-    #            gpt-4o-mini 는 앱에서 내려간 지 오래라 출처 고르는 방식이 앱과 달랐다.
-    #   gemini   앱 기본(빠른 모드)은 최신 Flash 에 생각을 짧게 하는 것이다. 생각 토큰도
-    #            max_tokens 에 들어가 길게 생각하면 답 뒤쪽 인용이 잘린다.
+    # 기준은 "사람이 그 앱을 그냥 열었을 때 받는 답"이다(2026-11-24 DataForSEO 모델 목록). 웹 검색은
+    # 네 엔진 모두 제공자 자체 검색을 탄다(collect_ai.llm_body 가 web_search 를 켠다 — sonar 는
+    # 검색이 모델에 들어 있어 그 칸이 없다). 2026-11-24 까지는 OpenRouter 로 물었다 — 그 키가 죽어
+    # 모든 사이트의 AI 인용 확인이 멈췄고, 이 단계는 지시가 짧아(질문 한 줄) DataForSEO 로 옮겼다.
+    #   chatgpt  OpenRouter 의 chat-latest(ChatGPT 앱의 Instant 별칭) 같은 별칭이 DataForSEO 목록에
+    #            없다. 이름 붙은 일반 모델 중 최신 — gpt-5.5.
+    #   gemini   앱 기본(빠른 모드)은 최신 Flash 다. use_reasoning 을 안 켠다(생각 토큰이 상한을 먹어
+    #            답 뒤쪽 인용이 잘렸다).
     #   perplexity  무료 사용자의 기본 검색이 Sonar 다.
     #   claude   claude.ai 기본 모델. 기본으로는 안 묻는다(비싸다) — 사이트 surfaces_ai 로 켠다.
-    # ':online' 은 OpenRouter 웹 플러그인이고, 네 제공자 모두 제공자 자체 검색(native)을 탄다
-    # (Gemini 는 구글 검색 그라운딩). sonar 는 검색이 모델에 들어 있다.
+    # usd 는 2026-11-24 한국어 추천 질문 1건 실측(웹 검색 포함 task.cost)을 올림한 값이다 —
+    # chatgpt $0.095 · perplexity $0.006 · gemini $0.032 · claude $0.053.
     "ai_engines": {
-        "chatgpt":    {"model": "openai/gpt-chat-latest:online", "default": True, "usd": 0.08},
-        "perplexity": {"model": "perplexity/sonar", "default": True, "usd": 0.01},
-        "gemini":     {"model": "google/gemini-3.8-flash:online", "default": True, "usd": 0.03,
-                       "body": {"reasoning": {"effort": "low"}}},
-        "claude":     {"model": "anthropic/claude-sonnet-5.5:online", "default": False,
-                       "usd": 0.10},
+        "chatgpt":    {"platform": "chat_gpt", "model": "gpt-5.5", "default": True, "usd": 0.10},
+        "perplexity": {"platform": "perplexity", "model": "sonar", "default": True, "usd": 0.01},
+        "gemini":     {"platform": "gemini", "model": "gemini-3.8-flash", "default": True,
+                       "usd": 0.04},
+        "claude":     {"platform": "claude", "model": "claude-sonnet-5-5", "default": False,
+                       "usd": 0.06},
     },
 
     # 구글 업데이트 원장 + 서치콘솔 데이터 이상 구간 — 순위 하락·클릭 변화의 **원인 가설**로만
@@ -309,7 +314,8 @@ def _selfcheck() -> None:
         assert all(h == h.lower() and "/" not in h for h in hosts), key
     assert not set(CONFIG["marketplaces"]) & set(CONFIG["third_party_platforms"])
     for eid, e in CONFIG["ai_engines"].items():
-        assert {"model", "default", "usd"} <= set(e) <= {"model", "default", "usd", "body"}, eid
+        assert {"platform", "model", "default", "usd"} <= set(e) \
+            <= {"platform", "model", "default", "usd", "body"}, eid
     assert any(e["default"] for e in CONFIG["ai_engines"].values())
     for b in CONFIG["ai_bots"]:
         assert b["purpose"] in ("search", "user", "training", "other"), b

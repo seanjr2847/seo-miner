@@ -1496,9 +1496,9 @@ function AI_emptyState(d) {
   // 비용은 결제 벽이 아니라 눈금이다 — 무엇이 얼마나 나가는지만 한 줄로 말한다.
   // 키가 누구 몫인지도 같은 줄에 붙인다: 상자를 문단으로 채우면 아무도 안 읽는다.
   const cost = `<p class="detn">확인 1회는 질문마다 설정된 엔진 각각에 요청이 나갑니다. ${W(
-    `<a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
-       >openrouter.ai/keys</a>에서 받은 OpenRouter 키가 ${window.go("settings")}에
-     있어야 합니다.`,
+    `<a href="https://dataforseo.com" target="_blank" rel="noopener noreferrer"
+       >dataforseo.com</a>의 DataForSEO 아이디·API 비밀번호가 ${window.go("settings")}에
+     있어야 합니다(순위 확인과 같은 키).`,
     "키는 서버가 대므로 따로 넣을 것이 없습니다.")}</p>`;
   // 행동은 화면 머리의 띠가 갖는다 — 같은 버튼을 250px 안에 두 번 두지 않는다.
   // 띠가 없는 배포(셸이 nextStep 을 안 세운 경우)에서만 여기로 물러선다.

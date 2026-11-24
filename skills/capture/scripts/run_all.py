@@ -421,12 +421,16 @@ def check_paid_keys(stage_name: str) -> tuple[bool, str]:
                           "DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 를 넣으면 순위를 "
                           "확인합니다. 발급: https://dataforseo.com (권장) 또는 "
                           "https://serper.dev")
-    elif stage_name in ("ai", "plays"):
+    elif stage_name == "ai":
+        # AI 인용 확인은 DataForSEO LLM Responses 로 묻는다(collect_ai.ask) — 질문이 짧아 그쪽
+        # 500자 상한에 든다. 긴 지시를 보내는 할 일(plays)·경쟁사 판정은 OpenRouter 에 남는다.
+        if not serp_adapter.has_dataforseo():
+            return False, ("키가 없어 건너뜁니다. DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD 를 넣으면 "
+                          "AI 가 누구를 인용하는지 확인합니다. 발급: https://dataforseo.com")
+    elif stage_name == "plays":
         if not serp_adapter.has_openrouter():
-            what = ("AI 가 누구를 인용하는지 확인합니다" if stage_name == "ai"
-                    else "기회를 페이지별 할 일로 묶고 수정안을 씁니다")
             return False, ("키가 없어 건너뜁니다. OPENROUTER_API_KEY 를 넣으면 "
-                          f"{what}. 발급: https://openrouter.ai/keys")
+                          "기회를 페이지별 할 일로 묶고 수정안을 씁니다. 발급: https://openrouter.ai/keys")
     # backlinks 는 여기 없다 — 유료 키가 없으면 건너뛰는 대신 무료 출처(Bing 웹마스터·
     # Common Crawl)로 물러선다. 그 갈림은 collect_backlinks.collect 가 한다(_collect_free).
     elif stage_name == "metrics":
@@ -534,13 +538,13 @@ def parse_opts(items: list[str] | None) -> dict[str, dict]:
 # 카나리아 — 돈 쓰기 전 무료 점검 한 번. 이게 없어서 잔액 0 인 계정이 키워드마다
 # 402 를 맞고 "완료"로 끝났다 (8/30·9/1·9/2 자동 런).
 MIN_BALANCE = 1.0                       # 이보다 적으면 유료 단계는 어차피 실패한다
-DFS_STAGES = ("metrics", "rank", "competitors", "backlinks", "local", "merchant")
+DFS_STAGES = ("metrics", "rank", "ai", "competitors", "backlinks", "local", "merchant")
+# OpenRouter 를 쓰는 단계 — 잔액을 이번 단계 추정 비용(paid_estimate)과 견준다.
+OPENROUTER_STAGES = ("plays",)
 
 
 def paid_estimate(name: str, project: str | None = None) -> float:
     """OpenRouter 단계의 이번 회차 추정 비용($) — 잔액 카나리아가 비교할 값. 정본은 각 수집기."""
-    if name == "ai":
-        return collect_ai.estimate_usd(project)
     if name == "plays":
         return plays.estimate_usd()
     return 0.0
@@ -653,8 +657,9 @@ def preflight(stages=STAGES, project: str | None = None) -> dict[str, str]:
     호스팅 스윕이 사이트마다 다시 묻지 않는다.
 
     OpenRouter 는 잔액을 **이번 단계의 추정 비용**(paid_estimate)과 견준다 — 호스팅 키가
-    $0.14 까지 떨어진 채 AI 인용·할 일이 402 를 맞고서야 알았다. 두 단계가 같은 돈을 쓰므로
-    앞 단계(ai)의 몫을 빼고 뒤 단계(plays)를 본다.
+    $0.14 까지 떨어진 채 할 일이 402 를 맞고서야 알았다. OpenRouter 단계(OPENROUTER_STAGES)가
+    여럿이면 앞 단계의 몫을 빼고 뒤 단계를 본다. AI 인용 확인은 2026-11-24 부터 DataForSEO 로
+    묻는다 — DataForSEO 잔액 점검(DFS_STAGES)이 본다.
     """
     blocked: dict[str, str] = {}
     paid = {s.name for s in stages if s.is_paid}
@@ -672,8 +677,8 @@ def preflight(stages=STAGES, project: str | None = None) -> dict[str, str]:
                   f"충전: https://app.dataforseo.com")
             for n in dfs:
                 blocked[n] = f"DataForSEO 잔액 없음 (${bal:.2f})"
-    # OpenRouter 를 쓰는 단계(AI 인용·할 일 수정안)는 같은 키 하나를 본다 — 한 번만 묻는다.
-    orr = [n for n in ("ai", "plays") if n in paid]
+    # OpenRouter 를 쓰는 단계는 같은 키 하나를 본다 — 한 번만 묻는다.
+    orr = [n for n in OPENROUTER_STAGES if n in paid]
     if orr and serp_adapter.has_openrouter():
         need = 0.0
         for n in orr:
@@ -1199,28 +1204,31 @@ def _selfcheck() -> None:
 
 
 def _check_preflight() -> None:
-    """잔액 카나리아(P4) — OpenRouter 단계는 남은 돈을 이번 단계 추정 비용과 견주고, 앞
-    단계(ai) 몫을 뺀 뒤 뒤 단계(plays)를 본다. 막힌 단계는 runs 한 줄(중단: 사유)로 남아
-    화면·출시 문이 본다. 네트워크 0 — 판정 함수를 갈아 끼운다."""
+    """잔액 카나리아(P4) — OpenRouter 단계(plays)는 남은 돈을 이번 단계 추정 비용과 견주고,
+    DataForSEO 단계(ai 포함 — 2026-11-24 부터 AI 인용은 DataForSEO 로 묻는다)는 계정 잔액을
+    본다. 두 돈은 섞이지 않는다. 막힌 단계는 runs 한 줄(중단: 사유)로 남아 화면·출시 문이
+    본다. 네트워크 0 — 판정 함수를 갈아 끼운다."""
     import contextlib
     import io
     g = globals()
     saved = (serp_adapter.has_openrouter, serp_adapter.has_dataforseo,
-             collect_ai.openrouter_ok, g["paid_estimate"])
-    left = {"v": 1.5}
+             serp_adapter.dataforseo_balance, collect_ai.openrouter_ok, g["paid_estimate"])
+    left = {"v": 1.5, "dfs": 50.0}
     serp_adapter.has_openrouter = lambda: True
-    serp_adapter.has_dataforseo = lambda: False
+    serp_adapter.has_dataforseo = lambda: True
+    serp_adapter.dataforseo_balance = lambda: left["dfs"]
     collect_ai.openrouter_ok = lambda need=0.0: (
         (True, "ok") if need <= left["v"] else (False, f"OpenRouter 잔액 ${left['v']:.2f}"))
-    g["paid_estimate"] = lambda n, project=None: {"ai": 1.2, "plays": 1.0}.get(n, 0.0)
+    g["paid_estimate"] = lambda n, project=None: {"plays": 1.0}.get(n, 0.0)
     try:
         both = [STAGE_BY_NAME["ai"], STAGE_BY_NAME["plays"]]
+        assert "ai" not in OPENROUTER_STAGES and "ai" in DFS_STAGES, "AI 인용은 DataForSEO 로 묻는다"
         with contextlib.redirect_stdout(io.StringIO()):
-            b = preflight(both)
-            assert set(b) == {"plays"}, f"ai($1.20)는 되고 ai+plays($2.20)는 안 된다: {b}"
-            left["v"] = 1.1
-            b = preflight(both)
-            assert set(b) == {"ai"}, f"ai 가 막히면 그 몫을 빼고 plays($1.00)를 본다: {b}"
+            assert preflight(both) == {}, "두 돈이 다 있으면 아무것도 안 막는다"
+            left["v"] = 0.14
+            assert set(preflight(both)) == {"plays"}, "OpenRouter 잔액이 없어도 AI 인용은 돈다"
+            left["v"], left["dfs"] = 9.0, 0.3
+            assert set(preflight(both)) == {"ai"}, "DataForSEO 잔액이 없으면 AI 인용이 막힌다"
             left["v"] = 0.14
             assert set(preflight(both)) == {"ai", "plays"}
         # 막힌 단계는 기록이 남는다 — 건너뜀이 로그에만 있으면 왜 안 돌았는지 아무도 모른다
@@ -1229,9 +1237,9 @@ def _check_preflight() -> None:
         c.commit()
         with contextlib.redirect_stdout(io.StringIO()):
             r = _run_stage(STAGE_BY_NAME["ai"], "pf", dry_run=False, skip_set=set(), only_set=set(),
-                           opts={}, blocked={"ai": "OpenRouter 잔액 $0.14"})
+                           opts={}, blocked={"ai": "DataForSEO 잔액 없음 ($0.14)"})
             _run_stage(STAGE_BY_NAME["ai"], "pf", dry_run=True, skip_set=set(), only_set=set(),
-                       opts={}, blocked={"ai": "OpenRouter 잔액 $0.14"})
+                       opts={}, blocked={"ai": "DataForSEO 잔액 없음 ($0.14)"})
         assert r.skipped and "$0.14" in r.reason, r
         rows = c.execute("SELECT notes, finished_at FROM runs WHERE kind='ai'").fetchall()
         assert len(rows) == 1, f"막힌 단계 기록이 없거나(또는 dry-run 까지) 남았다: {len(rows)}"
@@ -1243,7 +1251,7 @@ def _check_preflight() -> None:
         c.close()
     finally:
         (serp_adapter.has_openrouter, serp_adapter.has_dataforseo,
-         collect_ai.openrouter_ok, g["paid_estimate"]) = saved
+         serp_adapter.dataforseo_balance, collect_ai.openrouter_ok, g["paid_estimate"]) = saved
 
 
 def _check_groups() -> None:

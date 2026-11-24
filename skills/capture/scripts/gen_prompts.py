@@ -456,7 +456,9 @@ def suggest(project: str, *, n: int = 20, conn=None, model: str = MODEL,
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
         model: OpenRouter 모델 슬러그
         ask: fn(model, prompt, api_key, locale) -> {"content": ...}
-             기본값은 collect_ai.ask — 자체점검이 여기를 갈아끼운다
+             기본값은 collect_ai.ask_openrouter — 자체점검이 여기를 갈아끼운다. AI 인용 확인
+             (collect_ai.ask)은 DataForSEO 로 묻지만, 이 지시는 사이트 소개를 통째로 실어
+             그쪽 500자 상한을 넘는다 — 그래서 OpenRouter 에 남는다.
 
     Raises:
         RuntimeError: OPENROUTER_API_KEY 가 없을 때
@@ -465,7 +467,7 @@ def suggest(project: str, *, n: int = 20, conn=None, model: str = MODEL,
     key = require_key()
     if ask is None:
         import collect_ai
-        ask = collect_ai.ask
+        ask = collect_ai.ask_openrouter
     own = conn is None
     conn = conn or db.connect()
     try:
@@ -473,7 +475,7 @@ def suggest(project: str, *, n: int = 20, conn=None, model: str = MODEL,
     finally:
         if own:
             conn.close()
-    # SYSTEM 을 프롬프트 앞에 붙여 보낸다 — collect_ai.ask 의 system 자리는 "실제
+    # SYSTEM 을 프롬프트 앞에 붙여 보낸다 — collect_ai.ask_openrouter 의 system 자리는 "실제
     # 사용자처럼 답하라"라서 그대로 쓰면 질문이 아니라 답이 온다.
     res = ask(model, SYSTEM + "\n\n" + user_msg(b, n), key, b["locale"])
     return [{**r, "locale": b["locale"]}

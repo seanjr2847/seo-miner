@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AI visibility check via OpenRouter (one key, native provider search).
+"""AI visibility check via DataForSEO LLM Responses (one key, provider-native web search).
 
 For each active ai_prompt x engine (x samples), asks the question with web
 search enabled and records:
@@ -14,7 +14,9 @@ Notes on measurement honesty (see references/scoring.md):
   * API+native search approximates, not equals, the consumer apps.
   * Search tool calls carry per-request fees on some providers -> caps + dry-run.
 
-Env: OPENROUTER_API_KEY
+Env: DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD
+     (OPENROUTER_API_KEY 는 이 단계가 아니라 질문 만들기(gen_prompts)·경쟁사 판정·할 일이 쓴다 —
+      그쪽은 지시가 길어 DataForSEO 의 500자 상한에 안 들어간다. ask_openrouter 참고)
 Usage:
   python collect_ai.py --project NAME [--engines chatgpt,perplexity,gemini]
                        [--samples 1] [--max-prompts 30] [--ids 16,17]
@@ -140,8 +142,92 @@ def openrouter_ok(need: float = 0.0) -> tuple[bool, str]:
     return True, (f"OpenRouter 키 유효 · 잔액 ${left:.2f}" if left is not None else msg)
 
 
-def ask(model: str, prompt: str, api_key: str, locale: str, body: dict | None = None) -> dict:
-    """한 번 묻는다. body 는 엔진 표의 그 줄이 더 싣는 값(생각 정도 등)."""
+# ── DataForSEO LLM Responses — AI 인용 확인이 묻는 길 ──────────────────────────
+# https://docs.dataforseo.com/v3/ai_optimization-chat_gpt-llm_responses-live/ (claude·gemini·perplexity 같은 꼴)
+# 2026-11-24 실호출로 확인한 것:
+#   · user_prompt·system_message·message_chain 은 각각 **500자**가 상한이다 — 넘으면 task 가
+#     40501 "Invalid Field" 로 거절된다(돈은 안 나간다). 그래서 긴 지시를 보내는 일(질문 만들기·
+#     경쟁사 판정·할 일 수정안)은 이 길에 못 싣고 OpenRouter 에 남는다.
+#   · 답은 result[0].items 중 type=message 의 sections[type=text].text, 인용은 그 section 의
+#     annotations[{title,url}] (Gemini 는 url 이 Vertex 중계 주소라 direct_url 이 원 주소다).
+#   · 실청구액은 task.cost(= 기본 단가 + money_spent) — post_dataforseo 가 그 값을 돌려준다.
+#   · max_output_tokens 는 생각하는 모델이면 1024 이상이어야 한다(아니면 40501) — 안 보낸다(기본 2048).
+DFS_LLM_PATH = "/ai_optimization/{platform}/llm_responses/live"
+PROMPT_MAX = 500
+LLM_TIMEOUT = 180            # 웹 검색까지 하면 평균 수십 초, 문서는 최대 120초 안팎이라고 한다
+# web_search_country_iso_code 를 받는 플랫폼. claude 는 정해진 나라 목록만 받는다(문서의 enum).
+_COUNTRY_ANY = frozenset({"chat_gpt", "perplexity"})
+_COUNTRY_CLAUDE = frozenset({
+    "AR", "AT", "AU", "BE", "BR", "CA", "CH", "CL", "CN", "DE", "DK", "ES", "FI", "FR", "GB", "HK",
+    "ID", "IN", "IT", "JP", "KR", "MX", "MY", "NL", "NO", "NZ", "PH", "PL", "PT", "RU", "SA", "SE",
+    "TR", "TW", "US", "ZA"})
+
+
+def _country_of(locale: str) -> str | None:
+    """'ko-KR' → 'KR'. 지역 없는 로케일은 None."""
+    _, _, region = (locale or "").partition("-")
+    return region.upper() if len(region) == 2 else None
+
+
+def llm_body(e: dict, prompt: str, locale: str) -> dict:
+    """엔진 표 한 줄 + 질문 → DataForSEO task 하나. 500자를 넘는 질문은 ValueError(그 항목의 실패)."""
+    if len(prompt) > PROMPT_MAX:
+        raise ValueError(f"질문이 {len(prompt)}자라 DataForSEO 상한({PROMPT_MAX}자)을 넘습니다 — 줄여 주세요")
+    locale = locale or db.DEFAULT_LOCALE
+    lang, country = serp_adapter.describe(locale)
+    system = SYSTEM.format(locale=locale, lang=lang, country=country, today=date.today().isoformat())
+    plat = e["platform"]
+    body = {**(e.get("body") or {}), "user_prompt": prompt, "model_name": e["model"],
+            "system_message": system[:PROMPT_MAX]}
+    if plat != "perplexity":            # sonar 는 검색이 모델에 들어 있다 — 그 칸이 없다
+        body["web_search"] = True
+    cc = _country_of(locale)
+    if cc and (plat in _COUNTRY_ANY or (plat == "claude" and cc in _COUNTRY_CLAUDE)):
+        body["web_search_country_iso_code"] = cc
+    return body
+
+
+def parse_llm(result: list) -> dict:
+    """DataForSEO result → {content, citation_urls, citations, model}. 인용은 같은 URL 한 번."""
+    r0 = (result or [{}])[0] or {}
+    texts: list[str] = []
+    urls: list[str] = []
+    cites: list[dict] = []
+    seen: dict[str, dict] = {}
+    for it in r0.get("items") or []:
+        if not isinstance(it, dict) or it.get("type") != "message":
+            continue
+        for s in it.get("sections") or []:
+            if s.get("type") == "text" and s.get("text"):
+                texts.append(s["text"])
+            for a in s.get("annotations") or []:
+                u = (a.get("direct_url") or a.get("url") or "").strip()
+                if not u:
+                    continue
+                urls.append(u)
+                title = (a.get("title") or "").strip() or None
+                if u not in seen:
+                    seen[u] = {"url": u, "title": title}
+                    cites.append(seen[u])
+                elif seen[u]["title"] is None:
+                    seen[u]["title"] = title
+    return {"content": "\n\n".join(texts), "citation_urls": urls, "citations": cites,
+            "model": r0.get("model_name")}
+
+
+def ask(e: dict, prompt: str, locale: str) -> dict:
+    """AI 인용 확인 한 번 — 엔진 표의 그 줄(platform·model·body)로 DataForSEO 에 묻는다.
+    401/402(키·잔액)는 serp_adapter.raise_for 가 Fatal 로 올린다 — 질문 60개를 계속 던지지 않는다."""
+    result, cost = serp_adapter.post_dataforseo(
+        DFS_LLM_PATH.format(platform=e["platform"]), [llm_body(e, prompt, locale)],
+        timeout=LLM_TIMEOUT)
+    return {**parse_llm(result), "usage": {"cost": cost}}
+
+
+def ask_openrouter(model: str, prompt: str, api_key: str, locale: str,
+                   body: dict | None = None) -> dict:
+    """OpenRouter 로 한 번 묻는다 — 질문 만들기(gen_prompts)만 쓴다. 그쪽 지시는 사이트 소개를
+    통째로 실어 DataForSEO 의 500자 상한을 넘는다. body 는 요청에 더 싣는 값."""
     locale = locale or db.DEFAULT_LOCALE
     lang, country = serp_adapter.describe(locale)
     body = {
@@ -197,7 +283,7 @@ def collect(project: str, *,
             force: bool = False,
             llm_mentions: int | None = None,
             conn=None) -> collector.StageResult:
-    """AI 가시성 체크 (OpenRouter) — 결과를 Brain 에 적재한다.
+    """AI 가시성 체크 (DataForSEO LLM Responses) — 결과를 Brain 에 적재한다.
 
     Args:
         project: 사이트 이름
@@ -301,7 +387,7 @@ def collect(project: str, *,
 
         print(f"[ai] prompts={len(prompts)} engines={list(engines_d)} samples={samples} "
               f"-> {calls_to_make} calls{st.skip_note(skipped_calls)}")
-        print("     note: provider-native search may bill a per-search fee on top of tokens.")
+        print("     note: 엔진 자체 웹 검색 요금이 토큰 값에 더해질 수 있습니다(실청구는 응답의 cost).")
         if st.dry_run:
             for row in prompts[:5]:
                 print(f"     e.g. [{row['category']}] {row['prompt']}")
@@ -312,17 +398,15 @@ def collect(project: str, *,
                   f"Next: /capture gaps or /capture report")
             return st.noop(rows=0)
 
-        import os
-        if not serp_adapter.has_openrouter():
-            return st.skip("OPENROUTER_API_KEY not set. See references/setup.md")
-        api_key = os.environ["OPENROUTER_API_KEY"]
+        if not serp_adapter.has_dataforseo():
+            return st.skip("DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD not set. See references/setup.md")
 
         aliases = scoring.aliases_of(cfg)   # 별칭 규칙 정본은 scoring — 갈라지면 비교 불능
         own_domain = p["domain"]
         # r.api_calls를 직접 센다 — 도중에 죽어도 그때까지 부른 횟수가 남는다.
         with st.record("ai") as r:
             run_id = r.id
-            # 질문×엔진×표본을 한 줄로 펴서 동시에 묻는다(fanout.LIMITS["openrouter"]).
+            # 질문×엔진×표본을 한 줄로 펴서 동시에 묻는다(fanout.LIMITS["dfs_llm"]).
             # 순차일 때 1회 ~8초 × 222회가 이 단계의 25분이었다. 묻기(ask)만 일꾼이
             # 하고, 판정·적재는 이 스레드가 입력 순서대로 한다 — conn 을 일꾼과 나눠
             # 쓰지 않는다. 429 는 여전히 **그 항목 하나의 실패**다: 세고 넘어가고,
@@ -334,8 +418,7 @@ def collect(project: str, *,
                 row, engine, _ = item
                 # 그 질문의 시장으로 묻는다 — 예전엔 늘 사이트 기본(p.locale)이라 영어 질문도
                 # "한국 사용자에게 맞는 출처"를 달라고 했다.
-                e = engines_d[engine]
-                return ask(e["model"], row["prompt"], api_key, row["locale"], body=e.get("body"))
+                return ask(engines_d[engine], row["prompt"], row["locale"])
 
             def write_one(item, res) -> None:
                 """질문 하나 × 엔진 × 샘플 — 실패는 러너가 세고 다음으로 넘어간다."""
@@ -353,7 +436,7 @@ def collect(project: str, *,
                 if last_of.get(row["id"]) == item:
                     print(f"  prompt#{row['id']} [{row['category']}] done")
 
-            fanout.each(st, flat, ask_one, write_one, workers=fanout.LIMITS["openrouter"],
+            fanout.each(st, flat, ask_one, write_one, workers=fanout.LIMITS["dfs_llm"],
                         label=lambda t: f"{t[1]} failed on prompt#{t[0]['id']}")
             # 모델까지 적는다 — 표의 모델을 바꾼 회차부터 인용률이 달라질 수 있고,
             # ai_checks 에는 엔진 id 만 남는다. 추세가 꺾인 자리를 여기서 찾는다.
@@ -448,7 +531,8 @@ def _selfcheck() -> None:
     import time
 
     os.environ["CAPTURE_HOME"] = str(Path(tempfile.mkdtemp(prefix="seo-miner-ai-selftest-")))
-    os.environ["OPENROUTER_API_KEY"] = "fake-selftest-key"
+    saved_dfs = {k: os.environ.get(k) for k in ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")}
+    os.environ["DATAFORSEO_LOGIN"], os.environ["DATAFORSEO_PASSWORD"] = "fake", "fake"
     boot = db.connect()
     boot.execute("INSERT INTO projects(name, domain, locale) VALUES('ai','ai.kr','ko-KR')")
     pid = boot.execute("SELECT id FROM projects WHERE name='ai'").fetchone()["id"]
@@ -463,7 +547,7 @@ def _selfcheck() -> None:
     asked_on: set[int] = set()
     orig_ask = globals()["ask"]
 
-    def fake_ask(model, prompt, api_key, locale, body=None):
+    def fake_ask(e, prompt, locale):
         with lock:
             live["now"] += 1
             live["peak"] = max(live["peak"], live["now"])
@@ -472,7 +556,7 @@ def _selfcheck() -> None:
         time.sleep(0.01 * (6 - n))
         with lock:
             live["now"] -= 1
-        if prompt == "질문2" and model == engines()["gemini"]["model"]:
+        if prompt == "질문2" and e["model"] == engines()["gemini"]["model"]:
             # 429 는 그 항목 하나의 실패다 — 단계를 멈추지 않는다(serp_adapter.raise_for)
             raise requests.HTTPError("429 Client Error: Too Many Requests")
         return {"content": f"{prompt} 답 — ai.kr 추천", "citation_urls": ["https://ai.kr/x"],
@@ -494,7 +578,7 @@ def _selfcheck() -> None:
     want = [(f"질문{i}", e, s) for i in range(6) for e in ("chatgpt", "perplexity", "gemini")
             for s in range(2) if not (i == 2 and e == "gemini")]
     assert [tuple(r) for r in rows] == want, "적재 순서가 입력 순서가 아니다(끝난 순서로 적혔다)"
-    assert 1 < live["peak"] <= fanout.LIMITS["openrouter"], f"동시 상한: peak={live['peak']}"
+    assert 1 < live["peak"] <= fanout.LIMITS["dfs_llm"], f"동시 상한: peak={live['peak']}"
     assert main_id not in asked_on, "ask 가 메인 스레드에서 돌았다 — 동시에 안 묻는다"
     run = conn.execute("SELECT api_calls, notes, cost_estimate_usd FROM runs WHERE kind='ai'").fetchone()
     assert run["api_calls"] == 34 and "errors=2" in run["notes"], dict(run)
@@ -504,10 +588,10 @@ def _selfcheck() -> None:
     # 402(Fatal) — 아직 안 보낸 질문은 보내지 않고 단계를 끝낸다
     sent: list[str] = []
 
-    def broke(model, prompt, api_key, locale, body=None):
+    def broke(e, prompt, locale):
         with lock:
             sent.append(prompt)
-        raise collector.Fatal("OpenRouter 잔액 없음(402)")
+        raise collector.Fatal("DataForSEO 잔액 없음(402)")
 
     globals()["ask"] = broke
     try:
@@ -519,10 +603,46 @@ def _selfcheck() -> None:
         pass
     finally:
         globals()["ask"] = orig_ask
-    assert len(sent) <= fanout.LIMITS["openrouter"], f"402 뒤로도 계속 물었다: {len(sent)}회"
+    assert len(sent) <= fanout.LIMITS["dfs_llm"], f"402 뒤로도 계속 물었다: {len(sent)}회"
     conn.close()
+    for k, v in saved_dfs.items():
+        os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    _llm_shape_check()
     _canary_check()
     print("collect_ai self-check ok")
+
+
+def _llm_shape_check() -> None:
+    """DataForSEO 요청·응답 꼴 — 2026-11-24 실호출 응답을 줄인 고정 값(네트워크 0)."""
+    e = {"platform": "chat_gpt", "model": "gpt-x"}
+    b = llm_body(e, "강남 비립종 잘하는 곳?", "ko-KR")
+    assert b["web_search"] is True and b["web_search_country_iso_code"] == "KR", b
+    assert len(b["system_message"]) <= PROMPT_MAX and b["model_name"] == "gpt-x", b
+    assert "max_output_tokens" not in b, "생각하는 모델은 1024 미만이면 거절한다 — 보내지 않는다"
+    pb = llm_body({"platform": "perplexity", "model": "sonar"}, "q", "en-US")
+    assert "web_search" not in pb and pb["web_search_country_iso_code"] == "US", pb
+    gb = llm_body({"platform": "gemini", "model": "g"}, "q", "ko-KR")
+    assert "web_search_country_iso_code" not in gb, "gemini 에는 나라 칸이 없다"
+    cb = llm_body({"platform": "claude", "model": "c"}, "q", "vi-VN")
+    assert "web_search_country_iso_code" not in cb, "claude 는 정해진 나라만 받는다"
+    try:
+        llm_body(e, "가" * (PROMPT_MAX + 1), "ko-KR")
+        raise AssertionError("500자를 넘는 질문을 보냈다 — DataForSEO 가 40501 로 거절한다")
+    except ValueError:
+        pass
+    result = [{"model_name": "gpt-x-2026", "items": [
+        {"type": "reasoning", "sections": [{"type": "summary_text", "text": "생각 — 답이 아니다"}]},
+        {"type": "message", "sections": [{"type": "text", "text": "1. 우리피부과 — 추천", "annotations": [
+            {"title": "우리피부과", "url": "https://ai.kr/x?utm_source=openai"},
+            {"title": "", "url": "https://ai.kr/x?utm_source=openai"},
+            {"title": "남", "url": "https://vertex.example/r", "direct_url": "https://other.kr/a"}]}]}]}]
+    got = parse_llm(result)
+    assert got["content"] == "1. 우리피부과 — 추천", "생각(reasoning) 글을 답에 섞었다"
+    assert got["citation_urls"] == ["https://ai.kr/x?utm_source=openai"] * 2 + ["https://other.kr/a"]
+    assert [c["url"] for c in got["citations"]] == ["https://ai.kr/x?utm_source=openai",
+                                                    "https://other.kr/a"], "같은 URL 은 한 번"
+    assert got["model"] == "gpt-x-2026"
+    assert parse_llm([]) == {"content": "", "citation_urls": [], "citations": [], "model": None}
 
 
 def _canary_check() -> None:

@@ -18,7 +18,10 @@ HOME = Path(tempfile.mkdtemp(prefix="seo-miner-test-"))
 os.environ["CAPTURE_HOME"] = str(HOME)          # import 전에 걸어야 db가 여기를 본다
 os.environ["GSC_CONFIG_DIR"] = str(HOME / "mcp-gsc")
 os.environ["GSC_TOKEN_FILE"] = str(HOME / "gsc_token.json")
-os.environ.pop("OPENROUTER_API_KEY", None)
+# 키 없는 로컬 사용자로 시작한다 — 셸에 남은 유료 키(이 PC 는 DATAFORSEO_* 가 있다)가 섞이면
+# 키 개수·다음 걸음 판정이 그 셸에 따라 갈렸다(같은 커밋이 PC 마다 다르게 FAIL).
+for _k in ("OPENROUTER_API_KEY", "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD", "SERPER_API_KEY"):
+    os.environ.pop(_k, None)
 sys.path.insert(0, str(Path(__file__).parent))
 import dashboard  # noqa: E402
 import stage      # noqa: E402
@@ -209,16 +212,21 @@ token_file.write_text('{"token": "xyz"}', "utf-8")
 st_conn = stage.state(conn, p)
 assert st_conn["here"] != 1, f"연결 상태에서는 here가 1이 아니어야 함: {st_conn['here']}"
 assert st_conn["steps"][1]["done"] is True
-# 이 테스트는 맨 위에서 OPENROUTER_API_KEY 를 지운다 = 키 없는 로컬 사용자다.
+# 이 테스트는 맨 위에서 유료 키를 지운다 = 키 없는 로컬 사용자다.
 # 그러면 AI 단계는 이 환경에서 못 하는 선택 단계라 안내가 건너뛴다 — 예전에는 여기
-# 붙어서 아하 모먼트(gaps)에 영영 못 갔다.
+# 붙어서 아하 모먼트(gaps)에 영영 못 갔다. AI 인용 확인을 여는 키는 DataForSEO 다(2026-11-24~).
 assert st_conn["here"] == 4 and st_conn["steps"][4]["id"] == "gaps",     f"키 없으면 ai 를 건너뛰고 4(gaps): {st_conn['here']}"
 assert st_conn["steps"][3]["skip"] is True
 os.environ["OPENROUTER_API_KEY"] = "k"
 try:
-    assert stage.state(conn, p)["here"] == 3, "키가 있으면 ai(3)가 다음 걸음이어야 한다"
+    assert stage.state(conn, p)["here"] == 4, "OpenRouter 키만으로는 AI 인용이 안 돈다 — 건너뛰어야 한다"
 finally:
     os.environ.pop("OPENROUTER_API_KEY", None)
+os.environ["DATAFORSEO_LOGIN"] = "k"
+try:
+    assert stage.state(conn, p)["here"] == 3, "DataForSEO 키가 있으면 ai(3)가 다음 걸음이어야 한다"
+finally:
+    os.environ.pop("DATAFORSEO_LOGIN", None)
 
 # ── /api/doctor 와 /api/data 의 「다음 할 일」 일치 검증 ──────────────
 # 화면이 보고 있는 사이트를 같이 보낸다 — 안내는 그 사이트를 따라가야 한다.

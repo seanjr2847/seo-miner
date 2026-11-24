@@ -387,6 +387,21 @@ def openrouter_json(prompt: str, *, model: str = ROLE_MODEL, max_tokens: int = 4
     return got if isinstance(got, dict) else {}
 
 
+class AIOff(Exception):
+    """AI 판정 길(OpenRouter)이 키·잔액 문제(401·402 → collector.Fatal)로 막혔다.
+    단계를 죽이지 않고 AI 몫(D·E)만 끈다 — DataForSEO 로 산 나머지 축은 그대로 남는다."""
+
+
+def _guard_ai(ask):
+    """ask 의 Fatal(키·잔액)을 AIOff 로 바꾼다. 다른 오류(잘린 답·JSON 없음)는 그대로 — 항목 실패다."""
+    def guarded(prompt):
+        try:
+            return ask(prompt)
+        except collector.Fatal as e:
+            raise AIOff(str(e)) from e
+    return guarded
+
+
 def _brand_terms(ask, ours: str, top: list, aliases) -> set[str]:
     """우리 브랜드를 부르는 말(모든 표기·언어) — 설정의 brand_aliases + 도메인 줄기 + AI.
 
@@ -583,6 +598,9 @@ def collect(project: str, *,
     post = post or serp_adapter.post_dataforseo
     if ask is None and os.environ.get("OPENROUTER_API_KEY"):
         ask = openrouter_json
+    if ask is not None:
+        ask = _guard_ai(ask)
+    ai_off = ""                     # AI 판정이 키·잔액 문제로 꺼졌으면 그 사유(노트에 남는다)
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p = st.conn, st.project
         if not serp_adapter.has_dataforseo():
@@ -844,6 +862,14 @@ def collect(project: str, *,
                                        (role_axis, "경쟁사 역할 판정")):
                         try:
                             axis()
+                        except AIOff as e:
+                            # 키가 죽었거나 잔액이 없다 — 키가 **없을 때**와 같게 AI 몫만 끄고 간다.
+                            # 2026-11-24 까지는 이게 단계를 통째로 실패시켜, OpenRouter 키 하나 때문에
+                            # 유료로 산 역키워드·Gap 까지 안 남았다(호스팅 런 검사가 잡았다).
+                            ai_off = str(e)
+                            print(f"  [gap] AI 판정을 끕니다 — {e}. 경쟁사는 겹침 기준(예전 방식)으로 남습니다.")
+                            conn.commit()
+                            break
                         except collector.Fatal:
                             raise
                         except Exception as e:
@@ -872,7 +898,8 @@ def collect(project: str, *,
             r.notes = (f"domains={len(domains)} inserted={inserted_total} "
                        f"volumes_filled={volumes_total} auto_new={auto_new} "
                        f"nonbrand_new={nonbrand_new} judged={judged} "
-                       f"metrics={metric_rows} gap_rows={gap_rows} {st.err_note}")
+                       f"metrics={metric_rows} gap_rows={gap_rows} {st.err_note}"
+                       + (" ai_judge=off" if ai_off else ""))
 
         print(f"\ncollected {len(domains)} domains, "
               f"actual_cost=${total_cost:.3f} (inserted={inserted_total}, volumes={volumes_total})\n"
@@ -1403,6 +1430,17 @@ def _roles_check() -> None:
     with contextlib.redirect_stdout(io.StringIO()):
         collect("gc", throttle=0, conn=conn, fetch=fetch, post=post, rivals=5, intersect=0)
     assert not [1 for pth, _ in posts if pth in (LABS_RANKED, LABS_SERP_COMPETITORS)], posts
+    # AI 키가 **죽어 있으면**(401·402 → Fatal) 없을 때와 같다 — 단계는 성공하고 AI 몫만 꺼진다.
+    # 2026-11-24 호스팅 theotherskin: OpenRouter 401 이 경쟁사 단계를 통째로 실패시켰다.
+    def dead(prompt):
+        raise collector.Fatal("OpenRouter 인증 실패(401)")
+    with contextlib.redirect_stdout(io.StringIO()):
+        res = collect("gc", throttle=0, conn=conn, fetch=fetch, post=post, ask=dead,
+                      rivals=5, intersect=0)
+    assert res.ok and not res.skipped, f"AI 키가 죽었다고 경쟁사 단계가 실패했다: {res}"
+    note = conn.execute("SELECT notes FROM runs WHERE kind='competitors' ORDER BY id DESC LIMIT 1"
+                        ).fetchone()[0]
+    assert "ai_judge=off" in note, f"AI 판정을 껐다는 표식이 노트에 없다: {note}"
     conn.close()
 
 

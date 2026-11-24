@@ -120,7 +120,7 @@ STAGE_LABELS: dict[str, dict] = {
                 "제목을 찾습니다. 한 페이지만 봐서는 안 나오는 것들이고, 무료입니다."},
     "ai": {"t": "AI 인용 확인", "run": "인용 다시 확인",
         "gain": "ChatGPT·Perplexity·Gemini가 이 주제에서 누구를 인용하는지 봅니다. "
-                "없어도 기회 목록까지는 그대로 가고, OpenRouter 키를 넣으면 "
+                "없어도 기회 목록까지는 그대로 가고, DataForSEO 키를 넣으면 "
                 "켜집니다."},
     "competitors": {"t": "경쟁사 찾기", "run": "경쟁사 다시 찾기",
         "gain": "경쟁 도메인이 이미 순위를 잡은 검색어를 모아 추적 후보로 올립니다. "
@@ -264,15 +264,15 @@ def from_progress(p: dict, name: str, domain: str, *, no_gsc: bool = False) -> d
          "done": p.get("ai_checks", 0) > 0,
          # 목록에서 빼지 않는다 — 순서는 그대로 두고 "지금 할 것"만 넘어간다.
          "skip": ai_skip,
-         # ai_skip 의 로컬 문구("OpenRouter 를 연동하면 켜집니다")는 호스팅에서 못
+         # ai_skip 의 로컬 문구("DataForSEO 를 연동하면 켜집니다")는 호스팅에서 못
          # 지키는 약속이다 — 호스팅은 키를 서버가 대므로(GAIN_WEB: "키는 서버가
          # 댑니다") 사용자가 연동할 곳이 없다. 호스팅에서 이 단계가 안 도는 진짜
-         # 이유는 거의 언제나 질문이 아직 없어서다(질문 만들기도 그 키로 서버가
-         # 돌린다) — 그 사실을 말하고, 질문이 있는데도 못 도는 드문 경우엔 서버
+         # 이유는 거의 언제나 질문이 아직 없어서다(질문 만들기도 서버가 돌린다)
+         # — 그 사실을 말하고, 질문이 있는데도 못 도는 드문 경우엔 서버
          # 쪽 사정이라고만 말한다(사용자가 할 수 있는 일이 없다).
          "state": (("건너뜀 · 물어볼 질문부터 필요" if not p.get("ai_prompts", 0)
                     else "건너뜀 · 서버 쪽 준비가 안 끝났습니다") if ai_skip and hosted else
-                   "건너뜀 · OpenRouter 를 연동하면 켜집니다" if ai_skip else
+                   "건너뜀 · DataForSEO 를 연동하면 켜집니다" if ai_skip else
                    # 무엇을 센 수인지 이름에 싣는다 — 답변은 지금까지 받은 전부, 질문은 켜 둔 것만
                    (f"누적 답변 {p['ai_checks']}개 · 켜 둔 질문 {p['ai_prompts']}개"
                     if p.get("ai_checks", 0)
@@ -422,10 +422,12 @@ def _selfcheck() -> None:
     # GSC 연결된 상태에서의 진행 검증
     _orig_conn = db.gsc_connected
     _orig_auth = db.gsc_auth
-    _orig_key = os.environ.get("OPENROUTER_API_KEY")
+    # AI 인용 확인을 여는 키는 DataForSEO 다(doctor.CAPABILITIES 의 ai — 2026-11-24 부터)
+    _ai_keys = ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")
+    _orig_keys = {k: os.environ.get(k) for k in _ai_keys}
     try:
         db.gsc_connected = lambda: True
-        os.environ["OPENROUTER_API_KEY"] = "k"     # 키가 있으면 AI 가 다음 걸음이다
+        os.environ["DATAFORSEO_LOGIN"] = "k"       # 키가 있으면 AI 가 다음 걸음이다
         st = from_progress({**pr, "gsc_days": 3, "gsc_last": "2026-08-14", "keywords_found": 5,
                     "ai_prompts": 10}, "demo", "demo.com")
         assert st["here"] == 3
@@ -435,12 +437,13 @@ def _selfcheck() -> None:
 
         # 키가 없으면 AI 단계는 이 환경에서 못 한다 — 목록엔 남기되 "지금 할 것"은
         # 아하 모먼트(gaps)로 넘어가야 한다. 예전엔 여기 영영 붙어 있었다.
-        os.environ.pop("OPENROUTER_API_KEY", None)
+        for k in _ai_keys:
+            os.environ.pop(k, None)
         st = from_progress({**pr, "gsc_days": 3, "gsc_last": "2026-08-14",
                             "keywords_found": 5, "ai_prompts": 10}, "demo", "demo.com")
         assert st["steps"][3]["skip"] and "건너뜀" in st["steps"][3]["state"]
-        assert "OpenRouter" in st["steps"][3]["state"], \
-            "로컬은 OpenRouter 연동을 안내해야 한다"
+        assert "DataForSEO" in st["steps"][3]["state"], \
+            "로컬은 DataForSEO 연동을 안내해야 한다"
         assert st["here"] == 4 and st["steps"][4]["id"] == "gaps", st["here"]
         assert len(st["steps"]) == 6, "단계를 목록에서 빼 버렸다"
 
@@ -455,18 +458,18 @@ def _selfcheck() -> None:
             st = from_progress({**pr, "gsc_days": 3, "gsc_last": "2026-08-14",
                                 "keywords_found": 5, "ai_prompts": 0}, "demo", "demo.com")
             assert st["steps"][3]["skip"]
-            assert "OpenRouter" not in st["steps"][3]["state"], \
-                f"호스팅인데 OpenRouter 연동을 시킨다: {st['steps'][3]['state']}"
+            assert "DataForSEO" not in st["steps"][3]["state"], \
+                f"호스팅인데 DataForSEO 연동을 시킨다: {st['steps'][3]['state']}"
             assert "질문" in st["steps"][3]["state"], st["steps"][3]["state"]
 
             # 질문이 이미 있는데도 못 도는 드문 경우엔 여전히 사용자에게 뭘
             # 시키면 안 된다(연동할 곳이 없다) — 그런데도 OpenRouter 를 말하면 안 된다.
             st2 = from_progress({**pr, "gsc_days": 3, "gsc_last": "2026-08-14",
                                  "keywords_found": 5, "ai_prompts": 5}, "demo", "demo.com")
-            assert "OpenRouter" not in st2["steps"][3]["state"], st2["steps"][3]["state"]
+            assert "DataForSEO" not in st2["steps"][3]["state"], st2["steps"][3]["state"]
         finally:
             os.environ.pop(doctor.HOSTED_ENV, None)
-        os.environ["OPENROUTER_API_KEY"] = "k"
+        os.environ["DATAFORSEO_LOGIN"] = "k"
         st = from_progress({**pr, "gsc_days": 1, "keywords_found": 1, "ai_checks": 1,
                     "ai_prompts": 1, "opps": 1, "creations": 1}, "demo", "demo.com")
         assert st["here"] == -1                                    # 한 바퀴 다 돎
@@ -486,8 +489,8 @@ def _selfcheck() -> None:
     finally:
         db.gsc_connected = _orig_conn
         db.gsc_auth = _orig_auth
-        os.environ.pop("OPENROUTER_API_KEY", None) if _orig_key is None \
-            else os.environ.__setitem__("OPENROUTER_API_KEY", _orig_key)
+        for k, v in _orig_keys.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
     # 결제 벽 어투 금지 — 유료 키를 요구하는 로컬 설명은 **먼저** 없어도 된다고
     # 말해야 한다. 예전 ai 문장이 "OpenRouter 키가 필요합니다."로 끝나서, 키가

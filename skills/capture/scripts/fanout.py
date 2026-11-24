@@ -28,8 +28,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 
 # 제공자별 동시 상한 — 문서의 한도가 아니라 **우리가 쓰는 몫**이다.
-#   openrouter : AI 인용. 429 는 항목 하나의 실패로 세고(다음 런이 그 항목만 다시 묻는다)
-#                계속 간다 — 6 이면 1회 ~8초짜리 222회가 ~5분이다.
+#   dfs_llm    : AI 인용(DataForSEO LLM Responses). 429 는 항목 하나의 실패로 세고(다음 런이 그
+#                항목만 다시 묻는다) 계속 간다 — 6 이면 1회 수십 초짜리 질문 수백 개가 수 분이다.
+#                계정의 동시 30 중 Labs·Backlinks 몫(dataforseo 5)과 나눠 쓴다.
 #   own_site   : 내 사이트(크롤·페이지 점검). 남의 서버가 아니라도 작은 호스팅은 동시
 #                요청에 약하다 — 한 호스트에 4개 넘게 동시에 걸지 않는다.
 #   dataforseo : Labs·Backlinks. 문서상 동시 30·분당 2000 이지만 계정 하나를 여러
@@ -40,7 +41,7 @@ import collector  # noqa: E402
 #                상위면 그 사이트에 같은 시각 요청이 몰린다. 호스트가 다른 글끼리만 겹친다.
 #   pagespeed  : PageSpeed Insights(속도 단계). 키 없이는 여러 사용자와 나눠 쓰는 하루 한도라
 #                한 번에 둘만 — 429 가 나면 이미 떠난 호출(최대 workers-1 개)만 더 나간다.
-LIMITS = {"openrouter": 6, "own_site": 4, "dataforseo": 5,
+LIMITS = {"dfs_llm": 6, "own_site": 4, "dataforseo": 5,
           "rival_pages": 4, "pagespeed": 2, "per_host": 1}
 
 

@@ -300,8 +300,8 @@ sql로 읽어 직접 재판정 후 결과를 설명한다 — 답변 전문이 �
 강제 재기록은 `--force`. (AI 답변은 비결정적이라 1샘플은 "사실"이 아니다 — `scoring.md`
 4-1 의 주 단위 추세 원칙과 같은 이유다.)
 
-OPENROUTER_API_KEY 미설정이면 이 명령은 돌지 않는다 — 키가 필요하다고 말하고
-(`setup.md` 5절) 나머지 기능은 그대로 됨을 알린다.
+DataForSEO 키(DATAFORSEO_LOGIN/PASSWORD) 미설정이면 이 명령은 돌지 않는다 — 키가 필요하다고
+말하고(`setup.md` 5절) 나머지 기능은 그대로 됨을 알린다. 질문은 500자까지다(DataForSEO 상한).
 
 ### /capture crawl {P} — 사이트 전수 크롤 (내 사이트 직접 조회, 돈 안 듦)
 **풀런(`/capture run`)에 포함된다** — `crawl` 단계다(순서의 정본은 `run_all.STAGES`).
@@ -461,7 +461,7 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
 
 **재료가 없으면 그 종류는 조용히 빈다** (기다려도 안 나온다):
 
-- 챗봇 인용 공백은 `ai` 단계(OpenRouter 키), 구글 AI 요약 빠짐은 `rank` 단계
+- 챗봇 인용 공백은 `ai` 단계(DataForSEO 키), 구글 AI 요약 빠짐은 `rank` 단계
   (DataForSEO — Serper 는 AI 요약을 못 잰다)가 돌아야 생긴다.
 - `content_gap` 의 재료는 풀런의 `competitors` 단계가 적재한다(DataForSEO 키가 있을
   때). 키가 없거나 그 사이트에 등록된 경쟁사가 아직 없으면 그 단계는 조용히 건너뛰므로
@@ -492,7 +492,7 @@ Labs 가 `search_volume` 을 주면 `keywords.volume` 에 기록한다(실측 �
      ≈$0.01/요청. 키는 `DATAFORSEO_LOGIN`/`DATAFORSEO_PASSWORD`.
    - `rank` — SERP 조회 1건당 과금(`SERPER_API_KEY` 또는 `DATAFORSEO_LOGIN`/
      `DATAFORSEO_PASSWORD`). 추적 키워드 수에 비례한다.
-   - `ai` — AI 엔진 답변 1건당 과금(`OPENROUTER_API_KEY`). 프롬프트 × 엔진 ×
+   - `ai` — AI 엔진 답변 1건당 과금(DataForSEO LLM Responses — `DATAFORSEO_LOGIN`/`PASSWORD`). 프롬프트 × 엔진 ×
      샘플 수에 비례한다.
    - `competitors` — DataForSEO Labs `ranked_keywords/live`, 경쟁사 **도메인
      한 곳당** 과금(~$0.001). 도메인은 상한 5개라 한 바퀴에 **~$0.005** 다.

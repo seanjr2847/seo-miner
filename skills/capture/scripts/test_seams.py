@@ -6735,6 +6735,43 @@ def test_seam_no_module_defines_the_same_top_level_name_twice():
     assert not dups, "같은 이름의 최상위 정의가 둘 — 뒤의 것이 앞의 것을 덮는다: " + "; ".join(dups)
 
 
+def test_seam_dfsllm_ai_citation_asks_dataforseo_and_every_gate_agrees():
+    """AI 인용 확인은 DataForSEO LLM Responses 로 묻는다(2026-11-24 — OpenRouter 키가 죽어 모든
+    사이트의 이 단계가 멈췄고, 질문이 짧아 DataForSEO 500자 상한에 든다). 이 결정이 닿는 자리가
+    넷이다 — 하나라도 OpenRouter 를 보면 '키가 있는데 안 돈다'·'키가 없는데 돈다고 말한다'가 된다:
+    (가) 묻는 함수(collect_ai.ask)와 엔진 표(skill_config.ai_engines) (나) 단계의 키 판정(run_all.
+    check_paid_keys)과 잔액 점검(DFS_STAGES·OPENROUTER_STAGES) (다) 준비물 명부(doctor.CAPABILITIES
+    의 ai) (라) 질문 만들기는 지시가 길어 OpenRouter 에 남는다(gen_prompts → ask_openrouter)."""
+    import collect_ai
+    import run_all
+    import serp_adapter
+    sys.path.insert(0, str(ROOT / "skills" / "setup" / "scripts"))
+    import doctor
+    import skill_config
+    plats = {"chat_gpt", "claude", "gemini", "perplexity"}
+    for eid, e in skill_config.CONFIG["ai_engines"].items():
+        assert e.get("platform") in plats, f"{eid}: DataForSEO 플랫폼이 아니다 ({e.get('platform')})"
+        assert "/" not in e["model"] and ":online" not in e["model"], f"{eid}: OpenRouter 슬러그가 남았다"
+    ask_src = inspect_src(collect_ai.ask) + inspect_src(collect_ai.llm_body)
+    assert "post_dataforseo" in ask_src and "OPENROUTER" not in ask_src, "AI 인용 확인이 OpenRouter 로 묻는다"
+    assert "has_dataforseo" in inspect_src(collect_ai.collect), "단계가 DataForSEO 키를 안 본다"
+    assert "ai" in run_all.DFS_STAGES and "ai" not in run_all.OPENROUTER_STAGES
+    saved = (serp_adapter.has_dataforseo, serp_adapter.has_openrouter)
+    try:
+        serp_adapter.has_dataforseo, serp_adapter.has_openrouter = (lambda: True), (lambda: False)
+        assert run_all.check_paid_keys("ai")[0], "DataForSEO 키만 있으면 AI 인용이 돌아야 한다"
+        serp_adapter.has_dataforseo, serp_adapter.has_openrouter = (lambda: False), (lambda: True)
+        ok, why = run_all.check_paid_keys("ai")
+        assert not ok and "DATAFORSEO" in why, why
+    finally:
+        serp_adapter.has_dataforseo, serp_adapter.has_openrouter = saved
+    cap = next(c for c in doctor.CAPABILITIES if c["id"] == "ai")
+    assert set(cap["keys"]) == {"DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD"}, cap["keys"]
+    assert "OpenRouter" not in cap["fix"], "준비물 명부가 AI 인용에 OpenRouter 를 시킨다"
+    assert "collect_ai.ask_openrouter" in (SCRIPTS / "gen_prompts.py").read_text("utf-8"), \
+        "질문 만들기는 지시가 500자를 넘어 OpenRouter 에 남아야 한다"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
