@@ -369,6 +369,99 @@ def prompt(g: dict, d: dict, ev: dict) -> str:
     return "\n".join(L)
 
 
+# ── 문안 정리: 보이지 않는 글자 ───────────────────────────────────────────────
+# 모델 답에는 눈에 안 보이는 글자가 섞여 온다 — 제로폭 공백, 방향 덮어쓰기, 태그 문자. 문안은
+# 그대로 title·본문에 붙여 넣는 값이라, 남으면 검색결과 제목이 잘리는 자리가 바뀌고 사이트 안
+# 검색이 그 낱말을 못 찾는다. 다만 일부는 **글자의 일부**다 — 그건 남긴다:
+#   · ZWJ·ZWNJ: 이모지를 잇거나(가족·직업 이모지), 아랍 문자·인도계 문자의 철자를 정한다
+#     (페르시아어 می‌خواهم, 데바나가리 क्‍ष). 양옆이 그런 글자일 때만 남긴다.
+#   · 방향 표시(LRM·RLM·ALM): 오른쪽에서 쓰는 글자가 든 문안에서만 남긴다.
+#   · 태그 문자: 검은 깃발(U+1F3F4) 뒤의 것은 지역 깃발 이모지다.
+# 제로폭 공백은 태국어·크메르어에서 줄바꿈 자리로도 쓰지만 없어도 글자는 같아서 뗀다.
+_INVIS_ALWAYS = frozenset({0x200B, 0x2060, 0xFEFF, 0x180E,
+                           *range(0x202A, 0x202F), *range(0x2066, 0x206A)})
+_INVIS_JOIN = frozenset({0x200C, 0x200D})
+_INVIS_MARK = frozenset({0x200E, 0x200F, 0x061C})
+# 잇는 글자를 쓰는 문자 블록 — 아랍(확장·표현형 포함), 인도계(데바나가리~싱할라), 티베트, 미얀마,
+# 크메르, 몽골
+_JOIN_SCRIPTS = ((0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF), (0xFB50, 0xFDFF),
+                 (0xFE70, 0xFEFE), (0x0900, 0x0DFF), (0x0F00, 0x0FFF), (0x1000, 0x109F),
+                 (0x1780, 0x17FF), (0x1800, 0x18AF))
+
+
+def _joins(c: str) -> bool:
+    """ZWJ·ZWNJ 가 뜻을 갖는 이웃인가 — 이모지(그림 문자·변형 선택자)이거나 잇는 글자를 쓰는 문자."""
+    if not c:
+        return False
+    cp = ord(c)
+    return (cp >= 0x1F000 or 0x2600 <= cp <= 0x27BF or cp == 0xFE0F or cp in (0x2640, 0x2642)
+            or any(a <= cp <= b for a, b in _JOIN_SCRIPTS))
+
+
+def strip_invisible(text) -> str:
+    """문안에서 보이지 않는 글자를 뗀다 — 글자의 일부인 것(위 주석)은 남긴다."""
+    import unicodedata
+    s = str(text)
+    if not any(ord(c) in _INVIS_ALWAYS or ord(c) in _INVIS_JOIN or ord(c) in _INVIS_MARK
+               or 0xE0000 <= ord(c) <= 0xE007F for c in s):
+        return s
+    rtl = any(unicodedata.bidirectional(c) in ("R", "AL") for c in s)
+    out: list[str] = []
+    flag = False                       # 검은 깃발 뒤의 태그 문자 줄 안인가
+    for i, c in enumerate(s):
+        cp = ord(c)
+        if 0xE0000 <= cp <= 0xE007F:
+            if flag:
+                out.append(c)
+            continue
+        flag = cp == 0x1F3F4
+        if cp in _INVIS_ALWAYS:
+            continue
+        if cp in _INVIS_JOIN:
+            if _joins(out[-1] if out else "") and _joins(s[i + 1] if i + 1 < len(s) else ""):
+                out.append(c)
+            continue
+        if cp in _INVIS_MARK:
+            if rtl:
+                out.append(c)
+            continue
+        out.append(c)
+    return "".join(out)
+
+
+# ── 초안 검사: AI 투 표현 ────────────────────────────────────────────────────
+# 고쳐 쓰지 않고 **센다**. 치환표로 바꿔 끼우면 뜻이 달라지고(같은 말을 다른 상투어로 바꿀 뿐이다),
+# 무엇이 바뀌었는지 사람이 모른다. 목록은 언어별 한 벌이고 영어부터다 — 목록이 없는 언어의 초안은
+# 세지 않는다(0개라고 말하지 않는다). 낱말 경계로 센다: 'delve' 가 'delver' 를 세지 않는다.
+AI_TELLS = {
+    "en": ("delve", "delving", "tapestry", "testament to", "in today's fast-paced world",
+           "in today's digital age", "it's important to note", "it is important to note",
+           "it's worth noting", "in conclusion", "game-changer", "game changer", "unlock the power",
+           "unleash", "elevate your", "seamless", "seamlessly", "navigate the complexities",
+           "ever-evolving", "ever-changing landscape", "at the end of the day", "look no further",
+           "let's dive in", "dive into", "revolutionize", "cutting-edge", "in the realm of",
+           "plays a crucial role", "a wide range of", "furthermore", "moreover"),
+}
+
+
+def ai_tells(result: dict, lang: str) -> list[tuple[str, int]]:
+    """수정안 문안에 든 AI 투 표현 — [(표현, 횟수)] 많은 것부터. 목록이 없는 언어면 빈 목록."""
+    import re
+    phrases = AI_TELLS.get(str(lang or "").lower())
+    if not phrases or not isinstance(result, dict):
+        return []
+    parts = [result.get("summary"), result.get("expected"),
+             *(result.get("why") or []), *(result.get("trust") or []),
+             *((result.get(k) or {}).get("new") for k in ("title", "meta", "h1")
+               if isinstance(result.get(k), dict))]
+    for x in result.get("sections") or []:
+        parts += [x.get("h2"), x.get("draft")]
+    text = " ".join(str(p) for p in parts if p).lower().replace("’", "'")
+    found = [(p, len(re.findall(r"(?<![0-9a-z])" + re.escape(p) + r"(?![0-9a-z])", text)))
+             for p in phrases]
+    return sorted(((p, n) for p, n in found if n), key=lambda x: (-x[1], x[0]))
+
+
 def clean_result(got) -> dict:
     """AI 답을 계약 꼴로 — 모르는 키는 버리고 틀린 타입은 빈 값으로. 쓸 것이 하나도 없으면 오류."""
     if not isinstance(got, dict):
@@ -377,7 +470,8 @@ def clean_result(got) -> dict:
     def s(v) -> str:
         # 모델이 표 칸 안의 '|' 를 마크다운 탈출(\|)로 적어 온다 — title 은 문안이라 그대로 붙여 넣을
         # 값이어야 한다(gucci: "명품 핸드백 \| 여성 가방"). 탈출만 걷는다.
-        return " ".join(str(v).replace("\\|", "|").split()) if isinstance(v, (str, int, float)) else ""
+        return (" ".join(strip_invisible(v).replace("\\|", "|").split())
+                if isinstance(v, (str, int, float)) else "")
 
     def pair(v) -> dict:
         v = v if isinstance(v, dict) else {}
@@ -390,7 +484,7 @@ def clean_result(got) -> dict:
         "summary": s(got.get("summary")),
         "why": strs(got.get("why")),
         "title": pair(got.get("title")), "meta": pair(got.get("meta")), "h1": pair(got.get("h1")),
-        "sections": [{"h2": s(x.get("h2")), "draft": str(x.get("draft") or "").strip(),
+        "sections": [{"h2": s(x.get("h2")), "draft": strip_invisible(x.get("draft") or "").strip(),
                       "for": strs(x.get("for"))}
                      for x in (got.get("sections") if isinstance(got.get("sections"), list) else [])
                      if isinstance(x, dict) and (x.get("h2") or x.get("draft"))][:PLAY_SECTIONS],
@@ -472,6 +566,12 @@ def render_markdown(p: dict) -> str:
             L += ["## 신뢰 신호"] + [f"- {t}" for t in res["trust"]] + [""]
         if res.get("expected"):
             L += ["## 기대 효과 (추정)", res["expected"], ""]
+        if res.get("tells"):
+            # 세기만 한다 — 고쳐 쓰는 것은 사람 몫이다(AI_TELLS 의 주석)
+            L += ["## 초안 검사",
+                  f"- AI 가 쓴 티가 나는 표현 {sum(n for _, n in res['tells'])}개: "
+                  + " · ".join(f"{p} ×{n}" for p, n in res["tells"][:12])
+                  + ". 고쳐 쓰지는 않았습니다. 읽고 그 자리에 맞는 말로 바꿉니다.", ""]
     our = ev.get("our") or {}
     L += ["## 증거 요약",
           f"- 우리 페이지: title {x(our.get('title')) or '-'} · H1 {x(our.get('h1')) or '-'} · "
@@ -561,6 +661,9 @@ def collect(project: str, *,
                 got, c = ask(prompt(g, d, ev))
                 cost += float(c or 0)
                 result, err = clean_result(got), None
+                tells = ai_tells(result, _lang(g, d)[0])
+                if tells:
+                    result["tells"] = [list(x) for x in tells]
             except collector.Fatal as e:
                 # 잔액 없음(402)·키 없음 같은 치명 오류도 증거는 버리지 않는다 — 이미 산 것이고
                 # 화면은 증거라도 보여 준다. 단계는 저장한 뒤 그 이유로 실패시킨다(알림·출시 문).
@@ -867,6 +970,42 @@ def _selfcheck() -> None:
     many = clean_result({"sections": [{"h2": f"h{i}", "draft": "d"} for i in range(9)]})
     assert len(many["sections"]) == PLAY_SECTIONS, many["sections"]
     assert gaps(["관리 방법"], [["관리 방법 안내", "가격"], ["관리방법", "가격"]]) == ["가격"]
+
+    # 보이지 않는 글자 — 모델 답에 섞여 온 제로폭·방향 덮어쓰기·태그 문자는 저장 전에 뗀다.
+    # 이모지를 잇는 ZWJ 와 깃발의 태그 문자, 페르시아어의 ZWNJ·힌디어의 ZWJ 는 글자의 일부라 남긴다.
+    zw, zwnj, zwj, bom = chr(0x200B), chr(0x200C), chr(0x200D), chr(0xFEFF)
+    assert strip_invisible(f"명품{zw} 가방{bom}") == "명품 가방"
+    assert strip_invisible("a" + chr(0x202E) + "b" + chr(0x2066) + "c" + chr(0xE0041)) == "abc"
+    assert strip_invisible(f"best{zwj}bags") == "bestbags" and strip_invisible(f"가{zwnj}방") == "가방"
+    family = chr(0x1F468) + zwj + chr(0x1F469) + zwj + chr(0x1F467)
+    assert strip_invisible(family) == family, "이모지 ZWJ 를 뗐다"
+    flag = chr(0x1F3F4) + "".join(chr(0xE0000 + ord(c)) for c in "gbsct") + chr(0xE007F)
+    assert strip_invisible(flag) == flag, "깃발 이모지의 태그 문자를 뗐다"
+    fa = "می" + zwnj + "خواهم"                    # 페르시아어 — ZWNJ 가 철자의 일부
+    hi = "क्" + zwj + "ष"                          # 데바나가리 — ZWJ 가 글자 꼴을 정한다
+    assert strip_invisible(fa) == fa and strip_invisible(hi) == hi
+    dirty = clean_result({"summary": f"요약{zw}", "title": {"now": "a", "new": f"새{bom} 제목"},
+                          "sections": [{"h2": f"소{zw}제목", "draft": f"본문{zw} 첫 줄\n둘째 줄"}],
+                          "why": [f"이유{zw}"]})
+    assert (dirty["summary"], dirty["title"]["new"], dirty["why"]) == ("요약", "새 제목", ["이유"]), dirty
+    assert dirty["sections"][0] == {"h2": "소제목", "draft": "본문 첫 줄\n둘째 줄", "for": []}, dirty
+
+    # AI 투 표현 — 고쳐 쓰지 않고 센다(언어별 목록 AI_TELLS, 영어부터). 목록이 없는 언어는 안 센다.
+    res = {"summary": "We delve into bags.", "why": [], "title": {"now": "", "new": "Bags"},
+           "meta": {"now": "", "new": ""}, "h1": {"now": "", "new": ""},
+           "sections": [{"h2": "A", "draft": "In today's fast-paced world, we delve deeper. "
+                                             "It's important to note that totes are roomy.", "for": []}],
+           "links": [], "trust": [], "expected": ""}
+    got = ai_tells(res, "en")
+    assert dict(got)["delve"] == 2 and dict(got)["it's important to note"] == 1, got
+    assert got[0][0] == "delve", "많이 나온 것부터"
+    assert ai_tells(res, "ko") == [] and ai_tells({"summary": "delve"}, "xx") == []
+    assert ai_tells({"summary": "The delver's shop."}, "en") == [], "낱말 경계 없이 셌다"
+    md = render_markdown({"title": "t", "page": "https://s.kr/x", "keywords": [], "score": 1,
+                          "evidence": {}, "result": {**res, "tells": [list(x) for x in got]}})
+    assert "## 초안 검사" in md and "delve ×2" in md, md
+    assert "## 초안 검사" not in render_markdown({"title": "t", "page": "https://s.kr/x", "keywords": [],
+                                              "score": 1, "evidence": {}, "result": res})
 
     # ── 6. 페이로드 — d.plays 꼴
     d = dashboard.gather(conn, db.get_project(conn, "pl"))
