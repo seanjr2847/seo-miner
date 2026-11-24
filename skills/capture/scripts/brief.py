@@ -74,17 +74,19 @@ HOLD_MARK = "관찰 중"
 INFO_GAIN = ("새로 보태는 것(Information Gain) 한 줄: 상위 글 어디에도 없고 **우리만** 쓸 수 있는 것"
              "(자체 데이터·직접 해 본 결과·원본 사례·현장 전문가의 판단) 하나와, 목차의 어느 구간이 "
              "그것을 싣는지. '더 자세히·더 최신·더 길게'는 답이 아닙니다. 찾지 못하면 [확인 필요]로 "
-             "두고 지어내지 않습니다.")
+             "두고 지어내지 않습니다. 위 [내 데이터] 구간이 바로 그것이면 같은 것입니다. 하나 더 "
+             "만들지 않습니다.")
 # 템플릿으로 찍을 양의 문턱 — 한 번에 이만큼 넘게 찍으면 먼저 표본을 사람이 읽고, 그 위는 멈춰
 # 묻는다. 근거 절(_ev_pseo)과 꼬리의 규칙이 이 수 한 벌을 쓴다.
 PSEO_SAMPLE_AT = 100
 PSEO_STOP_AT = 500
 # 비교 글의 공정성 — 한쪽이 우리 것일 때만 뜻이 있다(둘 다 남의 것·개념이면 표만으로 된다).
 # 진단 [비교] 의 산출물 틀과 비교 의도의 새 글 요청문이 이 한 벌을 싣는다.
-COMPARE_FAIR = ("견주는 한쪽이 우리 제품·서비스면: 값(가격·기능·수치)마다 확인한 날짜와 출처를 달고, "
-                "어느 쪽이 우리 것인지 밝히고, 상대가 나은 항목도 지우지 않고 남기며, 숨은 비용"
-                "(설치·수수료·약정)은 양쪽 다 적습니다. 상대를 설명하는 구간에는 우리 쪽 구매 유도를 "
-                "넣지 않습니다. 같은 상대를 다루는 다른 비교 글이 사이트에 있으면 서로 링크합니다.")
+COMPARE_FAIR = ("견주는 한쪽이 우리 제품·서비스면 다음을 전부 지킵니다(둘 다 남의 것이거나 개념이면 "
+                "해당 없음): 값(가격·기능·수치)마다 확인한 날짜와 출처를 달고, 어느 쪽이 우리 것인지 "
+                "밝히고, 상대가 나은 항목도 지우지 않고 남기며, 숨은 비용(설치·수수료·약정)은 양쪽 다 "
+                "적고, 상대를 설명하는 구간에는 우리 쪽 구매 유도를 넣지 않고, 같은 상대를 다루는 다른 "
+                "비교 글이 사이트에 있으면 서로 링크합니다.")
 
 SHAPES: dict[str, dict] = {
     "fix_page": dict(
@@ -100,8 +102,14 @@ SHAPES: dict[str, dict] = {
               # 이라고 한 바로 다음 줄에서, 거기 없는 H2 카드와 신뢰 신호 카드를 시켰다.
               "위 '만들어 줄 것'에 본문 구간(H2) 산출물이 있으면: H2 마다 **넣을 자리**(어느 H2·"
               "문단 뒤), 답할 내용 한 줄, 근거 출처(이 페이지의 문장·직접 연 1차 출처 주소·[확인 "
-              "필요]), 형식(문단·표·번호 목록·이미지, 상위 글과 견줘). 없으면 이 카드는 만들지 "
-              "않습니다.",
+              "필요]), 형식(문단·표·번호 목록·이미지, 상위 글과 견줘). "
+              # H2 목록만 받으면 무엇이 그대로이고 무엇이 새로 서는지가 안 보였다. 틀의 목표 쪽은
+              # 짐작이 아니라 상위 글의 구간·형식 데이터로 채운다(없으면 직접 연 글).
+              "그 산출물 카드에 구간 틀 표(현재 → 목표)를 함께 둡니다: 순서 | 지금 구간(없으면 "
+              "'새로') | 목표 구간 | 상위 글 몇 곳이 이 구간·형식을 갖나(위 H2 목록·형식 표에서, 없으면 "
+              "직접 연 글에서). 위 '만들어 줄 것'이 지금 구조와 고친 구조를 나란히 놓으라고 이미 "
+              "시켰으면 그 표가 이 표입니다. 두 번 만들지 않습니다. "
+              "없으면 이 카드는 만들지 않습니다.",
               # 진단의 [외부 링크] 하나로 이 카드가 서자, 답이 저자·수정일 행까지 채우고 '고칠 것'
               # 표에 "(진단 밖)" 줄을 만들었다 — 이름이 불린 신호만 다룬다.
               "위 '만들어 줄 것'이나 진단에 신뢰 신호(저자·출처·수정일)가 있으면: **거기 이름이 "
@@ -254,10 +262,11 @@ SHAPES: dict[str, dict] = {
                "읽힙니다.",
                # 지역 템플릿이 흔히 걸리는 자리 — 문단이 값과 무관하면 지명만 다른 같은 글이다.
                "바꿔 끼우기 검사: 값 이름만 다른 값으로 바꿔도 그대로 말이 되는 문단은 그 값의 "
-               "고유 내용이 아닙니다. 값마다 바뀌는 구간이 이 검사를 통과하는지 견본에서 보입니다.",
-               f"찍을 양의 문턱: 한 번에 {PSEO_SAMPLE_AT}장을 넘기면 먼저 5~10%를 표본으로 찍어 "
-               f"사람이 읽은 뒤 나머지를 찍고, {PSEO_STOP_AT}장을 넘기면 찍지 않고 멈춰 묻습니다. "
-               "데이터 원본은 행 수·값끼리 내용이 겹치는 필드·마지막 갱신일을 적습니다.",
+               "고유 내용이 아닙니다. 계획서에는 값마다 바뀌는 구간이 **무엇으로** 달라지는지(어느 "
+               "데이터 칸)를 적고, 4단계에서 찍은 값 페이지 둘을 맞바꿔 읽어 확인합니다.",
+               f"찍을 양의 문턱: 찍을 값이 {PSEO_SAMPLE_AT}장을 넘으면 4단계에서 5~10%만 먼저 찍고 "
+               f"멈춰 사용자가 읽게 한 뒤 나머지를 찍고, {PSEO_STOP_AT}장을 넘으면 찍지 않고 멈춰 "
+               "묻습니다. 데이터 원본은 행 수·값끼리 내용이 겹치는 필드·마지막 갱신일을 적습니다.",
                "이미 전용 페이지가 있는 값(위 '대상')은 새로 찍지 않습니다. 같은 값으로 두 장이 서면 "
                "한 검색어를 나눠 갖습니다.",
                "경쟁 페이지의 문장·구성을 그대로 옮기지 않습니다. 같은 질문에 답하되 순서와 관점은 "
@@ -431,9 +440,11 @@ assert tuple(SHAPES) == SHAPE_NAMES
 # 무엇을 보면 접어야 하는지가 없었다. 판정이 아니라 사람이 볼 것이다(도구는 이 줄로 닫지 않는다).
 # {first}·{last} 는 관찰 주 수(RECHECK_WEEKS) — fail_signal() 이 채운다.
 FAIL_SIGNAL = {
-    "fix_page": "{last}주 뒤 확인에서도 이 페이지의 노출·클릭·평균 순위가 기준선에서 안 움직였거나 "
-                "내려갔으면 실패로 봅니다. 그 전에 볼 선행 지표: 구글이 고친 뒤 다시 읽어 갔는지(URL "
-                "검사의 마지막 크롤 날짜), 검색결과에 고친 title 이 보이는지.",
+    # 검토: 지표를 여기서 다시 꼽았더니 AI 요약 요청문에서 목표(인용 여부)와 기준이 둘이 됐고,
+    # title 을 안 고치는 주제 묶음 요청문이 '고친 title'을 보라고 했다 — 목표 줄을 가리키기만 한다.
+    "fix_page": "{last}주 뒤 확인에서 위 목표의 숫자가 지금 값보다 나아지지 않았으면(그대로거나 "
+                "나빠졌으면) 실패로 봅니다. 그 전에 볼 선행 지표: 고친 것이 라이브 페이지에 실제로 "
+                "나가 있는지, 구글이 그 뒤에 다시 읽어 갔는지(URL 검사의 마지막 크롤 날짜).",
     "split_page": "{last}주 뒤에도 떼어낸 지면이 그 묶음의 검색어로 노출이 없거나, 두 지면이 같은 "
                   "검색어를 나눠 가지면(한 검색어에 두 주소) 실패로 봅니다. 선행 지표: 떼어낸 지면의 "
                   "색인 여부.",
@@ -1027,6 +1038,16 @@ def shapes_payload(locale: str) -> dict:
 
 
 NO_ADVICE_SHAPES = ("consolidate", "conversion")
+# 고객의 말 — 측정 데이터가 아니라 사람이 붙여 넣는 선택 칸이다. 글을 쓰는 꼴에만 선다(전환 점검
+# 꼴은 붙여 넣기 칸 자체가 이것이다 — SHAPES["conversion"]["slot"]). 상위 글 H2 를 이미 실어
+# '붙여 넣을 것' 칸이 빠진 요청문에도 서야 해서 머리와 자리표시를 따로 둔다.
+VOC_SHAPES = ("fix_page", "new_content")
+VOC_HEAD = "## 고객의 말 (선택)"
+VOC_MARK = "[고객의 말]"
+VOC_SLOT = ("고객이 실제로 한 말(문의·통화·채팅·후기 원문)이 있으면 여기에 붙입니다. 제목·소제목·본문의 "
+            "낱말을 고객이 쓰는 말에 맞추고, 걱정·반론을 그 말에서 찾습니다. 비어 있어도 일은 그대로 "
+            "합니다. 고객의 말을 인용해야 하는 자리(후기·사례 인용)만 [확인 필요]로 두고, 고객의 말이나 "
+            "후기를 지어내지 않습니다.")
 
 
 # ── 조립 ────────────────────────────────────────────────────────────────────
@@ -1383,7 +1404,7 @@ def _content_h2(h2s) -> list:
     return [h for h in h2s or [] if re.sub(r"[^\w\s]", "", str(h)).strip().lower() not in CHROME_H2]
 
 
-def _serp_top(o: dict, ctx: dict, shape: str = "fix_page") -> list[str]:
+def _serp_top(o: dict, ctx: dict, shape: str = "fix_page", locale: str | None = None) -> list[str]:
     """이 검색어의 지금 검색결과 상위 — 우리가 방금 조회한 그 응답에서 나온다.
 
     이 표가 없던 동안 요청문은 "상위 페이지 2~3개의 제목을 붙여 넣으세요" 라고
@@ -1436,7 +1457,7 @@ def _serp_top(o: dict, ctx: dict, shape: str = "fix_page") -> list[str]:
             if len(h2) > 12:
                 L.append(f"  - 외 {len(h2) - 12}개")
         L.append("")
-    L += _format_lines(o, ctx, [(r, x) for r, x in got if x and not r.get("is_own")], shape)
+    L += _format_lines(o, ctx, [(r, x) for r, x in got if x and not r.get("is_own")], shape, locale)
     failed = [r for r, x in got if x and not _content_h2(x.get("h2")) and not r.get("is_own")]
     if failed:
         L.append(f"- 상위 글 {len(failed)}곳은 열지 못했습니다(막혔거나 H2 가 없습니다), "
@@ -1494,8 +1515,56 @@ _FORMAT_COLS = (("words", "본문 단어"), ("tables", "표"), ("lists", "목록
                 ("images", "이미지"), ("videos", "영상"))
 
 
+# ── 길이: 상위 글의 중앙값과 견준다 ───────────────────────────────────────────
+# '블로그는 1,500단어' 같은 고정 숫자는 근거가 없고 언어마다 단위가 다르다. 같은 검색결과 상위
+# 글의 중앙값이 그 검색어의 기준이다(평균이 아니다 — 긴 글 하나가 끌어올리지 않게). 수집이 세는
+# 것은 공백으로 가른 수(collect_page 의 words)라 언어별로 뜻이 다르다: 한국어는 어절이고, 띄어쓰기가
+# 없는 언어는 그 수가 길이를 말하지 않는다 — 그때는 견주지 않는다고 말한다. 언어 표는 이 한 벌이다.
+LENGTH_UNIT = {"ko": "어절"}
+LENGTH_UNIT_DEFAULT = "단어"
+NO_SPACE_LANGS = ("ja", "zh", "th")
+LENGTH_MEDIAN_MIN = 3            # 이보다 적으면 중앙값이라 부르지 않는다
+
+
+def _median(xs: list[int]) -> int:
+    s = sorted(xs)
+    mid = len(s) // 2
+    return s[mid] if len(s) % 2 else round((s[mid - 1] + s[mid]) / 2)
+
+
+def _length_lang(o: dict, ctx: dict, url: str | None, audit: dict | None,
+                 locale: str | None) -> str | None:
+    """길이를 견줄 글의 언어 — 손댈 페이지의 언어가 먼저, 없으면 검색어의 언어, 그다음 사이트 기본."""
+    pl = page_locale(audit, url) if url else None
+    if pl:
+        return pl[0]
+    return (_kw_lang(o, ctx, locale)
+            or serp_adapter.lang_of(str(locale or (ctx.get("project") or {}).get("locale") or ""))
+            or None)
+
+
+def _length_lines(o: dict, ctx: dict, outlines: list[tuple[dict, dict]], url: str | None,
+                  audit: dict | None, mine: bool, locale: str | None) -> list[str]:
+    words = [int(x["words"]) for _, x in outlines if x.get("words")]
+    lang = _length_lang(o, ctx, url, audit, locale)
+    if lang in NO_SPACE_LANGS:
+        return [f"- 길이: 이 언어({lang_label(lang)})는 띄어쓰기로 낱말을 가르지 않아, 위 '본문 단어' "
+                "칸(공백으로 가른 수)으로는 길이를 견주지 않습니다. 길이는 직접 열어 본 글의 구간 수·"
+                "문단 수로 봅니다."] if words else []
+    if len(words) < LENGTH_MEDIAN_MIN:
+        return []
+    unit = LENGTH_UNIT.get(lang or "", LENGTH_UNIT_DEFAULT)
+    med = _median(words)
+    ours = (audit or {}).get("words") if mine else None
+    return [f"- 길이: 상위 {len(words)}곳 본문의 중앙값 {_n(med)}{unit}"
+            + (f", 우리 페이지 {_n(int(ours))}{unit}(중앙값의 {round(int(ours) * 100 / med)}%)"
+               if ours is not None and med else "")
+            + ". 공백으로 가른 수이고 견줄 단서입니다. 진단의 분량 기준이나 '고칠 값'을 대신하지 "
+              "않습니다."]
+
+
 def _format_lines(o: dict, ctx: dict, outlines: list[tuple[dict, dict]],
-                  shape: str = "fix_page") -> list[str]:
+                  shape: str = "fix_page", locale: str | None = None) -> list[str]:
     """상위 글과 우리 페이지의 **형식**을 나란히 — 본문 단어·표·목록·이미지·영상 수.
 
     H2 만 견주면 "빠진 구간"은 찾아도 "빠진 형식"은 못 찾는다: 상위 셋이 비교표와 영상을
@@ -1522,6 +1591,7 @@ def _format_lines(o: dict, ctx: dict, outlines: list[tuple[dict, dict]],
                if shape == "template" else
                "- 상위가 모두 가진 형식은 새 글도 갖출 형식입니다.")
               + " 분량은 맞출 목표가 아니라 다루는 깊이의 단서입니다. 단어 수를 늘리려고 늘리지 않습니다."]
+        L[-1:-1] = _length_lines(o, ctx, outlines, url, a, mine, locale)
     return L
 
 
@@ -2652,22 +2722,23 @@ def _ev_pseo(o, ctx, pages):
              "감추므로 같은 틀의 값은 이 표보다 많습니다.")
     # 허브의 링크 목록은 사이트에 실제로 있는 값 페이지다 — 받는 쪽이 목록을 짐작으로 채우면 없는
     # 주소가 허브에 박히고 있는 주소가 빠진다.
-    own = [v for v in vals if v.get("own") and v.get("page")]
+    # 허브로 쓸 페이지 자신은 뺀다 — 검토에서 '(전용) 주소 1곳'이 허브 자기 자신이었다.
+    hub = _pseo_hub(o, ctx)[0]
+    own = [v for v in vals if v.get("own") and v.get("page") and v["page"] != hub]
     if own:
         L.append(PSEO_HUB_COVER.format(n=len(own)))
     todo = len(vals) - len([v for v in vals if v.get("own")])
     if todo >= PSEO_SAMPLE_AT:
-        L.append(f"- 찍을 값이 {_n(todo)}개입니다. "
-                 + (f"{PSEO_STOP_AT}장을 넘깁니다. 찍지 않고 멈춰, 어느 값부터 몇 장을 찍을지 묻습니다."
-                    if todo >= PSEO_STOP_AT else
-                    f"{PSEO_SAMPLE_AT}장을 넘깁니다. 먼저 5~10%를 표본으로 찍어 사람이 읽은 뒤 나머지를 "
-                    "찍습니다."))
+        # 무엇을 할지는 꼬리의 규칙('찍을 양의 문턱')이 말한다 — 여기는 어느 쪽인지만
+        L.append(f"- 찍을 값이 {_n(todo)}개입니다. 아래 규칙의 '찍을 양의 문턱'에서 "
+                 + (f"{PSEO_STOP_AT}장을 넘겨 멈춰 묻는 쪽입니다." if todo >= PSEO_STOP_AT else
+                    f"{PSEO_SAMPLE_AT}장을 넘겨 표본을 먼저 읽는 쪽입니다."))
     return L
 
 
-PSEO_HUB_COVER = ("- 허브의 링크 목록은 위 표에서 (전용)인 주소 {n}곳 전부입니다. 빠뜨리지 않고, 표에 "
-                  "없는 주소를 지어내지 않습니다. 아직 없는 값은 링크가 아니라 '찍을 값'으로 따로 "
-                  "적습니다.")
+PSEO_HUB_COVER = ("- 허브에 지금 걸 링크는 위 표에서 (전용)인 주소 {n}곳 전부입니다(허브 자신 제외). "
+                  "빠뜨리지 않고, 표에 없는 주소를 지어내지 않습니다. 아직 안 찍은 값은 앵커 꼴만 "
+                  "정해 두고 찍은 뒤에 겁니다.")
 
 
 def _ev_device(o, ctx, pages):
@@ -4270,8 +4341,8 @@ def _cluster_page_lines(o: dict, ctx: dict, url: str) -> list[str]:
     if len(rest) > _CLUSTER_PAGE_ROWS:
         L.append(f"- 외 {len(rest) - _CLUSTER_PAGE_ROWS}개")
     L += ["- 이 주제의 지면을 나열하거나 묶는 구간(목록·허브·함께 보기)을 만들면 이 표의 지면을 "
-          "빠뜨리지 않고, 표에 없는 지면을 지어내지 않습니다. 더 있어야 할 지면은 링크가 아니라 "
-          "'따로 볼 것'에 새 글 후보로 적습니다.",
+          "빠뜨리지 않고, 표에 없는 지면을 지어내지 않습니다. 더 있어야 할 지면에는 링크를 "
+          "만들지 않습니다(없는 주소입니다).",
           "- 링크 칸이 '없음'인 쪽은 '따로 볼 것'에 한 줄씩: 어느 문단에서 어떤 앵커로 걸지. "
           "'모름'은 크롤이 이 페이지를 안 본 것이니 직접 열어 확인합니다.", ""]
     return L
@@ -4314,8 +4385,9 @@ def _h2_query_lines(audit: dict | None, rows: list[dict]) -> list[str]:
     L.append("- 어느 H2 에도 안 걸린 검색어: " + (", ".join(_ext(q, 60) for q in left[:8])
                                            + (f" 외 {len(left) - 8}개" if len(left) > 8 else "")
                                            if left else "없음")
-             + ". H2 를 고치거나 보탤 때는 구간마다 맡는 검색어를 한 칸으로 적습니다. 낱말이 안 "
-               "겹쳐도 그 구간이 실제로 답하면 맡은 것이고, 열어 보고 고칩니다.")
+             + ". H2 를 고치거나 보태는 산출물에서는 구간마다 맡는 검색어를 그 구간 옆에 함께 "
+               "적습니다. 낱말이 안 겹쳐도 그 구간이 실제로 답하면 맡은 것이니, 열어 보고 이 표를 "
+               "고쳐 읽습니다.")
     return L + [""]
 
 
@@ -4347,7 +4419,7 @@ def _journey_lines(o: dict, ctx: dict, shape: str, pq: list[dict]) -> list[str]:
     if not stage:
         return []
     return [f"- 여정 단계: {stage} ('{query_intent(t, site_of(ctx))}' 의도에서 옮긴 추정). "
-            f"{JOURNEY_NEXT[stage]}."]
+            f"{JOURNEY_NEXT[stage]}. 상위 글을 열어 본 의도와 다르면 본 쪽을 따릅니다."]
 
 
 # ── 사이트 신뢰 페이지 ───────────────────────────────────────────────────────
@@ -4498,7 +4570,7 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         L += ["## 근거 (수집한 데이터)", *ev, ""]
     had_top = had_outlines = False
     if s["slot"]:                             # 상위와 비교해야 하는 일(고치기·새 글)만
-        top = _serp_top(o, ctx, shape)
+        top = _serp_top(o, ctx, shape, locale)
         if top:
             L += ["## 지금 이 검색어의 검색결과 상위", *top, ""]
             had_top = True
@@ -4686,6 +4758,8 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
                "아니라 비교로 찾습니다. 제목은 이미 위에 있습니다."
                if had_top else s["slot"])
         L += ["## 있으면 붙여 넣을 것 (선택)", ask, "[여기에 붙여 넣기]", ""]
+    if shape in VOC_SHAPES:
+        L += [VOC_HEAD, VOC_SLOT, VOC_MARK, ""]
     # page 는 화면(oppDetail)의 '고칠 페이지' 줄이 그대로 그린다 — 화면이 query_pages 로
     # 따로 고르면 요청문은 "이 지면을 고쳐라", 화면은 "걸린 페이지 없음"이 된다.
     # candidates 는 고르지 못했을 때(page 없음)의 후보 지면 — 요청문 '대상'이 싣는 것과

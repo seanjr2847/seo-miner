@@ -4400,9 +4400,15 @@ def test_pseo_hub_links_come_from_the_dedicated_pages_only():
     """템플릿 요청문의 허브 링크 목록은 근거 표에서 '(전용)'으로 판정된 주소다 — 빠뜨리지도
     지어내지도 않는다(Site Structure Coverage Rule). 전용 페이지가 하나도 없으면 그 줄은 없다."""
     o = _opp("pseo_pattern", "서울 세무사 추천")
+    g = _pseo_group()
+    g["values"][1].update(page=URL2, own=True)             # 부산 — 전용 페이지가 이미 있다
     body = brief.build(o, {"query_pages": {"서울 세무사 추천": _pages(URL)},
-                           "pseo_groups": [_pseo_group()]}, "ko-KR")["body"]
-    assert brief.PSEO_HUB_COVER.split("{")[0] in body, body
+                           "pseo_groups": [g]}, "ko-KR")["body"]
+    assert brief.PSEO_HUB_COVER.format(n=1) in body, body
+    # 허브로 쓸 페이지 자신(씨앗의 전용 페이지)만 전용이면 걸 링크가 없다 — 그 줄은 없다
+    only_hub = brief.build(o, {"query_pages": {"서울 세무사 추천": _pages(URL)},
+                               "pseo_groups": [_pseo_group()]}, "ko-KR")["body"]
+    assert brief.PSEO_HUB_COVER.split("{")[0] not in only_hub, only_hub
     none = brief.build(o, {"pseo_groups": [_pseo_group(seed_page=None)]}, "ko-KR")["body"]
     assert brief.PSEO_HUB_COVER.split("{")[0] not in none
 
@@ -4537,6 +4543,82 @@ def test_conversion_shape_checks_measurement_before_copy():
     assert set(p["no_advice"]) == {"consolidate", "conversion"}, p["no_advice"]
     assert "길이 기준" not in p["lang_line"]["conversion"] and "길이 기준" not in t
     assert "conversion" not in brief.SEND_SHAPES and "conversion" not in brief.OFFSITE_SHAPES
+
+
+def test_customer_words_slot_is_optional_and_only_where_copy_is_written():
+    """고객의 말(통화·채팅·후기 원문)은 측정 데이터가 아니라 붙여 넣는 선택 칸이다 — 글을 쓰는
+    꼴(고치기·새 글)에만 서고, 없으면 그 자리가 [확인 필요]다. 상위 글 H2 를 이미 실어 '붙여 넣을 것'
+    칸이 빠진 요청문에도 선다(다른 칸이다)."""
+    ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit()}}
+    fix = brief.build(_opp("striking_distance", "검색어"), ctx, "ko-KR")["body"]
+    new = brief.build(_opp("content_gap", "검색어 없는 것", gap_kind="missing"), {}, "ko-KR")["body"]
+    for body in (fix, new):
+        assert body.count(brief.VOC_HEAD) == 1, body
+        sec = body.split(brief.VOC_HEAD, 1)[1]
+        assert "[확인 필요]" in sec and brief.VOC_MARK in sec, sec
+    for kind in ("index_blocked", "backlink_prospect", "cannibalization", "pseo_pattern"):
+        b = brief.build(_opp(kind, "검색어"), ctx, "ko-KR")
+        assert brief.VOC_HEAD not in b["body"], (kind, b["shape"])
+    # 지어낸 고객의 말을 막는다 — 칸이 비면 인용을 만들지 않는다
+    assert "지어내지" in fix.split(brief.VOC_HEAD, 1)[1]
+
+
+def test_fix_page_asks_for_a_current_to_target_section_frame():
+    """본문 구간 산출물은 '지금 구간 → 목표 구간' 틀로 받는다 — H2 목록만 받으면 무엇이 그대로이고
+    무엇이 새로 서는지가 안 보인다. 목표 쪽의 근거는 상위 글의 구간·형식 데이터다."""
+    form = " ".join(brief.SHAPES["fix_page"]["form"])
+    assert "현재 → 목표" in form and "지금 구간" in form and "목표 구간" in form
+    assert "상위 글 몇 곳" in form
+    # 새로 번호 카드를 늘리지 않는다 — H2 카드 안의 틀이다(조건 '있으면'이 그대로 걸린다)
+    card = next(x for x in brief.SHAPES["fix_page"]["form"] if "현재 → 목표" in x)
+    assert "본문 구간(H2) 산출물이 있으면" in card and "없으면 이 카드는 만들지" in card
+
+
+def _len_ctx(words=(800, 1000, 3000), mine=120, url=URL):
+    top = [{"position": i + 1, "title": f"상위{i + 1}", "url": f"https://r.example/{i + 1}"}
+           for i in range(len(words))]
+    return {"query_pages": {"검색어": _pages(url)},
+            "page_audits": {url: {**_audit(), "url": url, "words": mine, "tables": 0, "lists": 1}},
+            "serp_top": {"검색어": top},
+            "serp_outlines": {r["url"]: {"title": r["title"], "h2": ["가", "나"], "words": w, "tables": 1,
+                                         "lists": 1, "images": 1, "videos": 0}
+                              for r, w in zip(top, words)}}
+
+
+def test_length_is_compared_to_the_median_of_top_pages_in_the_languages_unit():
+    """길이는 고정 숫자(블로그 1,500단어)가 아니라 같은 검색결과 상위 글의 중앙값과 견준다. 단위는
+    언어별이다 — 수집이 세는 것은 공백으로 가른 수라 한국어는 어절이고, 띄어쓰기가 없는 언어
+    (일본어·중국어·태국어)는 그 수로 길이를 견주지 않는다고 말한다."""
+    o = _opp("striking_distance", "검색어")
+    ko = brief.build(o, _len_ctx(), "ko-KR")["body"]
+    assert "- 길이: 상위 3곳 본문의 중앙값 1,000어절, 우리 페이지 120어절(중앙값의 12%)" in ko, ko
+    en = brief.build(o, _len_ctx(url="https://me.example/en/a"), "en-US")["body"]
+    assert "중앙값 1,000단어, 우리 페이지 120단어" in en, en
+    # 짝수면 가운데 둘의 평균 — 평균(mean)이 아니다(3000 하나가 끌어올리지 않는다)
+    four = brief.build(o, _len_ctx(words=(800, 1000, 1200, 9000), url="https://me.example/en/a"), "en-US")["body"]
+    assert "상위 4곳 본문의 중앙값 1,100단어" in four, four
+    # 둘뿐이면 중앙값이라 부르지 않는다
+    assert "중앙값" not in brief.build(o, _len_ctx(words=(800, 1000), url="https://me.example/en/a"), "en-US")["body"]
+    # 띄어쓰기 없는 언어 — 수를 견주지 않는다고 말하고 중앙값은 안 낸다
+    ja = brief.build(o, _len_ctx(url="https://me.example/ja/a"), "ja-JP")["body"]
+    assert "중앙값" not in ja and "띄어쓰기" in ja.split("본문 틀 밖만", 1)[1], ja
+    assert set(brief.NO_SPACE_LANGS) <= brief._KNOWN_LANGS, "모르는 언어 코드가 표에 있다"
+    # 새 글 — 우리 페이지가 없으니 상위만. 단위는 검색어의 언어다(사이트 기본 en-US 가 아니라 한글)
+    new = brief.build(_opp("content_gap", "검색어", gap_kind="missing"),
+                      {k: v for k, v in _len_ctx().items() if k.startswith("serp")}, "en-US")["body"]
+    assert "상위 3곳 본문의 중앙값 1,000어절" in new and "우리 페이지 120" not in new, new
+
+
+def test_aio_checklist_names_the_search_console_generative_ai_control():
+    """AI 요약에 인용이 안 될 때 확인할 것에 Search Console 의 생성형 AI 검색 기능 설정이 든다 —
+    사이트가 그 기능에서 빠지기로 돼 있으면 글을 아무리 고쳐도 인용되지 않는다(2026-06 구글 발표,
+    2026-08-31 전 세계 적용). 메뉴 이름은 구글 문서로 확인하지 못해 적지 않는다."""
+    acts = " ".join(scoring.kind_play("aio_exposure", band="page1")["acts"])
+    assert "Search Console" in acts and "생성형 AI" in acts and "제외" in acts, acts
+    assert "nosnippet" in acts, "스니펫 확인 줄이 사라졌다"
+    body = brief.build({**_opp("aio_exposure", "검색어", band="page1"), "band": "page1"},
+                       {"query_pages": {"검색어": _pages(URL)}}, "ko-KR")["body"]
+    assert "생성형 AI" in body.split("## 이 상황에서 할 일", 1)[1].split("\n## ", 1)[0]
 
 
 if __name__ == "__main__":
