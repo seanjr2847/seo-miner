@@ -2107,9 +2107,9 @@ function pgNoConvDetail(page) {
     <p class="detw">확인할 페이지: <a href="${esc(r.page)}" target="_blank"
       rel="noopener">${esc(r.page)}</a></p>
     ${pageFix(ST_AUDITS[r.page], r.page)}
-    ${askBlock({shape: "fix_page", url: r.page, audit: ST_AUDITS[r.page], acts: PG_NOCONV_PLAY.acts,
+    ${askBlock({shape: "conversion", url: r.page, audit: ST_AUDITS[r.page], acts: PG_NOCONV_PLAY.acts,
                 queries: qs.map(x => ({q: x.q, note: `노출 ${num(x.imp)}`})),
-                deliver: ["이 페이지에 전환 동작(CTA)이 있는지와, 없다면 어디에 무엇을 넣을지 진단"],
+                deliver: ["전환 점검 계획서: 아래 '답의 형식'의 번호 카드 전부(측정 확인부터)"],
                 problem: `클릭 ${num(r.clicks)}·세션 ${num(r.sessions)}인데 전환 0`})}
     <p class="detn">이 페이지는 기회 목록에 없어 상태(완료·제외)를 못 답니다.
       전환 없음은 아직 기회로 채점하지 않습니다.</p></div>`;

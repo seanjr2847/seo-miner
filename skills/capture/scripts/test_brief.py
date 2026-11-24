@@ -4532,6 +4532,10 @@ def test_conversion_shape_checks_measurement_before_copy():
     assert "conversion" in p["page_state"], "고칠 페이지가 있는 꼴이다 — 폴백이 페이지 상태를 싣는다"
     assert "전환" in p["intro"]["conversion"] and "순위" in p["intro"]["conversion"]
     assert "GA4" in brief.fail_signal("conversion")
+    # 브라우저로 열어 보고 찾은 둘: 폴백이 SEO 진단 목록(title·H1…)을 같이 실어 "순위 일이 아니다"와
+    # 부딪혔고, '대상'의 언어 줄이 title 길이 기준을 말했다. 진단을 안 싣는 꼴은 페이로드가 말한다.
+    assert set(p["no_advice"]) == {"consolidate", "conversion"}, p["no_advice"]
+    assert "길이 기준" not in p["lang_line"]["conversion"] and "길이 기준" not in t
     assert "conversion" not in brief.SEND_SHAPES and "conversion" not in brief.OFFSITE_SHAPES
 
 

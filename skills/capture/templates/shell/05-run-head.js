@@ -167,7 +167,8 @@ function fallbackBrief(c) {
       if (a.canonical) L.push(`- canonical: ${a.canonical}`);
       if (a.robots) L.push(`- meta robots: ${a.robots}`);
       L.push("");
-      if ((a.advice || []).length && shape !== "consolidate") {
+      // 진단 목록을 안 싣는 꼴은 서버가 정한다(BRIEF.no_advice) — 여기 꼴 이름을 적지 않는다.
+      if ((a.advice || []).length && !(B.no_advice || []).includes(shape)) {
         L.push(B.advice_head);   // 정본은 brief.ADVICE_HEAD (페이로드)
         a.advice.forEach((x, i) => L.push(`${i + 1}. [${x.tag}] 지금: ${x.now} → ${x.fix}`));
         L.push("");

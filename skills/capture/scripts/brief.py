@@ -423,7 +423,7 @@ SHAPES: dict[str, dict] = {
                "값입니다. CTA·양식처럼 그 절에 없는 것은 직접 열어 보고 적습니다."],
         slot="고객이 실제로 한 말(문의·통화·채팅·후기 원문)을 여기에 붙이면, 반론·걱정 표를 짐작이 "
              "아니라 그 말로 채웁니다. 없으면 고객의 말이 필요한 칸은 [확인 필요]로 둡니다.",
-        limits=True),
+        limits=False),
 }
 assert tuple(SHAPES) == SHAPE_NAMES
 
@@ -1012,6 +1012,9 @@ def shapes_payload(locale: str) -> dict:
             "heads": heads(),
             "slot": {k: s["slot"] for k, s in SHAPES.items()},
             "page_state": [k for k, s in SHAPES.items() if _shows_page(k)],
+            # 페이지 상태는 싣되 진단 목록(title·H1·본문…)은 안 싣는 꼴 — 그 진단을 고치는 일이
+            # 아니다. 정리는 페이지 안을 안 고치고, 전환 점검은 순위 일이 아니다(build 의 adv 와 같은 갈래).
+            "no_advice": list(NO_ADVICE_SHAPES),
             "no_page": NO_PAGE,
             "advice_head": ADVICE_HEAD,
             "by_tag": DELIVER_BY_TAG, "deliver_default": DELIVER_DEFAULT,
@@ -1021,6 +1024,9 @@ def shapes_payload(locale: str) -> dict:
             "page_lang": {lang: ln[0] for lang in sorted(_KNOWN_LANGS)
                           if (ln := _page_lang_lines(None, f"https://x.example/{lang}/", locale))},
             "locale": locale, "lang": lang_label(locale)}
+
+
+NO_ADVICE_SHAPES = ("consolidate", "conversion")
 
 
 # ── 조립 ────────────────────────────────────────────────────────────────────

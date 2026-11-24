@@ -5682,6 +5682,10 @@ def test_seam_conversion_brief_and_cro_delegation():
     assert sh.group(1) == "conversion" and sh.group(1) in brief.SHAPE_NAMES, \
         f"전환 없는 페이지가 전환 점검 꼴이 아니라 {sh.group(1)!r} 꼴을 넘긴다"
     assert brief.SHAPES["conversion"]["label"] == "전환 점검"
+    # 폴백이 진단 목록을 빼는 꼴은 페이로드(BRIEF.no_advice)가 정한다 — 셸에 꼴 이름 사본이 없다
+    fb = re.search(r"function fallbackBrief\(c\) \{(.*?)\n\}", _shell_src(), re.S).group(1)
+    assert "B.no_advice" in fb and '"consolidate"' not in fb, \
+        "폴백이 진단을 빼는 꼴을 셸에 직접 적었다 — 전환 점검 요청문에 title·H1 진단이 실린다"
     sys.path.insert(0, str(ROOT / "skills" / "setup" / "scripts"))
     import doctor
     assert "cro" in doctor.OPTIONAL_SKILLS, "doctor.OPTIONAL_SKILLS 에 cro 가 없다"
