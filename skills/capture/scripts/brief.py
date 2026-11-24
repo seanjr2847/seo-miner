@@ -43,6 +43,7 @@ from typing import Callable
 
 import scoring
 import serp_adapter
+import serp_kinds
 
 # ── 일의 꼴 ──────────────────────────────────────────────────────────────────
 # 이름·순서의 정본. 화면의 폴백(기회로 아직 안 올라온 행)도 이 이름만 쓴다 —
@@ -1303,6 +1304,15 @@ def _serp_top(o: dict, ctx: dict, shape: str = "fix_page") -> list[str]:
     # 요청문이 사람에게 붙여 넣으라고 시켰다(제목은 이미 수집본에 있었는데도).
     outlines = ctx.get("serp_outlines") or {}
     got = [(r, outlines.get(str(r.get("url") or ""))) for r in rows]
+    # 글로 겨룰 상대가 아닌 자리(제3자 플랫폼·뉴스·공공 기관·마켓·SEO 도구·태그 목록)는 표에는
+    # 두고 비교 재료(H2·형식)에서만 뺀다 — 판정은 serp_kinds.peer_skip 한 벌이다(수집이 그
+    # 글을 안 여는 것과 같은 규칙). 위키백과의 H2 를 따라 쓰라고 시키지 않는다.
+    skipped = {i: why for i, r in enumerate(rows) if not r.get("is_own")
+               for why in [serp_kinds.peer_skip(r.get("url"), r.get("domain"))] if why}
+    if skipped:
+        L.insert(-1, f"- 이 중 {len(skipped)}자리({serp_kinds.skip_summary(skipped.values())})는 "
+                     "검색결과에는 서지만 글로 겨룰 상대가 아니라, 아래 비교 재료(H2·형식)에서 뺐습니다.")
+    got = [(r, None if i in skipped else x) for i, (r, x) in enumerate(got)]
     shown = [(r, x) for r, x in got if x and _content_h2(x.get("h2"))]
     if shown:
         # 새 글 꼴엔 '지금 이 페이지 상태' 절이 없다 — 견줄 상대를 꼴마다 말한다(theotherskin 울쎄라).
@@ -1353,6 +1363,23 @@ SERP_FORMAT_HINT = {
     "top_stories": "뉴스 칸: 언론 기사가 그 자리를 가져갑니다(글 손질로는 못 들어갑니다)",
     "topStories": "뉴스 칸: 언론 기사가 그 자리를 가져갑니다(글 손질로는 못 들어갑니다)",
 }
+# 강조 스니펫의 형식(serp_kinds.SNIPPET_FORMS) → 그 자리를 가져가는 형식. 조회가 형식을
+# 갈랐으면 위 "직답·표·번호 목록" 뭉뚱그린 줄 대신 이 줄이 선다. 못 가른 조회는 위 줄 그대로다.
+SNIPPET_FORM_HINT = {
+    "paragraph": "강조 스니펫(문단): 지금은 두세 문장 직답이 그 자리에 있습니다. 질문 꼴 소제목 "
+                 "바로 아래 40~60단어 안팎의 직답 문단이 그 자리를 가져갑니다",
+    "list": "강조 스니펫(목록): 지금은 번호·글머리 목록이 그 자리에 있습니다. 단계·항목을 "
+            "소제목 아래 목록 한 벌로 적은 글이 그 자리를 가져갑니다",
+    "table": "강조 스니펫(표): 지금은 표가 그 자리에 있습니다. 값을 문장에 흩지 않고 "
+             "머리글이 있는 표 한 벌로 적은 글이 그 자리를 가져갑니다",
+    "video": "강조 스니펫(영상): 지금은 영상이 그 자리에 있습니다. 글 손질만으로는 못 들어가고 "
+             "그 질문에 답하는 영상이 있어야 합니다(없으면 [확인 필요])",
+}
+_SNIPPET_KEYS = ("featured_snippet", "answerBox")
+# 구글 AI 모드 — AI 요약(ai_overview)과 **다른 인용 면**이다. 순위 조회 응답에는 안 실려
+# 오고(전용 엔드포인트 serp/google/ai_mode), 받았으면 serp_extras 의 ai_mode 로 따로 선다.
+# 이름은 여기 한 벌: AI 요약의 이름(_FEATURE_NAME["ai_overview"])과 섞어 쓰지 않는다.
+AI_MODE_NAME = "구글 AI 모드"
 # 형식 사전에 없는 기능의 이름 — 요청문에 수집기 키(ai_overview 등)가 그대로 찍히지 않게.
 _FEATURE_NAME = {"ai_overview": "구글 AI 요약", "knowledge_graph": "지식 패널",
                  "knowledgeGraph": "지식 패널"}
@@ -1400,20 +1427,144 @@ def _format_lines(o: dict, ctx: dict, outlines: list[tuple[dict, dict]],
                if shape == "template" else
                "- 상위가 모두 가진 형식은 새 글도 갖출 형식입니다.")
               + " 분량은 맞출 목표가 아니라 다루는 깊이의 단서입니다. 단어 수를 늘리려고 늘리지 않습니다."]
+        L += _page_kind_line([x for _, x in counted[:3]])
     return L
+
+
+def _page_kind_line(outlines: list[dict]) -> list[str]:
+    """형식 표 옆 한 줄 — 상위 글이 '무슨 페이지'인가(그 글이 스스로 단 마크업 기준).
+
+    분류의 정본은 serp_kinds.page_kind 다. 마크업을 안 본 행(schema 가 None — 이 칸이
+    생기기 전에 연 글)은 세지 않고, 종류를 아는 글이 하나도 없으면 아무 말도 안 한다."""
+    seen = [x.get("schema") for x in outlines if x.get("schema") is not None]
+    mix = serp_kinds.page_kind_mix(seen)
+    if not any(label != "종류 모름" for label, _ in mix):
+        return []
+    return ["- 상위 글의 페이지 종류(그 글이 단 마크업 기준): "
+            + " · ".join(f"{label} {n}곳" for label, n in mix)
+            + ". 상위가 글이 아니라 상품·목록·도구 페이지면 그 자리는 글 한 편이 아니라 "
+              "그 종류의 페이지가 가져갑니다."]
 
 
 def _serp_feature_lines(o: dict, ctx: dict) -> list[str]:
     """검색결과에 선 칸 → 그 자리를 가져가는 형식. 상위 목록이 없는 회차에도 기능 목록은
     있다(순위 행이 싣는다) — 그래서 상위 표와 따로 선다."""
-    feats = ((ctx.get("rank_by_kw") or {}).get(str(o.get("target") or "")) or {}).get("features") or []
-    hints = list(dict.fromkeys(SERP_FORMAT_HINT[f] for f in feats if f in SERP_FORMAT_HINT))
+    row = (ctx.get("rank_by_kw") or {}).get(str(o.get("target") or "")) or {}
+    feats = row.get("features") or []
+    form = SNIPPET_FORM_HINT.get(str(row.get("snippet_form") or ""))
+    hints = list(dict.fromkeys(
+        (form if form and f in _SNIPPET_KEYS else SERP_FORMAT_HINT[f])
+        for f in feats if f in SERP_FORMAT_HINT))
+    note = _region_note(o, ctx) if feats else None
     if not hints:
-        return []
+        return ["## 이 지역의 검색결과 구성", f"- {note}", ""] if note else []
     return ["## 검색결과에 선 칸: 그 자리를 가져가는 형식", *(f"- {h}" for h in hints),
             "- 이 형식이 우리 글에 없으면 '만들어 줄 것'의 본문 구간 카드에서 어느 구간이 그 "
             "형식을 맡을지 적습니다. 없는 형식을 억지로 만들지는 않습니다(영상이 없으면 [확인 필요]).",
-            "", *(_nap_lines(ctx) if _local_pack(o, ctx) else [])]
+            *([f"- {note}"] if note else []),
+            "", *(_local_pack_lines(row) + _nap_lines(ctx) if _local_pack(o, ctx) else [])]
+
+
+_MONTH = {f"{m:02d}": f"{m}월" for m in range(1, 13)}
+
+
+def _extras_lines(o: dict, ctx: dict) -> list[str]:
+    """이 검색어에 덧붙여 잰 것(serp_extras) — 받은 것만 말한다. 안 받은 종류는 줄이 없다
+    (없다고 단정하지 않는다). 종류·모양의 정본은 serp_extras.KINDS 와 그 파서다."""
+    import serp_extras
+    ex = ctx.get("serp_extras") or {}
+    t = str(o.get("target") or "")
+
+    def got(kind):
+        v = (ex.get(kind) or {}).get(t)
+        return (v.get("data"), str(v.get("checked_at") or "")[:10]) if v else (None, "")
+
+    L: list[str] = []
+    d, at = got("bing_rank")
+    if d:
+        pos = d.get("position")
+        L.append(f"- Bing 순위({at}): "
+                 + (f"{pos}위 ({_clean_url(d.get('url'))})" if pos is not None
+                    else "1쪽 안에 없음")
+                 + ". Bing 색인은 Copilot 답변이 가져다 쓰는 재료입니다.")
+    d, at = got("ai_mode")
+    if d and d.get("present"):
+        doms = d.get("domains")
+        L.append(f"- {AI_MODE_NAME}({at}, 구글 AI 요약과 다른 인용 면입니다): "
+                 + ("인용된 곳을 이번 응답에서 뽑지 못했습니다" if doms is None else
+                    f"인용된 곳 {', '.join(map(str, doms[:8]))}"
+                    + ("" if d.get("cited") is None else
+                       ". 우리 페이지도 인용됐습니다" if d["cited"] else ". 우리 페이지는 없습니다"))
+                 + ".")
+    d, at = got("images")
+    if d and d.get("top"):
+        top = d["top"]
+        doms = list(dict.fromkeys(x["domain"] for x in top if x.get("domain")))
+        L.append(f"- 이미지 검색 상위 {len(top)}장({at})의 출처: {', '.join(doms[:6])}. "
+                 f"설명(alt)이 적힌 것 {d.get('alt_filled', 0)}/{len(top)}장. "
+                 + (f"우리 이미지는 {', '.join(str(p) for p in d['own'][:3])}번째입니다."
+                    if d.get("own") else "우리 이미지는 상위에 없습니다."))
+    d, at = got("youtube")
+    if d and d.get("videos"):
+        L.append(f"- YouTube 상위({at}): 영상 칸이 선 검색어라 같은 질문의 영상을 봤습니다.")
+        L += [f"  - {v.get('pos')}. {_ext(v.get('title') or '', 80)} ({_ext(v.get('channel') or '-', 40)}"
+              + (f", 조회 {_n(v['views'])}회" if v.get("views") is not None else "")
+              + (", 쇼츠" if v.get("shorts") else "") + ")"
+              for v in d["videos"][:3]]
+    d, at = got("trends")
+    if d and d.get("months"):
+        m = d["months"]
+        L.append(f"- 계절성(Google Trends 5년 달별 평균, 0~100): 가장 높은 달 "
+                 f"{_MONTH.get(d['peak'], d['peak'])}({m[d['peak']]:g}), 가장 낮은 달 "
+                 f"{_MONTH.get(d['low'], d['low'])}({m[d['low']]:g}).")
+    d, at = got("intent")
+    if d and d.get("agree") is False:
+        name = serp_extras.AXIS_NAME
+        L.append(f"- 검색 의도 대조({at}): 우리 낱말 규칙은 '{name.get(d.get('ours'), d.get('ours'))}', "
+                 f"DataForSEO 는 '{name.get(d.get('label'), d.get('label'))}'"
+                 + (f"(확률 {d['probability']:.2f})" if isinstance(d.get("probability"), (int, float)) else "")
+                 + "로 갈렸습니다. 어느 쪽인지는 위 상위 글의 종류·형식으로 가립니다.")
+    return ["## 덧붙여 잰 것: 같은 검색어의 다른 지면", *L, ""] if L else []
+
+
+def _region_note(o: dict, ctx: dict) -> str | None:
+    """이 검색어를 잰 지역이 검색결과 구성이 다른 곳(EEA·튀르키예·남아공)이면 그 주석.
+    지역 표의 정본은 serp_kinds.REGION_UNIT_NOTE 다."""
+    loc = (ctx.get("kw_locales") or {}).get(str(o.get("target") or "")) \
+        or (ctx.get("project") or {}).get("locale")
+    return serp_kinds.region_note(loc)
+
+
+def _local_pack_lines(row: dict) -> list[str]:
+    """지도 칸에 **누가** 섰나 — 같은 순위 조회가 남긴 항목(rank_snapshots.local_pack_json).
+
+    예전엔 '지도 칸이 섰다'까지만 알아서 "우리 업체가 거기 있나"를 사람에게 물었다. 항목이
+    없는 행(이 칸 이전의 조회)은 아무 말도 안 한다 — NAP 절이 사람 확인으로 남는다."""
+    lp = row.get("local_pack") or {}
+    items = [x for x in (lp.get("items") or []) if isinstance(x, dict)]
+    if not items:
+        return []
+
+    def stars(x):
+        if x.get("rating") is None:
+            return "-"
+        return f"{x['rating']:g}" + (f" (리뷰 {_n(x['reviews'])})" if x.get("reviews") is not None else "")
+
+    L = ["## 지도 칸에 선 업체: 같은 순위 조회",
+         *_table(["자리", "업체", "사이트", "평점"],
+                 [[f"{x.get('pos')}번째" + (" (광고)" if x.get("is_paid") else ""),
+                   _ext(x.get("title") or "-", 60), x.get("domain") or "-", stars(x)]
+                  for x in items])]
+    if lp.get("own_pos") is not None:
+        L.append(f"- 우리 업체는 이 지도 칸의 {lp['own_pos']}번째입니다("
+                 + ("사이트 도메인으로" if lp.get("own_by") == "domain" else "브랜드 이름으로")
+                 + " 확인).")
+    else:
+        L.append("- 우리 업체는 이 조회의 지도 칸에서 찾지 못했습니다(사이트 도메인·브랜드 별칭으로 "
+                 "대조). 지도 칸은 검색한 위치에 따라 바뀌므로 프로필이 없다는 뜻은 아닙니다. "
+                 "프로필이 있는지는 아래 대조 절에서 [확인 필요]로 둡니다.")
+    L.append("")
+    return L
 
 
 def _local_pack(o: dict, ctx: dict) -> bool:
@@ -4223,7 +4374,7 @@ def build(o: dict, ctx: dict, locale: str | None = None) -> dict:
         if fan:
             L += ["## 함께 답해야 할 질문 (구글이 같이 보여 준 것)", *fan, ""]
         L += _serp_stale_lines(o, ctx, had_top=had_top, had_fan=bool(fan))
-        L += _serp_feature_lines(o, ctx)
+        L += _serp_feature_lines(o, ctx) + _extras_lines(o, ctx)
     page_at = None                            # 페이지 상태·사이트 사실 — 산출물이 정해진 뒤 끼운다
     if _shows_page(shape) and url:
         page_at = len(L)

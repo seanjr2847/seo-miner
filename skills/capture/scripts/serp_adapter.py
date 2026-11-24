@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import collector  # noqa: E402
 import paths  # noqa: E402
 import scoring  # noqa: E402
+import serp_kinds  # noqa: E402
 
 # 단계를 그 자리에서 끝내는 예외. 정의는 collector 에 있다 — Stage.each 가 이걸
 # 알아야 하는데 collector 가 serp_adapter 를 읽으면 순환이 된다. 여기서는 이름만
@@ -666,6 +667,7 @@ def _parse_serp(items, depth: int) -> dict:
     """
     top, features, aio_present, aio_domains = [], set(), 0, []
     related, paa = [], []
+    local_pack, ads, snippet = [], [], None
     for it in items or []:
         t = it.get("type")
         if t == "organic":
@@ -685,13 +687,56 @@ def _parse_serp(items, depth: int) -> dict:
                 if isinstance(q, dict) and q.get("title"):
                     paa.append(q["title"])
             features.add(t)
+        elif t == "local_pack":
+            local_pack.append(_local_pack_row(it, len(local_pack) + 1))
+            features.add(t)
+        elif t == "featured_snippet":
+            if snippet is None:
+                snippet = {"form": serp_kinds.snippet_form(it),
+                           "domain": scoring.host_of(it.get("url") or it.get("domain") or "") or None,
+                           "url": it.get("url")}
+            features.add(t)
+        elif t == "paid":
+            ads.append(_ad_row(it))
+            features.add(t)
         else:
             features.add(t)
     return {"top": top[:depth], "serp_features": sorted(features),
             "aio_present": aio_present,
             "aio_domains": (sorted(set(aio_domains)) if aio_domains or not aio_present
                             else None),
-            "related": related, "paa": paa}
+            "related": related, "paa": paa,
+            "local_pack": local_pack[:LOCAL_PACK_KEEP], "snippet": snippet,
+            "ads": ads[:ADS_KEEP]}
+
+
+# 지도 칸·광고를 몇 줄까지 남기나 — 지도 칸은 보통 세 자리고, 광고는 위아래 합쳐 여덟 안팎이다.
+LOCAL_PACK_KEEP = 5
+ADS_KEEP = 8
+
+
+def _local_pack_row(it: dict, n: int) -> dict:
+    """지도 칸 한 자리 → {pos, title, domain, url, rating, reviews, is_paid}.
+
+    칸 이름은 DataForSEO 문서 그대로다(2026-11-24 확인:
+    https://docs.dataforseo.com/v3/serp/google/organic/live/advanced/ — local_pack 항목은
+    title·description·domain·phone·url·is_paid·rating{rating_type,value,votes_count,
+    rating_max}·cid). 응답은 업체 하나가 항목 하나로 온다(items 묶음이 없다). 자리는 응답
+    순서다 — rank_group 은 문서에 있지만 지도 칸 안의 순번인지는 실응답으로 확인하지 못해
+    쓰지 않는다. domain·url 은 사이트를 안 건 업체에는 비어 온다(None 으로 남긴다)."""
+    rating = it.get("rating") if isinstance(it.get("rating"), dict) else {}
+    return {"pos": n, "title": it.get("title"),
+            "domain": scoring.host_of(it.get("url") or it.get("domain") or "") or None,
+            "url": it.get("url"), "rating": rating.get("value"),
+            "reviews": rating.get("votes_count"), "is_paid": bool(it.get("is_paid"))}
+
+
+def _ad_row(it: dict) -> dict:
+    """광고 한 줄 → {title, description, domain}. 문구는 의도 보강(serp_kinds.ad_intent)이 읽는다.
+    설명은 extra.description 에 온다(같은 문서의 paid 항목)."""
+    extra = it.get("extra") if isinstance(it.get("extra"), dict) else {}
+    return {"title": it.get("title"), "description": extra.get("description"),
+            "domain": scoring.host_of(it.get("url") or it.get("domain") or "") or None}
 
 
 def fetch_dataforseo(keyword: str, locale: str, depth: int = 10, device: str = "desktop") -> dict:
@@ -875,9 +920,21 @@ def fetch_serper(keyword: str, locale: str, depth: int = 10, device: str = "desk
            for it in data.get("organic", [])]
     features = sorted(k for k in ("answerBox", "knowledgeGraph", "peopleAlsoAsk",
                                   "topStories", "images") if k in data)
+    # 지도 칸 — Serper 는 `places` 로 싣는다. 기능 이름은 DataForSEO 와 같은 "local_pack"
+    # 한 벌로 적는다(요청문의 NAP 절·형식 표가 그 이름을 본다). 항목 칸 이름(title·rating·
+    # ratingCount·website)은 공개 문서가 없어 실응답으로 확인하지 못했다 — 없으면 None 이다.
+    places = [x for x in (data.get("places") or []) if isinstance(x, dict)]
+    if places:
+        features = sorted({*features, "local_pack"})
     # aio_present=None: "AI Overview가 없었다"가 아니라 "재지 않았다". 0으로 적으면
     # 나중에 노출률 계산에서 분모에 섞여 들어간다.
     return {"top": top, "serp_features": features,
+            "local_pack": [
+                {"pos": n, "title": x.get("title"),
+                 "domain": scoring.host_of(x.get("website") or "") or None,
+                 "url": x.get("website"), "rating": x.get("rating"),
+                 "reviews": x.get("ratingCount"), "is_paid": False}
+                for n, x in enumerate(places[:LOCAL_PACK_KEEP], 1)],
             "aio_present": None, "aio_domains": [],
             "related": [x.get("query") for x in data.get("relatedSearches", []) if x.get("query")],
             "paa": [x.get("question") for x in data.get("peopleAlsoAsk", []) if x.get("question")]}
@@ -1074,6 +1131,9 @@ def fetch(provider: str, keyword: str, locale: str, depth: int = 10, device: str
     res = spec["fetch"](keyword, locale, depth, device=device)
     res.setdefault("cost", spec["cost"])   # 실청구액을 안 주는 제공자는 단가로 계상
     res.setdefault("aio_domains", [])
+    res.setdefault("local_pack", [])       # [] = 지도 칸이 없었다(기능 목록이 같은 말을 한다)
+    res.setdefault("snippet", None)        # None = 강조 스니펫이 없었거나 형식을 못 갈랐다
+    res.setdefault("ads", [])
     res.setdefault("aio_present", None)    # None = 측정 안 함. 0("없었다")과 다르다.
     if res["aio_present"] is not None:
         res["aio_present"] = int(res["aio_present"])

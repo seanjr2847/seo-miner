@@ -3922,21 +3922,54 @@ def country_perf(conn: sqlite3.Connection, project_id: int, *,
                   key=lambda x: (-x["clicks"], -x["impressions"]))[:limit]
 
 
-def classify_intent(keyword: str) -> str:
+def classify_intent(keyword: str, ads=None) -> str:
     """결정적 인텐트 분류 — transactional > commercial > navigational > info.
 
     기본값은 코드, 보정은 Claude/사람. 사람이 Claude 와 같이 적어둔 intent 는
     절대 덮지 않는다 (load() 의 _backfill_intents 가 NULL 행만 건드린다).
     기존 norm()/tokens() 로 토큰화 — 한글 토큰('가격', '후기')도 그대로 매칭.
+
+    ads: 그 검색어의 검색결과에 선 광고 문구([{title, description}], rank_snapshots.ads_json).
+    주면 광고주가 문구에 쓴 값·구매·비교 낱말로 의도를 **올리기만** 한다(serp_kinds.raise_intent
+    — 같은 낱말 사전). 검색어 글자에는 '가격'이 없어도 광고가 전부 값을 말하면 돈이 오가는
+    검색이다. 광고가 섰다는 사실만으로는 안 올린다.
     """
     ts = set(tokens(keyword))
     if ts & INTENT_TRANSACTIONAL:
-        return "transactional"
-    if ts & INTENT_COMMERCIAL:
-        return "commercial"
-    if ts & INTENT_NAVIGATIONAL:
-        return "navigational"
-    return "info"
+        base = "transactional"
+    elif ts & INTENT_COMMERCIAL:
+        base = "commercial"
+    elif ts & INTENT_NAVIGATIONAL:
+        base = "navigational"
+    else:
+        base = "info"
+    if ads:
+        import serp_kinds
+        return serp_kinds.raise_intent(base, ads)
+    return base
+
+
+def _latest_ads(conn: sqlite3.Connection, project_id: int) -> dict[int, list]:
+    """keyword id → 가장 최근 순위 조회의 광고 문구. 광고가 없던 검색어는 키가 없다."""
+    out: dict[int, list] = {}
+    try:
+        rows = conn.execute(
+            """SELECT rs.keyword_id, rs.ads_json FROM rank_snapshots rs
+                 JOIN keywords k ON k.id = rs.keyword_id
+                WHERE k.project_id=? AND rs.ads_json IS NOT NULL
+                ORDER BY rs.checked_at DESC, rs.id DESC""", (project_id,)).fetchall()
+    except sqlite3.OperationalError:      # 이 칸이 생기기 전의 Brain
+        return out
+    for r in rows:
+        if r["keyword_id"] in out:
+            continue
+        try:
+            ads = json.loads(r["ads_json"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(ads, list):
+            out[r["keyword_id"]] = ads
+    return out
 
 
 def _backfill_intents(conn: sqlite3.Connection, project_id: int) -> int:
@@ -3946,7 +3979,8 @@ def _backfill_intents(conn: sqlite3.Connection, project_id: int) -> int:
     그 손이 이김. 비활성 키워드는 애초에 의도 추적이 아니라 후보라 안 본다.
     """
     import db
-    pairs = [(r["id"], classify_intent(r["keyword"])) for r in conn.execute(
+    ads = _latest_ads(conn, project_id)
+    pairs = [(r["id"], classify_intent(r["keyword"], ads.get(r["id"]))) for r in conn.execute(
         "SELECT id, keyword FROM keywords "
         "WHERE project_id=? AND is_active=1 AND intent IS NULL",
         (project_id,)).fetchall()]
@@ -6673,6 +6707,12 @@ def _chunks(xs: list, n: int = 400):
         yield xs[i:i + n]
 
 
+def _peer_skip(url: str) -> str | None:
+    """serp_kinds.peer_skip — 늦게 들인다(serp_kinds 가 이 모듈을 읽는다)."""
+    import serp_kinds
+    return serp_kinds.peer_skip(url)
+
+
 def _surface_facts(conn: sqlite3.Connection, project_id: int,
                    targets: list[str]) -> dict[str, dict]:
     """검색어 → 지면을 가늠할 사실들. 없는 사실은 None/빈 집합이다(추정하지 않는다).
@@ -6723,7 +6763,9 @@ def _surface_facts(conn: sqlite3.Connection, project_id: int,
                            SELECT MAX(checked_at) FROM serp_results x
                             WHERE x.keyword_id=s.keyword_id)
                      ORDER BY s.keyword_id, s.position""", ch):
-            if r["url"]:
+            # 어느 검색어에나 서는 자리(위키백과·유튜브·뉴스·마켓…)는 겹침에 안 센다 —
+            # 그것이 셋 겹쳤다고 두 검색어가 같은 지면이 되지 않는다(serp_kinds.peer_skip).
+            if r["url"] and not _peer_skip(r["url"]):
                 top.setdefault(r["keyword_id"], []).append(url_key(r["url"]))
         for kid in ch:
             for t in kid_of[kid]:

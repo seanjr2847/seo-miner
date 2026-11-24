@@ -40,6 +40,8 @@ import fanout  # noqa: E402
 import run_verdict  # noqa: E402
 import scoring  # noqa: E402
 import serp_adapter  # noqa: E402
+import serp_extras  # noqa: E402
+import serp_kinds  # noqa: E402
 
 
 # 대기열로 잴 때 결과를 기다리는 상한(초). 넘기면 단계는 **실패**이고 이번 묶음에서
@@ -156,6 +158,7 @@ def collect(project: str, *,
             no_harvest: bool = False,
             ids: str | None = None,
             force: bool = False,
+            extras: str | None = None,
             conn=None) -> collector.StageResult:
     """SERP 순위 스냅샷 + 부산물(키워드 후보·경쟁사)을 Brain 에 적재한다.
 
@@ -170,6 +173,9 @@ def collect(project: str, *,
         no_harvest: True 면 부산물(키워드 후보·경쟁사) 적재 안 함
         ids: 쉼표 구분 keyword id — 지정하면 is_active 무시하고 이것만
         force: 오늘 이미 확인한 키워드도 재확인
+        extras: 순위에 덧붙는 선택 수집(serp_extras.KINDS 의 이름, 쉼표 구분 · all · none).
+            DataForSEO 키가 있을 때만 돈다. 미지정이면 설정 serp_extras, 그것도 없으면
+            serp_extras.DEFAULT
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
 
     Returns:
@@ -181,7 +187,7 @@ def collect(project: str, *,
         conn, p = st.conn, st.project
         s = st.settings(ap, argparse.Namespace(
             max_keywords=max_keywords, depth=depth,
-            throttle=throttle, device=device))
+            throttle=throttle, device=device, extras=extras))
         provider = provider or serp_adapter.detect_provider()
         if not provider:
             return st.skip("SERP 키 없음: DATAFORSEO_LOGIN/PASSWORD 또는 SERPER_API_KEY 설정. "
@@ -244,6 +250,12 @@ def collect(project: str, *,
         reuse = _reusable(conn, p["name"], kws, default_locale, depth_of, device) if queued else {}
         est = serp_adapter.cost_per_query(provider) * sum(
             _pages(depth_of[k["id"]]) for k in kws if k["id"] not in reuse)
+        # 덧붙는 선택 수집의 상한 — 키가 있고 켠 종류만(serp_extras.KINDS 가 단가·상한의 정본).
+        # 순위를 DataForSEO 로 잴 때만 돈다 — 같은 계정·같은 잔액 카나리아 아래서 쓰는 돈이다.
+        extras_on = provider == "dataforseo" and serp_adapter.has_dataforseo()
+        extra_kinds = serp_extras.wanted(s["serp_extras"]) if extras_on else []
+        est_extras = serp_extras.estimate(extra_kinds, len(kws))
+        est += est_extras
         took = (f"대기열: 보통 1~2분, 최대 {WAIT_LIMIT_S // 60}분" if queued else
                 f"~{len(kws) * (throttle + 2) / 60:.0f} min")
         print(f"[serp] provider={provider} keywords={len(kws)}{st.skip_note(skipped)} "
@@ -257,6 +269,8 @@ def collect(project: str, *,
                 serp_adapter.warn_unmapped(loc)
         for note in serp_adapter.caveats(provider):
             print(f"       note: {note}")
+        if extra_kinds and kws:
+            print("       extras: " + ", ".join(extra_kinds) + f" (상한 ≈${est_extras:.3f})")
         if st.dry_run:
             return st.noop(cost=est)
 
@@ -266,6 +280,7 @@ def collect(project: str, *,
             return st.noop(rows=0, cost=0.0)
 
         own = p["domain"]
+        aliases = _aliases((st.cfg or {}).get("brand_aliases"))
         # 분석 범위 경로(gucci.com/kr/ko/) — 같은 도메인의 다른 나라 경로가 한국 검색에
         # 떠도 그건 "우리 순위"가 아니다. 경쟁사로 세지도 않는다(같은 회사다).
         # 시장마다 경로가 다를 수 있다(/kr/ko/ · /us/en/) — 키워드의 로케일로 그 시장 경로를 찾는다.
@@ -277,6 +292,10 @@ def collect(project: str, *,
         harvested_kw = set()
         outline_urls: list[str] = []
         new_kw = new_comp = 0
+        measured: list = []                     # 이번 런이 실제로 적재한 keywords 행
+        features_of: dict = {}                  # keyword id → 그 조회의 검색결과 기능
+        ads_of: dict = {}                       # keyword id → 그 조회의 광고 문구
+        ex = {"cost": 0.0, "calls": 0, "rows": 0, "note": ""}
 
         def write(row, res) -> None:
             """키워드 하나의 응답을 쓴다 — 한 건씩 재든 대기열로 재든 같은 한 벌."""
@@ -319,11 +338,21 @@ def collect(project: str, *,
                 res["serp_features"], res["aio_present"], aio_cited, checked_at=at,
                 aio_domains=doms if res["aio_present"] == 1 else None,
                 locale=kw_locale)       # 어느 나라 구글에서 쟀나 — park_offlocale 이 대조한다
+            # 같은 응답에 실려 온 지도 칸 항목·강조 스니펫 형식·광고 문구 — 예전엔 기능
+            # 이름("local_pack")만 남기고 버렸다. 지도 칸에 내 업체가 섰는지는 여기서 가른다.
+            db.write_rank_extras(
+                conn, row["id"], at,
+                local_pack=serp_kinds.local_pack_own(res.get("local_pack"), own, aliases),
+                snippet_form=(res.get("snippet") or {}).get("form"),
+                ads=res.get("ads"))
+            measured.append(row)
+            features_of[row["id"]] = res["serp_features"]
+            ads_of[row["id"]] = res.get("ads") or []
             db.write_serp_results(conn, row["id"], top_rows, checked_at=at)
             # 상위 글 몇 개의 주소만 모아 둔다 — 여는 것은 런 끝에 한 번, 주소 단위로.
-            outline_urls.extend(
-                t["url"] for t in top_rows[:OUTLINE_PER_KEYWORD]
-                if t.get("url") and not t.get("is_own"))
+            # 글로 겨룰 상대만 연다(serp_kinds.peer_skip): 위키백과·유튜브·뉴스·마켓을 열어
+            # H2 를 견줘 봐야 우리 글이 따라 할 구간이 안 나온다. 빼고 남은 것 중 앞에서부터.
+            outline_urls.extend(outline_targets(top_rows))
             # 함께 묻는 질문·연관 검색어를 **어느 검색어에서 나왔는지와 함께** 남긴다 —
             # 아래 키워드 후보 적재와 별개다(그쪽은 --no-harvest 로 끌 수 있는 부산물이고,
             # 이쪽은 이 검색어의 요청문이 쓰는 사실이다).
@@ -385,6 +414,14 @@ def collect(project: str, *,
                 # 상위 글의 제목·H2 — 요청문이 "빠진 구간"을 짐작이 아니라 비교로 찾는 재료다.
                 # 여태 이걸 안 모아서 요청문이 사람에게 붙여 넣으라고 시켰다(제목은 이미 있었다).
                 out_ok, out_bad = _collect_outlines(conn, outline_urls, throttle=throttle)
+                # 덧붙는 선택 수집(의도 대조·이미지·YouTube·Bing·Trends·AI 모드) — 순위가 다
+                # 적재된 뒤에 돈다. 여기서 난 오류는 순위 단계의 성패를 안 바꾼다(note 에만 남는다).
+                ex = serp_extras.run(conn, p, measured,
+                                     setting=s["serp_extras"] if extras_on else "none",
+                                     default_locale=default_locale, scopes=scopes,
+                                     features_of=features_of, ads_of=ads_of)
+                total_cost += ex["cost"]
+                calls += ex["calls"]
                 # 자동 선택분 중 몇 번 연속 순위 밖인 것은 추적에서 내린다(db.demote_unranked —
                 # 씨앗·사람이 켠 것·열린 기회의 대상은 안 건드린다). 구글 실적이 깊은 조회
                 # 안이라고 하는 검색어도 둔다 — 한 나라·한 기기 조회가 놓쳤을 수 있다.
@@ -403,6 +440,7 @@ def collect(project: str, *,
                        + ("timeout=1 " if timed_out else "")
                        + f"harvest_kw={new_kw} harvest_comp={new_comp} "
                        f"outlines={out_ok} outline_errors={out_bad}"
+                       + (f" {ex['note']}" if ex["note"] else "")
                        # 실패 표식은 판정 규칙 한 벌(run_verdict.judge — 중단 표식 · errors=N)이
                        # 읽는 꼴로 남긴다. timeout=1 만 두면 그 규칙이 이 런을 성공으로 읽어
                        # "순위 오늘 잼"이라 말하고 다시 재기도 안 권한다.
@@ -524,6 +562,39 @@ OUTLINE_PER_KEYWORD = 3
 OUTLINE_MAX_PER_RUN = 40
 
 
+def outline_targets(top_rows) -> list[str]:
+    """이 검색어에서 열어 볼 상위 글 주소 — 내 것과 '글로 겨룰 상대가 아닌 자리'를 빼고
+    앞에서부터 OUTLINE_PER_KEYWORD 개. 뺄 까닭의 정본은 serp_kinds.peer_skip 이다."""
+    out = []
+    for t in top_rows:
+        u = t.get("url")
+        if not u or t.get("is_own") or serp_kinds.peer_skip(u, t.get("domain")):
+            continue
+        out.append(u)
+        if len(out) >= OUTLINE_PER_KEYWORD:
+            break
+    return out
+
+
+def _aliases(raw) -> list[str]:
+    """설정의 brand_aliases — 목록이든 쉼표 글이든 낱말 목록으로."""
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    return [str(x).strip() for x in (raw or []) if str(x).strip()]
+
+
+def _schema_types(a: dict) -> list | None:
+    """collect_page.fetch 결과 → 마크업 @type 목록. 머리를 못 본 행(schema_json 없음)은 None."""
+    raw = a.get("schema_json")
+    if raw is None:
+        return None
+    try:
+        got = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return [str(t) for t in got] if isinstance(got, list) else None
+
+
 def _collect_outlines(conn, urls: list[str], *, throttle: float | None = None) -> tuple[int, int]:
     """상위 글의 제목·H2 를 가져와 남긴다 (가져온 수, 실패 수).
 
@@ -558,7 +629,7 @@ def _collect_outlines(conn, urls: list[str], *, throttle: float | None = None) -
             db.write_serp_outline(conn, u, status=a.get("status"), title=a.get("title"),
                                   h2=h2, words=a.get("words"), tables=a.get("tables"),
                                   lists=a.get("lists"), images=a.get("images"),
-                                  videos=a.get("videos"))
+                                  videos=a.get("videos"), schema=_schema_types(a))
             ok += 1
 
     # 가져오기는 동시에, 적기는 todo 순서로 메인에서 — Stage.each 가 아니라 Direct 를 쓴다:
@@ -578,6 +649,10 @@ def _parser() -> argparse.ArgumentParser:
                           help="요청 간격(초). 기본은 skill_config defaults.throttle")
     collector.add_setting(ap, "--device", key="serp_device", fallback="desktop", type=str,
                           help="측정 디바이스 (desktop|mobile). 기본은 desktop")
+    collector.add_setting(ap, "--extras", key="serp_extras", fallback=serp_extras.DEFAULT,
+                          type=str,
+                          help="순위에 덧붙는 선택 수집(쉼표 구분 · all · none): "
+                               + ", ".join(serp_extras.KINDS) + ". DataForSEO 키가 있을 때만")
     ap.add_argument("--no-harvest", action="store_true")
     ap.add_argument("--ids", help="쉼표로 구분한 keyword id — 지정하면 is_active를 무시하고 이것만 조회")
     ap.add_argument("--force", action="store_true", help="오늘 이미 확인한 키워드도 건너뛰지 않고 재확인")

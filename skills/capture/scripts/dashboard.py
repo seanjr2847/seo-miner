@@ -797,6 +797,17 @@ def _axis_rank(conn, pid: int) -> dict:
              JOIN keywords k ON k.id=rs.keyword_id
             WHERE k.project_id=? AND {_RANK_LIVE} ORDER BY d DESC LIMIT 2""", (pid, site))]
 
+    def _serp_extras_payload(c, project_id):
+        import serp_extras
+        return serp_extras.payload(c, project_id)
+
+    def _json_obj(text):
+        try:
+            got = json.loads(text) if text else None
+        except (TypeError, ValueError):
+            got = None
+        return got if isinstance(got, dict) else None
+
     def rank_agg(d):
         if not d:
             return {}
@@ -804,7 +815,8 @@ def _axis_rank(conn, pid: int) -> dict:
         # "어느 페이지가 그 자리에 있나"를 말하지 못했다(DB 에는 내내 있었다).
         return {r["keyword"]: r for r in q(conn,
             f"""SELECT k.keyword, rs.position, rs.url, rs.serp_features_json,
-                      rs.aio_present, rs.aio_cited, rs.aio_domains_json
+                      rs.aio_present, rs.aio_cited, rs.aio_domains_json,
+                      rs.local_pack_json, rs.snippet_form
                  FROM rank_snapshots rs JOIN keywords k ON k.id=rs.keyword_id
                 WHERE k.project_id=? AND substr(rs.checked_at,1,10)=? AND {_RANK_LIVE}""",
             (pid, d, site))}
@@ -864,6 +876,9 @@ def _axis_rank(conn, pid: int) -> dict:
                       "prev_pos": prev_pos,
                       "aio": r["aio_present"], "aio_cited": r["aio_cited"],
                       "aio_domains": aio_doms,
+                      # 지도 칸 항목·내 업체 자리, 강조 스니펫 형식 — 같은 조회의 값(None = 안 섰다)
+                      "local_pack": _json_obj(r["local_pack_json"]),
+                      "snippet_form": r["snippet_form"],
                       # AI 요약 처방의 갈래 — 요약이 뜬 행에만. 판정은 scoring 한 곳.
                       "aio_band": scoring.aio_band(cur_pos) if r["aio_present"] == 1 else None})
         if r["aio_present"] == 1 and r["aio_cited"] == 0:
@@ -881,6 +896,9 @@ def _axis_rank(conn, pid: int) -> dict:
         "serp_outlines": db.serp_outlines(
             conn, [r["url"] for rows in serp_top.values() for r in rows if r.get("url")]),
         "serp_fanout": serp_fanout,
+        # 순위에 덧붙여 잰 것(의도 대조·이미지·YouTube·Bing·Trends·AI 모드·LLM 언급) —
+        # 종류·모양의 정본은 serp_extras 다. 받은 적 없으면 빈 dict.
+        "serp_extras": _serp_extras_payload(conn, pid),
         # AI 요약 빠짐 검색어의 순위 행 전부 — gather() 가 ranks 를 화면용으로 30개까지
         # 자르는데(순위 순), AI 요약 기회는 대개 순위가 낮거나 없어서 그 30 밖에 선다.
         # 요청문(_ev_aio)이 "몇 위·누가 대신 인용됐나"를 말하려면 잘리기 전 행이 필요하다.
