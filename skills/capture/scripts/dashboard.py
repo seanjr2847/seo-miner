@@ -1163,7 +1163,46 @@ def _axis_backlinks(conn, pid: int) -> dict:
                     (pid, pid))
     return {"bl_date": bl_date, "bl_summary": bl_summary, "bl_domains": bl_domains,
             "bl_links": bl_links, "bl_anchors": bl_anchors, "bl_intersect": bl_intersect,
-            "bl_trend": bl_trend, "bl_mentions": bl_mentions}
+            "bl_trend": bl_trend, "bl_mentions": bl_mentions,
+            **_bl_profile(conn, pid, bl_date, bl_summary, bl_domains, bl_anchors)}
+
+
+def _bl_profile(conn, pid: int, bl_date, bl_summary: dict, bl_domains: list, bl_anchors: list) -> dict:
+    """백링크 축의 읽기 — 받아 둔 줄을 link_profile 의 결정적 규칙으로 접은 것과, 무료 출처
+    (직접 열어 본 확인·Bing 웹마스터·Common Crawl 그래프). 판정·문턱의 정본은 전부 그 모듈들이고
+    화면은 여기 실린 값만 그린다(문턱을 화면에 다시 적지 않는다).
+
+    근거가 모자란 칸은 숫자가 아니라 None 이다 — 화면이 link_profile.INSUFFICIENT 로 말한다."""
+    import cc_graph
+    import collect_bing
+    import link_profile
+    p = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    cfg = db.project_cfg(conn, p)
+    brands = scoring.aliases_of({**cfg, "name": cfg.get("name") or p["name"]})
+    keywords = [r[0] for r in conn.execute(
+        "SELECT keyword FROM keywords WHERE project_id=? AND is_active=1", (pid,))]
+    series = q(conn, "SELECT * FROM backlink_timeseries WHERE project_id=? ORDER BY month", (pid,))
+    graph = conn.execute("SELECT * FROM backlink_graph_rank WHERE project_id=?"
+                         " ORDER BY checked_date DESC, id DESC LIMIT 1", (pid,)).fetchone()
+    graph = dict(graph) if graph else None
+    src = (bl_summary or {}).get("source") or ("dataforseo" if bl_date else None)
+    return {
+        "bl_source": {"id": src, **link_profile.SOURCES.get(src, {})} if src else None,
+        "bl_insufficient": link_profile.INSUFFICIENT,
+        "bl_anchor_mix": link_profile.anchor_mix(bl_anchors, brands=brands, domain=p["domain"],
+                                                 keywords=keywords),
+        "bl_reciprocal": link_profile.reciprocal(conn, pid, bl_date),
+        "bl_dist": link_profile.distribution(bl_summary, bl_domains),
+        "bl_spam": link_profile.spam(bl_summary, bl_domains),
+        "bl_pages": link_profile.pages(conn, pid, bl_date),
+        "bl_velocity": link_profile.velocity(series, date.today().isoformat()),
+        # 직접 열어 본 확인 — 주소마다 가장 최근 한 줄. 요청문·화면이 '확인 불가'를 '링크 없음'과 가른다.
+        "bl_checks": q(conn, "SELECT kind, domain, url, checked_at, state, status, rel_nofollow,"
+                             " meta_nofollow, why FROM backlink_checks WHERE project_id=?"
+                             " ORDER BY checked_at DESC, url LIMIT 200", (pid,)),
+        "bl_bing": collect_bing.latest(conn, pid),
+        "bl_graph": {**graph, "says": cc_graph.says(graph)} if graph else None,
+    }
 
 
 def _axis_competitors(conn, pid: int) -> dict:

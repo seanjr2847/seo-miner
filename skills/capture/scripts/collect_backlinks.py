@@ -248,9 +248,14 @@ def _put_anchors(conn, pid: int, today: str, res) -> int:
     for it in _items(res):
         anchor = _g(it, "anchor", "text")
         if anchor is None or str(anchor).strip() == "":
-            continue                     # 빈 앵커(이미지 링크)는 앵커 분포에 뜻이 없다
+            # 빈 앵커(이미지 링크)도 한 줄로 적는다(anchor='') — 빼면 유형 비율의 분모에서 이미지
+            # 링크가 사라져 나머지 유형이 부풀려진다(link_profile.anchor_mix 의 '빈 앵커').
+            # 링크 수가 없는 빈 줄은 정보가 없으니 건너뛴다.
+            if _int(_g(it, "backlinks")) is None:
+                continue
+            anchor = ""
         types = _g(it, "referring_links_types", default={}) or {}
-        rows.append((pid, today, str(anchor), _int(_g(it, "backlinks")),
+        rows.append((pid, today, str(anchor).strip(), _int(_g(it, "backlinks")),
                      _int(_g(it, "referring_domains", "referring_main_domains")),
                      _int(_g(it, "dofollow")) if _g(it, "dofollow") is not None
                      else _int(_g(types, "anchor"))))
@@ -893,7 +898,8 @@ def _fake_post(calls: list):
                 {"anchor": "좋은 앵커", "backlinks": 12, "referring_domains": 4,
                  "dofollow": 9},
                 {"anchor": "빈약", "backlinks": 1},          # referring_domains 없음
-                {"anchor": "  "},                            # 빈 앵커 — 건너뛴다
+                {"anchor": "  "},                            # 링크 수도 없는 빈 앵커 — 건너뛴다
+                {"anchor": None, "backlinks": 7},            # 빈 앵커(이미지 링크) — anchor='' 로 적는다
             ]}], 0.05
         if path.endswith("/domain_pages_summary/live"):
             return [{"items": [
@@ -1026,7 +1032,7 @@ def _selfcheck() -> None:
     assert sent["group_range"] == "month" and re.fullmatch(r"\d{4}-\d{2}-01", sent["date_from"]), sent
 
     an = {r["anchor"]: r for r in rows("backlink_anchors")}
-    assert set(an) == {"좋은 앵커", "빈약"}, an
+    assert set(an) == {"좋은 앵커", "빈약", ""} and an[""]["backlinks"] == 7, an
     assert an["빈약"]["referring_domains"] is None, an
 
     # 4. we_have 는 우리 참조 도메인과 겹칠 때만 1.

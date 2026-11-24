@@ -6083,9 +6083,35 @@ def _resolve_index(conn, pid: int, target: str, since: str, ctx: dict) -> str | 
     return None
 
 
+def _free_check_says(conn, pid: int, kind: str, target: str, since: str) -> str | None:
+    """무료 GET 확인(backlink_checks — collect_backlinks.verify_links 가 적는다)이 그 도메인의
+    페이지에서 우리 링크를 **봤다**. 다음 유료 수집(30일)을 기다리지 않고 그 자리에서 닫는다.
+    봤다(linked·nofollow)만 근거다 — '링크 없음'·'확인 불가'(403·429·JS 껍데기)는 부재라서
+    아무 말도 안 한다. rel 과 meta nofollow 는 다른 일이라 따로 말한다."""
+    bare = target.removeprefix("www.")
+    r = conn.execute(
+        """SELECT url, checked_at, state, rel_nofollow, meta_nofollow FROM backlink_checks
+            WHERE project_id=? AND kind=? AND domain IN (?, ?) AND state IN ('linked', 'nofollow')
+            ORDER BY state='linked' DESC, checked_at DESC LIMIT 1""",
+        (pid, kind, bare, "www." + bare)).fetchone()
+    if not r or not _after_ts(r["checked_at"], since):
+        return None
+    seen = f"({r['url']} 을 {str(r['checked_at'])[:10]} 에 직접 열어 확인)"
+    if r["state"] == "linked":
+        return _better(f"이제 {target} 이 우리에게 링크합니다 {seen}")
+    how = " · ".join(w for w, on in (("그 링크에 rel nofollow·ugc·sponsored 가 붙어 있습니다", r["rel_nofollow"]),
+                                     ("그 페이지가 meta robots nofollow 입니다", r["meta_nofollow"])) if on)
+    return _better(f"이제 {target} 이 우리에게 링크합니다 {seen}. 다만 순위로 넘어가지 않게 표시돼 "
+                   f"있습니다: {how}")
+
+
 def _resolve_prospect(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
     """경쟁사만 받는 링크 → 그 도메인의 가장 최근 교집합 기록에서 우리도 받는다(we_have=1).
-    we_have 는 우리 참조 도메인과 겹칠 때만 1 이라 수집이 비면 0 쪽으로만 틀린다."""
+    we_have 는 우리 참조 도메인과 겹칠 때만 1 이라 수집이 비면 0 쪽으로만 틀린다.
+    그 전에 무료 GET 확인이 그 도메인 첫 화면에서 우리 링크를 봤으면 그것으로 닫는다."""
+    seen = _free_check_says(conn, pid, "prospect", target, since)
+    if seen:
+        return seen
     r = conn.execute(
         """SELECT checked_date, we_have FROM link_intersect
             WHERE project_id=? AND domain=? ORDER BY checked_date DESC LIMIT 1""",
@@ -6097,7 +6123,11 @@ def _resolve_prospect(conn, pid: int, target: str, since: str, ctx: dict) -> str
 
 def _resolve_mention(conn, pid: int, target: str, since: str, ctx: dict) -> str | None:
     """링크 없는 언급 → 그 도메인이 이제 우리에게 링크한다. 언급 수집이 linked=1 로 적었거나,
-    그 뒤 참조 도메인 표에 그 도메인이 섰으면(언급 페이지가 검색에서 빠져도 링크는 남는다)."""
+    그 뒤 참조 도메인 표에 그 도메인이 섰으면(언급 페이지가 검색에서 빠져도 링크는 남는다).
+    그 전에 무료 GET 확인이 언급한 페이지에서 우리 링크를 봤으면 그것으로 닫는다."""
+    seen = _free_check_says(conn, pid, "mention", target, since)
+    if seen:
+        return seen
     r = conn.execute(
         """SELECT checked_date FROM brand_mentions
             WHERE project_id=? AND domain=? AND linked=1 ORDER BY checked_date DESC LIMIT 1""",
@@ -6340,8 +6370,10 @@ RESOLVE_WHEN = {
     "aio_exposure": "다음 순위 조회에서 구글 AI 요약이 우리 링크를 인용하면",
     "rank_decay": f"다음 구글 실적에서 이 검색어의 평균 순위가 떨어지기 전 순위와 "
                   f"{abs(DECAY_POS):g}칸 안으로 돌아오면",
-    "backlink_prospect": "다음 백링크 수집에서 이 도메인이 우리에게도 링크를 걸면",
-    "backlink_mention": "다음 백링크 수집에서 이 도메인이 우리에게 링크를 걸었다고 나오면",
+    "backlink_prospect": "이 도메인의 첫 화면을 직접 열었을 때 우리에게 가는 링크가 보이거나, 다음 "
+                         "백링크 수집에서 이 도메인이 우리에게도 링크를 걸면",
+    "backlink_mention": "언급한 페이지를 직접 열었을 때 우리에게 가는 링크가 보이거나, 다음 백링크 "
+                        "수집에서 이 도메인이 우리에게 링크를 걸었다고 나오면",
     "ai_bot_blocked": "다음 크롤이 가져온 robots.txt 가 이 크롤러를 더는 막지 않으면",
     # 조건절('…면')만 둔다 — 요청문이 뒤에 "이 기회는 저절로 닫힙니다"를 잇는다. "직접 [완료]"까지
     # 여기 넣었더니 "…누릅니다 이 기회는 저절로 닫힙니다."가 나갔다. 그 말은 RESOLVE_ALSO 에.

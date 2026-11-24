@@ -30,6 +30,7 @@ from pathlib import Path
 # doctor가 import해도 안전하다 — 진단하러 왔다가 Brain을 만들어 버리는 일도 없다.
 CAPTURE_SCRIPTS = Path(__file__).resolve().parents[2] / "capture" / "scripts"
 sys.path.insert(0, str(CAPTURE_SCRIPTS))
+import collect_bing  # noqa: E402
 import collect_gsc  # noqa: E402
 import db  # noqa: E402
 import remote  # noqa: E402
@@ -249,6 +250,17 @@ CAPABILITIES = (
      # diagnose 의 keys["pagespeed"] 가 말한다.
      "cost": "무료", "keys": (), "url": "", "fix": None,
      "owner": "server", "blocking": False},
+    {"id": "bing", "name": "Bing 웹마스터",
+     "desc": "Bing 이 본 색인·크롤·검색어, 유료 키가 없을 때의 백링크 (무료, 키를 넣으면 켜짐)",
+     # 무료지만 키(BING_WEBMASTER_API_KEY)가 있어야 돈다. 위 속도 측정처럼 keys 는 비운다 —
+     # keys 가 있으면 '유료·발급처 필수' 축이다. 넣었는지는 diagnose 의 keys["bing"] 이 말한다.
+     # 키 이름·발급처의 정본은 collect_bing.KEY_ENV·KEY_URL 이고, 건너뛴 사유는 백링크 단계의
+     # runs.notes 에 남는다. 이 키는 **사람 단위**다(그 사람이 인증한 사이트만 읽는다) — 호스팅에는
+     # 사용자별 키를 둘 자리가 아직 없어 owner 를 server 로 둔다(웹 사용자의 할 일로 내보내지 않는다).
+     "cost": "무료", "keys": (), "url": "",
+     "fix": "없어도 다른 기능은 그대로입니다. Bing 웹마스터에 사이트를 추가하고 인증한 뒤 "
+            "Settings 의 API Access 에서 키를 만들어 넣으면 백링크 단계가 함께 읽습니다. 무료입니다.",
+     "owner": "server", "blocking": False},
 )
 
 # 구글 연결이 잠겼을 때 **웹 사용자**에게 할 말. 키는 위 gsc fix 와 같은 3-상태다
@@ -436,6 +448,8 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         "serper": bool(os.environ.get("SERPER_API_KEY")),
         # 선택 키 — 없어도 속도 측정은 돈다. 있으면 PageSpeed 하루 한도가 커진다.
         "pagespeed": bool(os.environ.get("PAGESPEED_API_KEY")),
+        # 선택 키 — Bing 웹마스터(무료). 이름의 정본은 collect_bing.KEY_ENV.
+        "bing": bool(os.environ.get(collect_bing.KEY_ENV)),
         # 이름은 옛날 그대로지만(대시보드가 이 키를 먹는다) 뜻은 "구글이 실제로
         # 붙었나"다 — 인증 파일이 놓였나가 아니다.
         "gsc_service_account": gsc_conn,
@@ -456,6 +470,7 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         "gsc": core_ok and all(deps_gsc.values()) and gsc_linked,
         "rank": core_ok and (keys["dataforseo"] or keys["serper"]),
         "vitals": core_ok,
+        "bing": core_ok and keys["bing"],
     }
     gsc_fix_state = ("deps" if gsc_mode and not all(deps_gsc.values())
                      else "pending" if gsc_pending else "none")

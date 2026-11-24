@@ -2950,6 +2950,28 @@ def _ev_bl_prospect(o, ctx, pages):
     return L
 
 
+def _bl_check_lines(ctx, kind: str, target: str, top: int = 3) -> list[str]:
+    """그 도메인의 페이지를 직접 열어 본 결과(무료 GET — collect_backlinks.verify_links 가
+    backlink_checks 에 적고 페이로드 bl_checks 로 온다). 네 답을 뭉치지 않는다: 열지 못한 것
+    (403·429·JS 껍데기)을 '링크 없음'이라 쓰면 이미 링크한 곳에 또 부탁하는 연락이 나간다."""
+    rows = [c for c in (ctx.get("bl_checks") or [])
+            if c.get("kind") == kind and str(c.get("domain") or "").lower() == str(target).lower()]
+    out = []
+    for c in rows[:top]:
+        day, why = str(c.get("checked_at") or "")[:10], str(c.get("why") or "").rstrip(". ")
+        if c.get("state") in ("linked", "nofollow"):
+            out.append(f"- {c['url']} 을 {day} 에 직접 열어 보니 이미 우리에게 가는 링크가 있습니다"
+                       + (f"({why})" if why and c["state"] == "nofollow" else "")
+                       + ". 링크를 부탁할 일이 아닙니다: 그렇게 답하고, 이 기회는 다음 적재에서 닫힙니다.")
+        elif c.get("state") == "no_link":
+            out.append(f"- {c['url']} 을 {day} 에 직접 열어 봤고 우리에게 가는 링크가 없었습니다.")
+        else:
+            out.append(f"- {c['url']} 은 {day} 에 직접 열어 확인하지 못했습니다"
+                       + (f"({why})" if why else "")
+                       + ". 링크가 없다는 뜻이 아닙니다. 연락 전에 그 페이지를 직접 열어 확인합니다.")
+    return out
+
+
 def _ev_bl_mention(o, ctx, pages):
     rows = [r for r in (ctx.get("bl_mentions") or [])
             if str(r.get("domain") or "").lower() == str(o["target"]).lower()
@@ -2958,6 +2980,7 @@ def _ev_bl_mention(o, ctx, pages):
         return []
     L = [f"- 도메인 지수 {_n(rows[0].get('rank'))} · 우리 이름을 말한 페이지 {len(rows)}곳 · "
          "우리에게 링크한 적 없음(백링크 수집으로 확인)"]
+    L += _bl_check_lines(ctx, "mention", o["target"])
     for r in rows[:5]:
         meta = " · ".join(x for x in (str(r.get("published") or ""), str(r.get("lang") or "")) if x)
         L.append(f"- {r['url']}" + (f" | {_ext(r.get('title'), 80)}" if r.get("title") else "")
