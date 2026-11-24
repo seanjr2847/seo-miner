@@ -133,6 +133,70 @@ def autocomplete_expand(seeds: list[tuple[str, str | None]], locale: str, hl: st
     return out
 
 
+# 경쟁사 이름 뒤에 붙여 묻는 말 — 언어마다 (대안, 맞대결). '{경쟁사} 대안'·'{경쟁사} vs'
+# 를 자동완성에 묻고, **구글이 돌려준 것만** 후보로 넣는다(돌려줬다는 것이 수요의 증거다 —
+# 우리가 지은 '{경쟁사} vs {우리}' 를 그대로 넣지 않는다). 표에 없는 언어는 묻지 않는다:
+# 영어 낱말을 다른 언어 구글에 물으면 그 언어의 수요가 아니다.
+RIVAL_WORDS = {
+    "en": ("alternatives", "vs"), "ko": ("대안", "vs"), "ja": ("代替", "比較"),
+    "zh": ("替代", "对比"), "de": ("alternative", "vs"), "fr": ("alternative", "vs"),
+    "es": ("alternativas", "vs"), "pt": ("alternativas", "vs"), "it": ("alternative", "vs"),
+    "nl": ("alternatieven", "vs"), "pl": ("alternatywy", "vs"), "tr": ("alternatifleri", "vs"),
+    "ru": ("аналоги", "vs"), "id": ("alternatif", "vs"), "vi": ("thay thế", "vs"),
+}
+RIVAL_MAX = 5           # 묻는 경쟁사 수 — 사람이 고른 것이 먼저다(scoring.rivals 의 순서)
+RIVAL_PER = 8           # 경쟁사 하나에서 받는 후보 상한
+
+
+def rival_seeds(domains, hl: str) -> list[tuple[str, str]]:
+    """경쟁사 도메인들 → [(브랜드 이름, 물을 말)]. 이름은 scoring._stem(등록 도메인의 이름 칸)."""
+    import scoring
+    words = RIVAL_WORDS.get(hl)
+    if not words:
+        return []
+    out, seen = [], set()
+    for d in domains:
+        name = scoring._stem(d)
+        if len(name) < 3 or name in seen:      # 두 글자 줄기는 아무 낱말에나 걸린다
+            continue
+        seen.add(name)
+        out += [(name, f"{name} {w}") for w in words]
+        if len(seen) >= RIVAL_MAX:
+            break
+    return out
+
+
+def rival_expand(conn, project, locale: str, hl: str, gl: str, throttle: float,
+                 dry_run: bool, fail=_stderr_fail) -> list[tuple[str, str, str]]:
+    """경쟁사 이름으로 '대안'·'vs' 검색어 후보를 캔다 — 구글 자동완성이 돌려준 것만.
+
+    돌려준 것 중에서도 그 경쟁사 이름이 들어 있는 것만 남긴다(자동완성은 가끔 엉뚱한
+    것으로 샌다). source 는 'rival' — 남의 브랜드가 든 검색어라는 표식이다."""
+    import scoring
+    use, _dropped = scoring.rivals(conn, project["id"], project["domain"])
+    seeds = rival_seeds(use, hl)
+    print(f"[rival] 경쟁사 {len({n for n, _ in seeds})}곳 × 대안·vs → 요청 {len(seeds)}회")
+    if dry_run or not seeds:
+        return []
+    out: list[tuple[str, str, str]] = []
+    count: dict[str, int] = {}
+    for name, q in seeds:
+        try:
+            got = suggest(q, hl, gl)
+        except Exception as e:      # 비공식 엔드포인트 — 실패는 세고 넘어간다
+            fail(str(e), item=f"suggest {q!r}", kind=type(e).__name__)
+            time.sleep(throttle * 4)
+            continue
+        for s in got:
+            s = s.strip()
+            if (name in s.lower() and s.lower() != q.lower() and s.lower() != name
+                    and count.get(name, 0) < RIVAL_PER):
+                count[name] = count.get(name, 0) + 1
+                out.append((s, locale, "rival"))
+        time.sleep(throttle)
+    return list(dict.fromkeys(out))
+
+
 def gsc_mine(conn, project_id: int, locale: str) -> list[tuple[str, str, str]]:
     rows = conn.execute(
         """SELECT g.query, SUM(g.impressions) AS imp
@@ -192,6 +256,7 @@ def collect(project: str, *,
             # 계획만 보여주고 아무것도 쓰지 않는다 (run 기록도 남기지 않음).
             if mode in ("all", "autocomplete"):
                 autocomplete_expand(seeds, locale, hl, gl, throttle, per_seed_cap, True)
+                rival_expand(conn, p, locale, hl, gl, throttle, True)
             if mode in ("all", "gsc"):
                 print(f"[gsc] {len(gsc_mine(conn, p['id'], locale))}개가 후보로 들어올 예정")
             print("(--dry-run: 저장하지 않음)")
@@ -202,6 +267,7 @@ def collect(project: str, *,
             if mode in ("all", "autocomplete"):
                 cands += autocomplete_expand(seeds, locale, hl, gl, throttle, per_seed_cap,
                                              False, fail=st.fail)
+                cands += rival_expand(conn, p, locale, hl, gl, throttle, False, fail=st.fail)
             if mode in ("all", "gsc"):
                 cands += gsc_mine(conn, p["id"], locale)
             inserted = db.add_keyword_candidates(conn, p["id"], cands)

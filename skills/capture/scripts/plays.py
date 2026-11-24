@@ -238,6 +238,10 @@ def evidence(g: dict, d: dict, *, fetch, post, dfs: bool, serp_n: int = PLAY_SER
             u = r.get("url")
             if row["is_own"] or not u or _key(u) == _key(page):
                 continue
+            # 글로 겨룰 상대가 아닌 자리(위키백과·유튜브·뉴스·마켓…)는 돈 주고 읽지 않는다 —
+            # 판정은 순위 단계·요청문과 같은 한 벌(serp_kinds.peer_skip)
+            if _peer_skip(u, r.get("domain")):
+                continue
             if u not in to_read and len(to_read) < serp_n:
                 to_read.append(u)
     # 순위 단계가 상위 글을 이미 읽어 둔 목차(serp_outlines — 주소별 title·h2·단어 수)가 있으면
@@ -733,6 +737,11 @@ def main() -> None:
 
 
 # ── 자체 점검 ────────────────────────────────────────────────────────────────
+
+def _peer_skip(url, domain=None):
+    import serp_kinds
+    return serp_kinds.peer_skip(url, domain)
+
 
 def _selfcheck() -> None:
     """임시 Brain + 가짜 fetch·DataForSEO·AI. 외부 호출 0건."""

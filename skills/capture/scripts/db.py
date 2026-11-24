@@ -143,7 +143,11 @@ CREATE TABLE IF NOT EXISTS rank_snapshots (   -- reserved for SERP adapter (v2)
   aio_present INTEGER,
   aio_cited INTEGER,
   aio_domains_json TEXT,                      -- AI 요약이 인용한 도메인 JSON. NULL = 요약이 없었거나 안 쟀거나 인용을 못 받았다
-  locale TEXT                                 -- 이 순위를 잰 언어-지역. NULL = 이 칸 이전(모름). 키워드 로케일과 다르면 park_offlocale 이 옮긴다
+  locale TEXT,                                -- 이 순위를 잰 언어-지역. NULL = 이 칸 이전(모름). 키워드 로케일과 다르면 park_offlocale 이 옮긴다
+  -- 같은 조회 응답에 실려 오는데 버리던 것들. 셋 다 NULL = 이 칸 이전이거나 그 칸이 안 섰다
+  local_pack_json TEXT,                       -- 지도 칸: {"items":[{pos,title,domain,url,rating,reviews,is_paid}], "own_pos":n|null, "own_by":"domain"|"name"|null}
+  snippet_form TEXT,                          -- 강조 스니펫 형식: paragraph|list|table|video (serp_kinds.SNIPPET_FORMS). NULL = 없었거나 못 갈랐다
+  ads_json TEXT                               -- 광고 문구: [{title,description,domain}] — 의도 보강(serp_kinds.ad_intent)의 재료
 );
 CREATE INDEX IF NOT EXISTS idx_rank_kw_date ON rank_snapshots(keyword_id, checked_at);
 -- 우리 도메인이 순위를 가진 검색어 — DataForSEO Labs 추정(ranked_keywords). 서치콘솔이 없는
@@ -183,8 +187,21 @@ CREATE TABLE IF NOT EXISTS serp_outlines (
   h2_json TEXT,                               -- [] = 열었는데 H2 가 없었다
   words INTEGER,
   -- 형식 — 본문 틀 밖의 표·목록·이미지·영상 수. NULL = 이 칸이 생기기 전에 본 글(안 셌다)
-  tables INTEGER, lists INTEGER, images INTEGER, videos INTEGER
+  tables INTEGER, lists INTEGER, images INTEGER, videos INTEGER,
+  schema_json TEXT                            -- 그 글이 단 마크업 @type 목록(JSON). 페이지 종류(serp_kinds.page_kind)의 재료. NULL = 이 칸 이전(안 봤다), "[]" = 봤는데 없었다
 );
+-- 순위 조회에 덧붙는 선택 수집(유료, 키가 있을 때만) — 종류마다 표를 늘리지 않고 한 표에
+-- JSON 으로 둔다. kind 의 정본은 serp_extras.KINDS 다. keyword_id 가 NULL 이면
+-- 사이트 단위 값(LLM 언급 집계)이다. 같은 대상·같은 종류·같은 날은 덮어쓴다.
+CREATE TABLE IF NOT EXISTS serp_extras (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  keyword_id INTEGER REFERENCES keywords(id),
+  kind TEXT NOT NULL,
+  checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  data_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_serp_extras ON serp_extras(project_id, kind, keyword_id, checked_at);
 CREATE TABLE IF NOT EXISTS serp_questions (   -- 구글이 이 검색어에 같이 보여 준 질문·검색어 (팬아웃 재료)
   id INTEGER PRIMARY KEY,
   keyword_id INTEGER NOT NULL REFERENCES keywords(id),
@@ -780,6 +797,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for col in ("tables", "lists", "images", "videos"):
         if col not in so_cols:
             conn.execute(f"ALTER TABLE serp_outlines ADD COLUMN {col} INTEGER")
+            conn.commit()
+    if "schema_json" not in so_cols:
+        conn.execute("ALTER TABLE serp_outlines ADD COLUMN schema_json TEXT")
+        conn.commit()
+    # 순위 조회 응답에서 버리던 것(지도 칸 항목·강조 스니펫 형식·광고 문구). 옛 행은 NULL.
+    rs_cols = {r["name"] for r in conn.execute("PRAGMA table_info(rank_snapshots)")}
+    for col in ("local_pack_json", "snippet_form", "ads_json"):
+        if rs_cols and col not in rs_cols:
+            conn.execute(f"ALTER TABLE rank_snapshots ADD COLUMN {col} TEXT")
             conn.commit()
 
     # 경쟁사 역할 판정(collect_gap) — 옛 행은 NULL(판정 안 함 = 예전처럼 경쟁사).
@@ -1680,7 +1706,10 @@ SETTING_KEYS = ("brand_aliases", "tools", "foreign_brands", "place_aliases",
                 "markets",
                 # 서치콘솔 없는 사이트에서 검색량 상위 후보를 자동으로 켠 날(호스팅 워커).
                 # 한 번만 켠다 — 그 뒤 사람이 끈 키워드를 런마다 되켜지 않게.
-                "auto_keywords")
+                "auto_keywords",
+                # 유료 선택 수집을 사이트마다 켜고 끈다 — 순위에 덧붙는 종류(쉼표 글, 정본
+                # serp_extras.KINDS)와 LLM 언급 집계(0|1, collect_ai). 없으면 코드 기본값.
+                "serp_extras", "ai_llm_mentions")
 # 순위를 한 런에 몇 개까지 재나(limits.max_keywords 의 기본). 추적 키워드는 전부 재는
 # 것이 원칙이고, 이 수는 잘못 켠 수천 개에 돈을 붓지 않게 하는 안전장치다.
 # collect_serp 의 --max-keywords 기본이 이 값이다(두 벌로 적지 않는다).
@@ -2717,9 +2746,11 @@ SERP_OUTLINE_DAYS = 30
 def write_serp_outline(conn: sqlite3.Connection, url: str, *, status: int | None,
                        title: str | None, h2, words: int | None,
                        tables: int | None = None, lists: int | None = None,
-                       images: int | None = None, videos: int | None = None) -> None:
+                       images: int | None = None, videos: int | None = None,
+                       schema=None) -> None:
     """상위 글 한 장의 겉모습 — 주소 하나에 한 줄. 실패(status 403·타임아웃)도 남긴다:
-    안 남기면 다음 런이 같은 주소를 또 두드린다. 형식 칸은 못 셌으면 NULL 이다."""
+    안 남기면 다음 런이 같은 주소를 또 두드린다. 형식 칸은 못 셌으면 NULL 이다.
+    schema 는 그 글의 마크업 @type 목록 — None 이면 못 본 것(NULL), [] 는 봤는데 없었다."""
     conn.execute(
         """INSERT INTO serp_outlines(url, checked_at, status, title, h2_json, words,
                                      tables, lists, images, videos)
@@ -2730,6 +2761,9 @@ def write_serp_outline(conn: sqlite3.Connection, url: str, *, status: int | None
              lists=excluded.lists, images=excluded.images, videos=excluded.videos""",
         (url, now(), status, title, json.dumps(list(h2 or []), ensure_ascii=False), words,
          tables, lists, images, videos))
+    conn.execute("UPDATE serp_outlines SET schema_json=? WHERE url=?",
+                 (json.dumps([str(t) for t in schema], ensure_ascii=False)
+                  if schema is not None else None, url))
     conn.commit()
 
 
@@ -2741,7 +2775,7 @@ def serp_outlines(conn: sqlite3.Connection, urls) -> dict[str, dict]:
         chunk = urls[i:i + 200]
         for r in conn.execute(
             f"""SELECT url, checked_at, status, title, h2_json, words,
-                       tables, lists, images, videos FROM serp_outlines
+                       tables, lists, images, videos, schema_json FROM serp_outlines
                  WHERE url IN ({','.join('?' * len(chunk))})""", chunk):
             try:
                 h2 = json.loads(r["h2_json"] or "[]")
@@ -2751,8 +2785,80 @@ def serp_outlines(conn: sqlite3.Connection, urls) -> dict[str, dict]:
                              "status": r["status"], "title": r["title"],
                              "h2": h2 if isinstance(h2, list) else [], "words": r["words"],
                              "tables": r["tables"], "lists": r["lists"],
-                             "images": r["images"], "videos": r["videos"]}
+                             "images": r["images"], "videos": r["videos"],
+                             # None = 마크업을 안 본 행(이 칸 이전), [] = 봤는데 없었다
+                             "schema": _json_list(r["schema_json"])}
     return out
+
+
+def _json_list(text) -> list | None:
+    """JSON 배열 칸 → list. NULL·깨진 값·배열 아닌 값은 None(모름)이다 — [] 로 접지 않는다."""
+    if text is None:
+        return None
+    try:
+        got = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    return got if isinstance(got, list) else None
+
+
+def write_rank_extras(conn: sqlite3.Connection, keyword_id: int, checked_at: str | None, *,
+                      local_pack: dict | None = None, snippet_form: str | None = None,
+                      ads: list | None = None) -> None:
+    """방금 쓴 순위 행(같은 키워드·같은 날)에 지도 칸·스니펫 형식·광고 문구를 단다.
+
+    write_rank_snapshot 뒤에 부른다 — 그 함수의 INSERT 는 건드리지 않는다(칸이 늘 때마다
+    인자가 늘지 않게). 값이 없는 칸은 NULL 로 둔다: 빈 목록을 '[]' 로 적으면 "지도 칸이
+    섰는데 업체가 0곳"이 된다."""
+    conn.execute(
+        """UPDATE rank_snapshots SET local_pack_json=?, snippet_form=?, ads_json=?
+            WHERE keyword_id=? AND date(checked_at)=date(?)""",
+        (json.dumps(local_pack, ensure_ascii=False) if local_pack and local_pack.get("items") else None,
+         snippet_form or None,
+         json.dumps(ads, ensure_ascii=False) if ads else None,
+         keyword_id, checked_at or now()))
+    conn.commit()
+
+
+def write_serp_extra(conn: sqlite3.Connection, project_id: int, keyword_id: int | None,
+                     kind: str, data, checked_at: str | None = None) -> None:
+    """선택 수집 한 건(serp_extras). 같은 대상·같은 종류·같은 날은 덮어쓴다."""
+    ts = checked_at or now()
+    conn.execute(
+        """DELETE FROM serp_extras WHERE project_id=? AND kind=? AND keyword_id IS ?
+            AND date(checked_at)=date(?)""", (project_id, kind, keyword_id, ts))
+    conn.execute(
+        "INSERT INTO serp_extras(project_id, keyword_id, kind, checked_at, data_json)"
+        " VALUES(?,?,?,?,?)",
+        (project_id, keyword_id, kind, ts, json.dumps(data, ensure_ascii=False)))
+    conn.commit()
+
+
+def serp_extras(conn: sqlite3.Connection, project_id: int, kind: str) -> dict:
+    """{검색어(사이트 단위는 None): {"checked_at", "data"}} — 종류 하나의 **가장 최근** 값."""
+    out: dict = {}
+    for r in conn.execute(
+            """SELECT e.keyword_id, k.keyword, e.checked_at, e.data_json
+                 FROM serp_extras e LEFT JOIN keywords k ON k.id = e.keyword_id
+                WHERE e.project_id=? AND e.kind=? ORDER BY e.checked_at DESC, e.id DESC""",
+            (project_id, kind)):
+        key = r["keyword"] if r["keyword_id"] is not None else None
+        if key in out or (r["keyword_id"] is not None and r["keyword"] is None):
+            continue
+        try:
+            data = json.loads(r["data_json"])
+        except (TypeError, ValueError):
+            continue
+        out[key] = {"checked_at": r["checked_at"], "data": data}
+    return out
+
+
+def serp_extras_fresh(conn: sqlite3.Connection, project_id: int, kind: str, days: float) -> set:
+    """이 종류를 최근 days 일 안에 받아 둔 keyword id 들(사이트 단위 행은 None 으로 든다)."""
+    return {r["keyword_id"] for r in conn.execute(
+        """SELECT DISTINCT keyword_id FROM serp_extras
+            WHERE project_id=? AND kind=? AND julianday(checked_at) >= julianday('now') - ?""",
+        (project_id, kind, float(days)))}
 
 
 def serp_tasks_pending(conn: sqlite3.Connection, project: str, keep_days: float) -> list:
@@ -3475,7 +3581,7 @@ def rank_before_after(conn: sqlite3.Connection, project_id: int, day: str,
     return out
 
 
-def _json_list(s) -> list:
+def _json_list_or_empty(s) -> list:
     try:
         v = json.loads(s) if s else []
     except (TypeError, ValueError):
@@ -3510,8 +3616,8 @@ def page_observations(conn: sqlite3.Connection, project_id: int, urls) -> dict[s
                      ORDER BY checked_date""", (int(project_id), *ch)):
             slot(scoring.url_key(r["url"]))["audit"].append({
                 "date": str(r["checked_date"])[:10], "src": "audit", "status": r["status"],
-                "title": r["title"], "h1": _json_list(r["h1_json"]), "canonical": r["canonical"],
-                "robots": r["robots"], "schema": _json_list(r["schema_json"])})
+                "title": r["title"], "h1": _json_list_or_empty(r["h1_json"]), "canonical": r["canonical"],
+                "robots": r["robots"], "schema": _json_list_or_empty(r["schema_json"])})
     runs = {r["id"]: sql_ts(r["finished_at"])[:10] for r in conn.execute(
         "SELECT id, finished_at FROM crawl_runs WHERE project_id=? AND finished_at IS NOT NULL",
         (int(project_id),))}

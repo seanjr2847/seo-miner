@@ -195,6 +195,7 @@ def collect(project: str, *,
             ids: str | None = None,
             category: str | None = None,
             force: bool = False,
+            llm_mentions: int | None = None,
             conn=None) -> collector.StageResult:
     """AI 가시성 체크 (OpenRouter) — 결과를 Brain 에 적재한다.
 
@@ -210,6 +211,7 @@ def collect(project: str, *,
         ids: 쉼표 구분 ai_prompt id — 지정하면 is_active 무시
         category: 이 카테고리의 활성 프롬프트만 실행
         force: 오늘 이미 확인한 질문도 재확인
+        llm_mentions: 1 이면 LLM 언급 집계도 받는다(config 키는 ai_llm_mentions, 유료)
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
 
     Returns:
@@ -219,7 +221,8 @@ def collect(project: str, *,
     with collector.stage(project, conn=conn, dry_run=dry_run) as st:
         conn, p, cfg = st.conn, st.project, st.cfg
         s = st.settings(ap, argparse.Namespace(
-            throttle=throttle, samples=samples, max_prompts=max_prompts))
+            throttle=throttle, samples=samples, max_prompts=max_prompts,
+            llm_mentions=llm_mentions))
         samples = s["ai_samples"]
         max_ai_prompts = s["limits.max_ai_prompts"]
 
@@ -357,6 +360,12 @@ def collect(project: str, *,
             r.notes = (f"engines={list(engines_d)} samples={samples} "
                        f"models={','.join(e['model'] for e in engines_d.values())} "
                        f"{st.err_note} skipped={skipped_calls}")
+            # 선택 하위 걸음 — 내 샘플 질문 밖에서 누가 인용되나(DataForSEO AI Optimization).
+            # 켠 사이트만, 키가 있을 때만. 여기서 난 오류는 이 단계의 성패를 안 바꾼다.
+            if s.get("ai_llm_mentions"):
+                note, c = _llm_mentions(conn, p)
+                r.cost += c
+                r.notes += f" {note}"
             cost = r.cost
 
         # 실패는 카운트만 하고 계속 갔으니, 끝에서 한 번 크게 말한다 —
@@ -380,11 +389,32 @@ def collect(project: str, *,
                           cost=round(cost, 4))
 
 
+def _llm_mentions(conn, p) -> tuple[str, float]:
+    """LLM 언급 집계 한 번 — (runs.notes 에 붙일 조각, 실청구액). 주제는 추적 검색어 중
+    씨앗 먼저·검색량 큰 순 10개다(serp_extras.llm_mentions 가 부르고 적는다)."""
+    import serp_adapter
+    import serp_extras
+    kws = [r["keyword"] for r in conn.execute(
+        """SELECT keyword FROM keywords WHERE project_id=? AND is_active=1
+            ORDER BY (source='seed') DESC, COALESCE(volume, 0) DESC, id LIMIT 10""", (p["id"],))]
+    try:
+        _data, cost, note = serp_extras.llm_mentions(conn, p, kws, db.project_locale(p))
+        return note, cost
+    except serp_adapter.Fatal as e:
+        return f"llm_mentions=stopped({str(e)[:80]})", 0.0
+    except Exception as e:
+        print(f"[ai] LLM 언급 집계 실패: {e}", file=sys.stderr)
+        return f"llm_mentions=failed({type(e).__name__})", 0.0
+
+
 def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     collector.add_common(ap)
     collector.add_setting(ap, "--throttle", key="throttle", fallback=0.5, type=float,
                           help="요청 간격(초). 기본은 skill_config defaults.throttle")
+    # 0 = 끔(기본). 한 번에 $0.1 안팎이라 사람이 켠다 — 30일에 한 번만 받는다.
+    collector.add_setting(ap, "--llm-mentions", key="ai_llm_mentions", fallback=0, type=int,
+                          help="1 이면 DataForSEO AI Optimization 으로 LLM 언급 집계를 받는다(유료, 30일에 한 번)")
     ap.add_argument("--engines", default=None, help="comma list; default from config")
     # 기본 2회 샘플(skill_config ai_samples와 일치) — 비결정성 완화, 대신 호출 비용 2배.
     collector.add_setting(ap, "--samples", key="ai_samples", fallback=2, type=int)

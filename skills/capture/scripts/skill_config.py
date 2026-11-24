@@ -116,6 +116,47 @@ CONFIG: dict = {
         "google.com",       # 검색 자체(google.com/search·support 등) — 경쟁사 후보로 섞였다
         "play.google.com",  # 앱 스토어 등록 페이지 — 앱은 거기서 등장한다. 백링크
         "apps.apple.com",   #   교집합(collect_backlinks)도 이 목록으로 플랫폼을 뺀다
+        # ── 로케일별 플랫폼 — 한 벌이다(로케일 열쇠로 가르지 않는다: reddit 은 어느 나라
+        #    구글에 서든 플랫폼이다). 그 언어권 검색결과에 늘 서는 문답·블로그·커뮤니티·
+        #    리뷰 서비스만 적는다. 상위 글 비교 재료(serp_kinds.peer_skip)도 이 목록을 쓴다.
+        "tumblr.com", "wordpress.com", "blogspot.com", "substack.com", "dev.to", "fandom.com",
+        "tripadvisor.com", "yelp.com", "discord.com", "t.me", "bsky.app", "vimeo.com",
+        # 중국어권
+        "zhihu.com", "baidu.com", "weibo.com", "bilibili.com", "douban.com",
+        "xiaohongshu.com", "csdn.net", "163.com", "sohu.com",
+        # 일본어권
+        "yahoo.co.jp", "note.com", "qiita.com", "hatenablog.com", "ameblo.jp", "5ch.net",
+        "livedoor.jp", "fc2.com",
+        # 러시아어권
+        "vk.com", "dzen.ru", "pikabu.ru", "habr.com", "ok.ru", "otvet.mail.ru",
+        # 독일어·프랑스어·스페인어·포르투갈어권
+        "gutefrage.net", "xing.com", "commentcamarche.net", "forocoches.com",
+        "reclameaqui.com.br",
+    ],
+
+    # 마켓·오픈마켓 — 상품 목록이 서는 자리다. 상위 글의 H2·형식을 우리 글과 견줄 상대가
+    # 아니라서 비교 재료에서 뺀다(serp_kinds.peer_skip). 경쟁사 자동 적재는 건드리지 않는다
+    # — 커머스 사이트에게 마켓은 진짜 경쟁사일 수 있다. 아마존은 나라 도메인마다 한 줄.
+    "marketplaces": [
+        "amazon.com", "amazon.co.uk", "amazon.de", "amazon.fr", "amazon.es", "amazon.it",
+        "amazon.co.jp", "amazon.ca", "amazon.in", "amazon.com.br", "amazon.com.mx",
+        "amazon.com.au", "amazon.nl", "amazon.com.tr", "amazon.ae", "amazon.sa",
+        "ebay.com", "ebay.co.uk", "ebay.de", "etsy.com", "walmart.com", "target.com",
+        "aliexpress.com", "alibaba.com", "temu.com", "shein.com",
+        "coupang.com", "gmarket.co.kr", "11st.co.kr", "auction.co.kr", "ssg.com",
+        "rakuten.co.jp", "mercari.com", "taobao.com", "tmall.com", "jd.com",
+        "shopee.com", "lazada.com", "tokopedia.com", "flipkart.com",
+        "mercadolibre.com", "mercadolivre.com.br", "allegro.pl", "bol.com", "otto.de",
+        "cdiscount.com", "trendyol.com", "hepsiburada.com", "ozon.ru", "wildberries.ru",
+        "takealot.com",
+    ],
+
+    # SEO 도구 사이트 — 어느 검색어에나 '키워드 통계' 페이지로 서는 곳이다. 글로 겨룰
+    # 상대가 아니라서 비교 재료에서 뺀다(serp_kinds.peer_skip).
+    "seo_tool_sites": [
+        "semrush.com", "ahrefs.com", "moz.com", "similarweb.com", "spyfu.com",
+        "serpstat.com", "seranking.com", "mangools.com", "majestic.com", "keywordtool.io",
+        "ubersuggest.com", "answerthepublic.com",
     ],
 
     # AI 답변의 링크를 타고 들어온 방문 — GA4 sessionSource 로 가른다(collect_ga4).
@@ -262,6 +303,11 @@ CONFIG: dict = {
 def _selfcheck() -> None:
     assert {"ai_bots", "third_party_platforms", "ai_referrers", "ai_engines",
             "defaults", "serp"} <= set(CONFIG)
+    for key in ("third_party_platforms", "marketplaces", "seo_tool_sites"):
+        hosts = CONFIG[key]
+        assert len(hosts) == len(set(hosts)), key      # 같은 호스트를 두 번 적지 않는다
+        assert all(h == h.lower() and "/" not in h for h in hosts), key
+    assert not set(CONFIG["marketplaces"]) & set(CONFIG["third_party_platforms"])
     for eid, e in CONFIG["ai_engines"].items():
         assert {"model", "default", "usd"} <= set(e) <= {"model", "default", "usd", "body"}, eid
     assert any(e["default"] for e in CONFIG["ai_engines"].values())

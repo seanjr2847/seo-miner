@@ -3036,6 +3036,85 @@ def _view_block(name: str, head: str) -> str:
     return m.group(0)
 
 
+def test_seam_w05peer_skip_is_one_rule_for_fetch_brief_and_overlap():
+    """'글로 겨룰 상대가 아닌 상위 자리'의 판정은 serp_kinds.peer_skip 한 벌이다.
+
+    쓰는 쪽은 셋이다 — 상위 글 열기(collect_serp.outline_targets), 요청문 비교 재료
+    (brief._serp_top), SERP 겹침(scoring._surface_facts). 한 곳이 자기 목록을 따로 들면
+    수집은 위키백과를 안 열었는데 요청문은 "위키백과 H2 가 없다"고 말하거나, 요청문은
+    뺐는데 묶음은 위키백과가 겹쳤다고 두 검색어를 한 지면으로 접는다. 목록의 정본은
+    skill_config(플랫폼·마켓·SEO 도구)와 scoring.PRESS_OUTLETS 이고, 까닭 이름표는
+    serp_kinds.PEER_SKIP_LABEL 한 벌이다."""
+    import skill_config
+    import serp_kinds
+    src = {n: (SCRIPTS / f"{n}.py").read_text("utf-8")
+           for n in ("serp_kinds", "collect_serp", "brief", "scoring", "plays")}
+    assert "serp_kinds.peer_skip(" in _py_func(src["collect_serp"], "outline_targets")
+    assert "serp_kinds.peer_skip(" in _py_func(src["brief"], "_serp_top")
+    assert "_peer_skip(" in _py_func(src["scoring"], "_surface_facts")
+    assert "serp_kinds.peer_skip(" in _py_func(src["scoring"], "_peer_skip")
+    assert '_peer_skip(u, r.get("domain"))' in src["plays"]
+    assert "serp_kinds.peer_skip(" in _py_func(src["plays"], "_peer_skip")
+    # peer_skip 이 돌려주는 까닭 = 이름표의 키 (새 까닭을 더하고 이름표를 빼먹으면 KeyError 로 샌다)
+    body = _py_func(src["serp_kinds"], "peer_skip") + _py_func(src["serp_kinds"], "_site_kind") \
+        + _py_func(src["serp_kinds"], "_lists")
+    returned = set(re.findall(r'return "(\w+)"', body))
+    assert returned == set(serp_kinds.PEER_SKIP_LABEL), (returned, set(serp_kinds.PEER_SKIP_LABEL))
+    # 읽는 설정 키가 실제로 있다 — 키 이름이 어긋나면 그 갈래가 조용히 빈 목록이 된다
+    for key in re.findall(r'_cfg_hosts\("(\w+)"\)', body):
+        assert skill_config.CONFIG.get(key), f"skill_config 에 {key} 가 없다"
+    # 쓰는 쪽이 플랫폼 호스트를 손으로 옮겨 적지 않는다
+    for name in ("collect_serp", "brief", "serp_kinds"):
+        own = src[name].split("def _selfcheck")[0]
+        for host in ("wikipedia.org", "reddit.com", "amazon.com", "semrush.com"):
+            assert host not in own, f"{name}.py 가 {host} 를 손으로 적었다 — skill_config 가 정본이다"
+
+
+def test_seam_w05extras_kinds_and_snippet_forms_are_one_table():
+    """순위에 덧붙는 선택 수집의 종류는 serp_extras.KINDS 한 벌이다 — 받는 쪽(_fetch·
+    _run_intent)과 말하는 쪽(brief._extras_lines)이 같은 이름을 쓴다. 강조 스니펫 형식도
+    가르는 쪽(serp_kinds.SNIPPET_FORMS)과 말하는 쪽(brief.SNIPPET_FORM_HINT)이 한 벌이다.
+
+    종류를 더하고 한쪽만 고치면 돈 주고 받은 값이 요청문에 안 서거나(말하는 쪽 누락),
+    요청문이 영영 안 오는 종류를 기다린다(받는 쪽 누락)."""
+    import brief
+    import run_all
+    import serp_extras
+    import serp_kinds
+    src = (SCRIPTS / "serp_extras.py").read_text("utf-8")
+    fetched = set(re.findall(r'if kind == "(\w+)":', _py_func(src, "_fetch"))) | {"intent"}
+    assert fetched == set(serp_extras.KINDS), (fetched, set(serp_extras.KINDS))
+    said = set(re.findall(r'got\("(\w+)"\)', _py_func((SCRIPTS / "brief.py").read_text("utf-8"),
+                                                     "_extras_lines")))
+    assert said == set(serp_extras.KINDS), (said, set(serp_extras.KINDS))
+    for k, spec in {**serp_extras.KINDS, **serp_extras.SITE_KINDS}.items():
+        assert spec["usd"] > 0 and spec["fresh_days"] > 0 and spec["name"], k
+    assert not set(serp_extras.KINDS) & set(serp_extras.SITE_KINDS)
+    # 유료 호출이다 — 얹혀 도는 단계가 is_paid 여야 잔액 카나리아·키 없음 건너뛰기를 탄다
+    assert run_all.STAGE_BY_NAME["rank"].is_paid and run_all.STAGE_BY_NAME["ai"].is_paid
+    # rank 단계의 노브로 보인다(--opt rank.extras) — collect 인자와 플래그 이름이 같아야 한다
+    assert "extras" in run_all.STAGE_BY_NAME["rank"].knobs
+    assert set(brief.SNIPPET_FORM_HINT) == set(serp_kinds.SNIPPET_FORMS)
+    forms = set(re.findall(r'return "(\w+)"', _py_func(
+        (SCRIPTS / "serp_kinds.py").read_text("utf-8"), "snippet_form")))
+    forms |= {"list", "paragraph"}       # 마지막 줄은 조건식으로 둘 중 하나를 돌려준다
+    assert forms == set(serp_kinds.SNIPPET_FORMS), forms
+    # 페이지 종류 분류는 한 벌 — 요청문이 자기 분류를 따로 안 갖는다
+    assert "serp_kinds.page_kind_mix(" in _py_func((SCRIPTS / "brief.py").read_text("utf-8"),
+                                                   "_page_kind_line")
+    defs = [p.name for p in SCRIPTS.glob("*.py") if not p.name.startswith("test_")
+            and re.search(r"^def page_kind\(", p.read_text("utf-8"), re.M)]
+    assert defs == ["serp_kinds.py"], defs
+
+
+def _py_func(src: str, name: str) -> str:
+    """파이썬 소스에서 최상위 함수 하나의 본문(다음 최상위 정의 전까지)."""
+    m = re.search(rf"^def {re.escape(name)}\(.*?(?=^(?:def |class |[A-Z_]+ = |# ── )|\Z)", src,
+                  re.M | re.S)
+    assert m, f"{name} 을 못 찾았다"
+    return m.group(0)
+
+
 def test_seam_site_crawl_banner_follows_severity():
     """사이트 점검 띠는 크롤이 실제로 건 갈래·심각도(collect_crawl.SEVERITY)를 말한다.
 

@@ -4533,16 +4533,16 @@ def test_template_rules_carry_swap_test_and_volume_gate():
 def test_featured_snippet_format_is_named_when_the_collector_knows_it():
     """강조 스니펫이 문단·목록·표·영상 중 무엇인지 수집이 알면 그 형식을 말한다. 모르면(옛 행·
     그 칸을 안 싣는 수집) 지금처럼 일반 문장이다 — 형식을 지어내지 않는다."""
-    assert set(brief.SNIPPET_FORMAT_HINT) == {"paragraph", "list", "table", "video"}
+    assert set(brief.SNIPPET_FORM_HINT) == {"paragraph", "list", "table", "video"}
     ctx = {"query_pages": {"검색어": _pages(URL)}, "page_audits": {URL: _audit()},
            "rank_by_kw": {"검색어": {"features": ["featured_snippet"]}}}
     o = _opp("ctr_gap", "검색어")
     assert brief.SERP_FORMAT_HINT["featured_snippet"] in brief.build(o, ctx, "ko-KR")["body"]
-    ctx["rank_by_kw"]["검색어"][brief.SNIPPET_FORMAT_KEY] = "table"
+    ctx["rank_by_kw"]["검색어"]["snippet_form"] = "table"
     body = brief.build(o, ctx, "ko-KR")["body"]
-    assert brief.SNIPPET_FORMAT_HINT["table"] in body
+    assert brief.SNIPPET_FORM_HINT["table"] in body
     assert brief.SERP_FORMAT_HINT["featured_snippet"] not in body, "일반 문장과 형식 문장이 두 번 선다"
-    ctx["rank_by_kw"]["검색어"][brief.SNIPPET_FORMAT_KEY] = "carousel"     # 모르는 값
+    ctx["rank_by_kw"]["검색어"]["snippet_form"] = "carousel"     # 모르는 값
     assert brief.SERP_FORMAT_HINT["featured_snippet"] in brief.build(o, ctx, "ko-KR")["body"]
 
 
