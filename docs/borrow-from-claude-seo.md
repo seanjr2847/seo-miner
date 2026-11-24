@@ -12,6 +12,28 @@
 
 크기: S(반나절 이하) · M(하루~이틀) · L(그 이상, 새 수집기·새 출처).
 
+## 적용 현황 — v1.163.0 (2026-11-24)
+
+이 문서의 0~5절을 작업자 12갈래(Orca run_488753cc05aa)가 병렬로 넣고 한 브랜치로 합쳤다.
+각 갈래의 커밋 메시지·`test_seams` 이음매가 무엇이 어디 들어갔는지의 정본이다. 문서와 **다르게**
+들어간 것과 **남은 것**만 적는다.
+
+- 외부 사실 확인 뒤 바꾼 것: availability 는 짧은 이름(InStock)도 받는다 · `@context` http 는 안 잡는다 ·
+  hasMap·areaServed·다지점 @id 는 구글 권장 속성이 아니라 판정 안 함 · cohere-ai 는 공식 문서에 봇 이름이
+  없어 안 넣음, anthropic-ai 는 뺌 · ARD 현행 경로는 `/.well-known/ard.json` · RSL 은 robots.txt `License:` 줄 ·
+  `es-LA` 는 라오스 코드라 명단으로 못 거름 · 예약 도메인은 example.com/.net/.org 만 자리표시로 본다.
+- 정본을 한 벌로 합친 곳: 템플릿 메타 판정(`scoring.desc_template_kind`), 상투 CTA·신뢰 페이지 말 목록
+  (`page_lang`), JSON-LD 값 규칙(`schema_values` — create 의 `jsonld_check` 는 꼴만 옮긴다), 강조 스니펫 형식
+  (`brief.SNIPPET_FORM_HINT`·순위 행 `snippet_form`).
+- 기본값: 유료 선택 수집(`serp_extras.KINDS`)·LLM 언급 집계는 **전부 기본 끔**. 지출 상한
+  (`SEOMINER_SPEND_CAP_*`)은 기본 0(없음) — 운영자가 Railway 에 값을 넣어야 선다.
+- 남은 것: canonical 대상 판정이 크롤(`crawl_site.canonical_targets`)과 페이지(`collect_page.check_canonicals`)에
+  비슷한 규칙으로 두 벌 · Moz 폴백(문서 확인 불가로 안 넣음) · 이미지 IPTC(이미지 바이트 경로 없음) ·
+  페이지 정보 줄(`scoring.page_info`)·선택 수집 결과·serp_extras 켜는 설정 UI 는 화면에 없고 요청문에만 ·
+  클러스터 라벨 검증·사이트 종류 추정은 개요 데이터 점검 줄로만 · 호스팅의 사용자별 Bing 키 보관 ·
+  리뷰 플랫폼 표는 US·GB·JP·KR 만 · 실호출로 확인 못 한 응답 꼴(Gemini 이미지, PSI agentic-browsing,
+  DataForSEO 일부 엔드포인트, Bing Webmaster) — 첫 실키 실행 때 확인한다.
+
 ---
 
 ## 요약 — 두 도구의 성격
