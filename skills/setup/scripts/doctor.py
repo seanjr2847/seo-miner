@@ -249,6 +249,23 @@ CAPABILITIES = (
      # diagnose 의 keys["pagespeed"] 가 말한다.
      "cost": "무료", "keys": (), "url": "", "fix": None,
      "owner": "server", "blocking": False},
+    {"id": "indexnow", "name": "색인 알림",
+     "desc": "고친 글이 머지되면 바뀐 주소를 IndexNow 참여 검색엔진에 한 번 알림 (무료)",
+     # 키는 발급받는 것이 아니라 사이트 주인이 스스로 짓는다 — 그래서 keys(유료·발급처 축)는
+     # 비우고, 넣었는지는 diagnose 의 keys["indexnow"] 가 말한다(vitals 의 선택 키와 같은 꼴).
+     # 보내는 쪽은 이 PC 의 create(createdb sync)다 — 웹 사용자의 할 일이 아니라 owner 는 server.
+     "cost": "무료", "keys": (), "url": "",
+     "fix": "없어도 나머지는 그대로입니다. 8~128자(영문·숫자·하이픈) 키를 하나 지어 "
+            "INDEXNOW_KEY 로 넣고, 같은 글자를 담은 <키>.txt 를 사이트 루트에 올리면 켜집니다.",
+     "owner": "server", "blocking": False},
+    {"id": "image", "name": "대표 이미지 만들기",
+     "desc": "og:image 가 없는 페이지에 한해 글 만들기가 대표 이미지를 생성해 PR 에 넣음",
+     "cost": "유료", "keys": ("GEMINI_API_KEY",),
+     "url": "https://aistudio.google.com/apikey",
+     "fix": "없어도 글 만들기는 그대로 됩니다. Gemini API 키를 넣으면 이 단계가 켜집니다. "
+            "https://aistudio.google.com/apikey 에서 키를 만들고 결제를 연결하시면 됩니다 "
+            "(이미지 모델은 유료 등급에서만 됩니다).",
+     "owner": "server", "blocking": False},
 )
 
 # 구글 연결이 잠겼을 때 **웹 사용자**에게 할 말. 키는 위 gsc fix 와 같은 3-상태다
@@ -436,6 +453,8 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         "serper": bool(os.environ.get("SERPER_API_KEY")),
         # 선택 키 — 없어도 속도 측정은 돈다. 있으면 PageSpeed 하루 한도가 커진다.
         "pagespeed": bool(os.environ.get("PAGESPEED_API_KEY")),
+        "indexnow": bool(os.environ.get("INDEXNOW_KEY")),
+        "gemini": bool(os.environ.get("GEMINI_API_KEY")),
         # 이름은 옛날 그대로지만(대시보드가 이 키를 먹는다) 뜻은 "구글이 실제로
         # 붙었나"다 — 인증 파일이 놓였나가 아니다.
         "gsc_service_account": gsc_conn,
@@ -456,6 +475,8 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         "gsc": core_ok and all(deps_gsc.values()) and gsc_linked,
         "rank": core_ok and (keys["dataforseo"] or keys["serper"]),
         "vitals": core_ok,
+        "indexnow": core_ok and keys["indexnow"],
+        "image": core_ok and keys["gemini"],
     }
     gsc_fix_state = ("deps" if gsc_mode and not all(deps_gsc.values())
                      else "pending" if gsc_pending else "none")
