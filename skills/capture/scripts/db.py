@@ -579,7 +579,11 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
   discovery_capped INTEGER,                   -- 1 = 사이트맵을 상한에서 잘랐다(전수가 아니다). NULL = 이 칸 전의 회차
   latency_p50_ms INTEGER,                     -- 크롤 응답 지연(HTML 로 받은 장만) — 중앙값·p95
   latency_p95_ms INTEGER,
-  facts_json TEXT                             -- 사이트 단위로 한 번 본 것(호스트·사이트맵 파일·탐침) — collect_crawl.site_facts
+  facts_json TEXT,                            -- 사이트 단위로 한 번 본 것(호스트·사이트맵 파일·탐침) — collect_crawl.site_facts
+  -- llms.txt 형식 문제 코드(쉼표, ai_access.LLMS_PROBLEMS). '' 문제 없음 · NULL 안 봄(없음·옛 회차)
+  llms_txt_format TEXT,
+  -- AI 봇 UA 로 홈을 한 번씩 요청해 본 서버 반응(JSON, ai_access.probe_bots). NULL 안 물음
+  ai_ua_probe TEXT
 );
 CREATE TABLE IF NOT EXISTS sitemap_urls (     -- 사이트맵이 시드였을 때 그 목록 그대로
   id INTEGER PRIMARY KEY,
@@ -746,7 +750,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.commit()
     # /llms.txt 확인 — 옛 회차는 NULL(모름)로 남는다. 0 으로 채우면 안 본 것을 "없다" 로 읽는다
     for col, decl in (("llms_txt_found", "INTEGER"), ("llms_txt_bytes", "INTEGER"),
-                      ("llms_txt_head", "TEXT")):
+                      ("llms_txt_head", "TEXT"), ("llms_txt_format", "TEXT"),
+                      ("ai_ua_probe", "TEXT")):
         if col not in cr_cols:
             conn.execute(f"ALTER TABLE crawl_runs ADD COLUMN {col} {decl}")
             conn.commit()
@@ -2678,6 +2683,18 @@ def write_llms_txt(conn: sqlite3.Connection, run_id: int, probe: dict) -> None:
     conn.execute("UPDATE crawl_runs SET llms_txt_found=?, llms_txt_bytes=?, llms_txt_head=?"
                  " WHERE id=?", (found, probe.get("bytes") if found else None,
                                  probe.get("head") if found else None, run_id))
+    # 형식 문제 — 파일이 있을 때만 뜻이 있다. 판정이 안 왔으면(옛 호출) NULL 로 둔다
+    import ai_access
+    conn.execute("UPDATE crawl_runs SET llms_txt_format=? WHERE id=?",
+                 (ai_access.llms_format_pack(probe.get("format")) if found else None, run_id))
+    conn.commit()
+
+
+def write_ai_ua_probe(conn: sqlite3.Connection, run_id: int, probe: dict | None) -> None:
+    """크롤 회차에 AI 봇 UA 서버 반응(ai_access.probe_bots)을 단다. 안 물었으면 NULL."""
+    import ai_access
+    conn.execute("UPDATE crawl_runs SET ai_ua_probe=? WHERE id=?",
+                 (ai_access.probe_pack(probe), run_id))
     conn.commit()
 
 

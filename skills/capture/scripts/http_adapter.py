@@ -407,6 +407,15 @@ def _store(url: str, f: Fetched) -> None:
             _cache_bytes -= gone.bytes
 
 
+def get_fresh(url: str, *, headers: dict, timeout) -> Fetched:
+    """URL 한 장 — run_scope() 안이어도 공유하지 않고 늘 새로 받는다(담지도 않는다).
+
+    같은 주소를 **다른 UA 로** 열어 서버의 반응을 견주는 자리(ai_access.probe_bots)가 쓴다.
+    get() 은 주소로만 공유해서, 그걸 쓰면 UA 를 바꿔도 처음 받은 응답이 돌아온다.
+    get(fresh=True) 와 같은 일 — 한 벌이다."""
+    return get(url, headers=headers, timeout=timeout, fresh=True)
+
+
 def get(url: str, *, headers: dict, timeout, fresh: bool = False) -> Fetched:
     """URL 한 장. 리다이렉트는 따라가고 홉은 chain 에 남는다. 연결 실패·시간 초과는 예외 그대로.
 

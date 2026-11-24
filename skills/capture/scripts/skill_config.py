@@ -21,31 +21,74 @@ CONFIG: dict = {
     #            권장되는 중간 지점이라 기회로 올리지 않는다(근거 표에만 적는다)
     # purpose 를 빼거나 옛 꼴(UA 문자열만)로 적으면 "모름" 이다 — 모르는 것을 인용
     # 차단이라고 부르지 않는다.
+    #   other    위 셋이 아닌 일(광고 랜딩 확인·사이트 주인이 시킨 수집) — 인용과 무관하다
     # engine 은 사람이 읽는 이름이다(요청문이 "어느 엔진에서" 를 말할 때 쓴다).
-    # 기준: 각 벤더의 크롤러 문서. 확실하지 않은 줄은 끝에 '확인 필요' 를 적어 둔다.
+    # may_ignore: 벤더 문서가 "사용자가 시킨 페치라 robots.txt 를 따르지 않을 수 있다"고
+    #   적은 봇. 막는 줄이 있어도 실제로는 들어올 수 있다 — 표와 요청문이 그 말을 붙인다.
+    #   그래도 기회로 두는 이유: 막는 줄이 있다는 것은 사이트 주인이 모르고 있을 일이다.
+    #
+    # 한 줄 한 줄의 기준은 **벤더 공식 문서**다(2026-11-24 확인). 제3자 목록에만 있는
+    # 이름은 넣지 않는다 — 벤더가 안 쓰는 UA 의 행은 "열림/막힘"이 아무 뜻도 없다:
+    #   - anthropic-ai·Claude-Web: Anthropic 문서에 없다(현행 봇은 아래 셋). 뺐다.
+    #   - cohere-ai: Cohere 문서(docs.cohere.com/docs/cohere-web-crawlers)의 봇 표는
+    #     이름이 "N/A" 이고 학습용 크롤을 하지 않는다고 적는다. 넣지 않았다.
+    # ua 는 robots.txt 토큰이다 — 글자·`_`·`-` 만(test_ai_access 가 못 박는다).
     "ai_bots": [
+        # OpenAI — https://developers.openai.com/api/docs/bots (platform.openai.com/docs/bots)
         {"ua": "GPTBot", "vendor": "OpenAI", "purpose": "training", "engine": "OpenAI 모델 학습"},
         {"ua": "OAI-SearchBot", "vendor": "OpenAI", "purpose": "search", "engine": "ChatGPT 검색"},
-        # user 봇 둘(ChatGPT-User·Perplexity-User)은 벤더 문서가 "사용자가 시킨 페치라
-        # robots.txt 가 적용되지 않을 수 있다" 고 적는다 — 막아도 실제로 안 막힐 수 있다.
-        # 확인 필요. 그래도 기회로 두는 이유: 막는 줄이 있다는 것은 사이트 주인이 모르고
-        # 있을 일이다.
-        {"ua": "ChatGPT-User", "vendor": "OpenAI", "purpose": "user", "engine": "ChatGPT"},
+        # "Because these actions are initiated by a user, robots.txt rules may not apply."
+        {"ua": "ChatGPT-User", "vendor": "OpenAI", "purpose": "user", "engine": "ChatGPT",
+         "may_ignore": True},
+        # ChatGPT 광고로 제출된 랜딩 페이지만 방문한다. robots.txt 적용 여부는 문서에 없다
+        {"ua": "OAI-AdsBot", "vendor": "OpenAI", "purpose": "other",
+         "engine": "ChatGPT 광고 랜딩 확인"},
+        # Anthropic — https://support.claude.com/en/articles/8896518 (셋 다 robots.txt 를 따른다)
         {"ua": "ClaudeBot", "vendor": "Anthropic", "purpose": "training", "engine": "Claude 모델 학습"},
         {"ua": "Claude-SearchBot", "vendor": "Anthropic", "purpose": "search", "engine": "Claude 검색"},
         {"ua": "Claude-User", "vendor": "Anthropic", "purpose": "user", "engine": "Claude"},
-        {"ua": "anthropic-ai", "vendor": "Anthropic", "purpose": "training",
-         "engine": "Claude 모델 학습 (옛 UA)"},
+        # Perplexity — https://docs.perplexity.ai/guides/bots
         {"ua": "PerplexityBot", "vendor": "Perplexity", "purpose": "search", "engine": "Perplexity"},
-        {"ua": "Perplexity-User", "vendor": "Perplexity", "purpose": "user", "engine": "Perplexity"},
-        # 제미나이 학습용 제어 토큰이다 — 구글 검색·AI 요약 노출은 Googlebot 이 정한다
-        # (색인 막힘 쪽)
+        # "Since a user requested the fetch, this fetcher generally ignores robots.txt rules."
+        {"ua": "Perplexity-User", "vendor": "Perplexity", "purpose": "user", "engine": "Perplexity",
+         "may_ignore": True},
+        # Google — https://developers.google.com/crawling/docs/crawlers-fetchers/google-common-crawlers
+        #          https://developers.google.com/crawling/docs/crawlers-fetchers/google-user-triggered-fetchers
+        # Google-Extended 는 제미나이 학습·그라운딩용 제어 토큰이다(따로 도는 봇이 아니다) —
+        # 구글 검색·AI 요약 노출은 Googlebot 이 정한다(색인 막힘 쪽)
         {"ua": "Google-Extended", "vendor": "Google", "purpose": "training",
          "engine": "Gemini 모델 학습"},
-        # 빙 검색 그 자체이자 Copilot 이 인용하는 색인 — 막혔으면 AI 만의 문제가 아니다
+        # 사이트 주인이 Vertex AI 에이전트를 만들려고 시킨 수집
+        {"ua": "Google-CloudVertexBot", "vendor": "Google", "purpose": "other",
+         "engine": "Vertex AI 에이전트 (사이트 주인이 시킨 수집)"},
+        # 사용자 요청 페치 둘 — "these fetchers generally ignore robots.txt rules"
+        {"ua": "Google-Agent", "vendor": "Google", "purpose": "user",
+         "engine": "Google 에이전트", "may_ignore": True},
+        # 옛 이름 Google-NotebookLM 은 2026-08 까지만 지원됐다
+        {"ua": "Google-GeminiNotebook", "vendor": "Google", "purpose": "user",
+         "engine": "Gemini 노트북 (NotebookLM)", "may_ignore": True},
+        # 빙 검색 그 자체이자 Copilot 이 인용하는 색인 — 막혔으면 AI 만의 문제가 아니다.
+        # AI 전용 토큰은 따로 없다
         {"ua": "Bingbot", "vendor": "Microsoft", "purpose": "search", "engine": "Bing 검색·Copilot"},
+        # Apple — https://support.apple.com/en-us/119829 (크롤하지 않는 제어 토큰)
         {"ua": "Applebot-Extended", "vendor": "Apple", "purpose": "training",
          "engine": "Apple 모델 학습"},
+        # Meta — https://developers.facebook.com/docs/sharing/webmasters/web-crawlers
+        {"ua": "meta-externalagent", "vendor": "Meta", "purpose": "training",
+         "engine": "Meta 모델 학습"},
+        {"ua": "meta-webindexer", "vendor": "Meta", "purpose": "search", "engine": "Meta AI"},
+        # "may bypass robots.txt because it performs fetches that were requested by the user"
+        {"ua": "meta-externalfetcher", "vendor": "Meta", "purpose": "user", "engine": "Meta AI",
+         "may_ignore": True},
+        # Mistral — https://docs.mistral.ai/robots
+        {"ua": "MistralAI-Training", "vendor": "Mistral", "purpose": "training",
+         "engine": "Mistral 모델 학습"},
+        {"ua": "MistralAI-Index", "vendor": "Mistral", "purpose": "search", "engine": "Mistral"},
+        {"ua": "MistralAI-User", "vendor": "Mistral", "purpose": "user", "engine": "Mistral"},
+        # DuckDuckGo — https://duckduckgo.com/duckduckgo-help-pages/results/duckassistbot
+        # AI 보조 답변을 만들 때 그 자리에서 페이지를 읽는다. 학습에는 쓰지 않는다
+        {"ua": "DuckAssistBot", "vendor": "DuckDuckGo", "purpose": "search",
+         "engine": "DuckDuckGo AI 답변"},
         # 확인 필요 — 벤더 공식 문서 없음
         {"ua": "Bytespider", "vendor": "ByteDance", "purpose": "training",
          "engine": "ByteDance 모델 학습"},
@@ -149,7 +192,7 @@ def _selfcheck() -> None:
         assert {"model", "default", "usd"} <= set(e) <= {"model", "default", "usd", "body"}, eid
     assert any(e["default"] for e in CONFIG["ai_engines"].values())
     for b in CONFIG["ai_bots"]:
-        assert b["purpose"] in ("search", "user", "training"), b
+        assert b["purpose"] in ("search", "user", "training", "other"), b
     assert "chatgpt.com" in CONFIG["ai_referrers"]
     assert CONFIG["defaults"]["serp_depth"] == 10
 

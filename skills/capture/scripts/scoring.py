@@ -19,9 +19,9 @@ import sys
 import unicodedata
 from collections import namedtuple
 from collections.abc import Callable
-from urllib import robotparser
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+import ai_access
 import run_verdict
 import schema_vocab
 
@@ -1414,7 +1414,10 @@ def image_weight_advice(rows) -> list[dict]:
 # 받는다. 예전에는 막힌 봇을 전부 "인용 불가" 로 올려서, GPTBot 만 막은 흔한
 # 사이트에 ChatGPT 인용이 불가능하다고 오진했다(ChatGPT 검색은 OAI-SearchBot 이다).
 AI_BOT_PURPOSE = {"search": "검색·인용 색인", "user": "사용자 요청 페치",
-                  "training": "학습"}
+                  "training": "학습",
+                  # 광고 랜딩 확인·사이트 주인이 시킨 수집처럼 셋 어디에도 안 드는 봇 —
+                  # 무슨 일을 하는지는 engine 칸이 말한다. 막혀도 인용과 무관하다.
+                  "other": "기타"}
 # 막히면 인용이 끊기는 용도 — 이 둘만 기회가 된다. training·모름(None)은 아니다.
 AI_BOT_CITING = ("search", "user")
 _AI_BOTS_FALLBACK = (
@@ -1440,9 +1443,12 @@ def _ai_bot_entry(x) -> dict | None:
             purpose = None
         vendor = str(x.get("vendor") or "").strip() or None
         engine = str(x.get("engine") or "").strip() or None
+        may_ignore = bool(x.get("may_ignore"))
     else:
-        ua, purpose, vendor, engine = str(x or "").strip(), None, None, None
-    return {"ua": ua, "vendor": vendor, "purpose": purpose, "engine": engine} if ua else None
+        ua, purpose, vendor, engine, may_ignore = str(x or "").strip(), None, None, None, False
+    # may_ignore: 벤더 문서가 "사용자가 시킨 페치라 robots.txt 를 안 따를 수 있다"고 적은 봇
+    return ({"ua": ua, "vendor": vendor, "purpose": purpose, "engine": engine,
+             "may_ignore": may_ignore} if ua else None)
 
 
 def ai_bots() -> tuple[dict, ...]:
@@ -1473,10 +1479,15 @@ def ai_bot_status(robots_txt: str, home: str = "") -> list[dict]:
     if not txt.strip():
         return []
     url = home if home.startswith("http") else f"https://{home or 'example.com'}/"
+    # group: 이 봇에게 적용된 묶음("GPTBot" · "*" · None=아무 묶음도 없음).
+    # ua_notes: `User-agent: GPTBot/1.1` 처럼 토큰만 적지 않은 줄(ai_access.ua_notes).
     return [{"bot": b["ua"], "vendor": b["vendor"], "purpose": b["purpose"],
              "purpose_label": AI_BOT_PURPOSE.get(b["purpose"], "모름"),
              "citing": b["purpose"] in AI_BOT_CITING,
-             "engine": b["engine"], "rule": robots_blocks(txt, url, agent=b["ua"])}
+             "engine": b["engine"], "rule": robots_blocks(txt, url, agent=b["ua"]),
+             "group": ai_access.group_for(txt, b["ua"])["label"],
+             "ua_notes": ai_access.ua_notes(txt, b["ua"]),
+             "may_ignore": bool(b.get("may_ignore"))}
             for b in ai_bots()]
 
 
@@ -1489,17 +1500,10 @@ _WILDCARD_PROBE = "SeoMinerWildcardProbe"
 
 
 def _named_in_robots(robots_txt: str, ua: str) -> bool:
-    """이 봇 이름으로 된 User-agent 묶음이 있나. 묶음 고르는 규칙은 urllib.robotparser
-    와 같다(UA 줄의 값이 봇 이름 안에 부분 문자열로 들어가면 그 묶음) — 판정을 두 벌로
-    만들면 "와일드카드로 막혔다"와 파서의 실제 판정이 어긋난다."""
-    name = ua.split("/")[0].lower()
-    for line in (robots_txt or "").splitlines():
-        key, _, val = line.partition(":")
-        if key.strip().lower() == "user-agent":
-            v = val.split("#")[0].strip().lower()
-            if v and v != "*" and v in name:
-                return True
-    return False
+    """이 봇 이름으로 된 User-agent 묶음이 있나. 묶음 고르는 규칙은 robots_blocks 와
+    한 벌이다(ai_access — RFC 9309: 토큰 전체 일치) — 판정을 두 벌로 만들면 "와일드카드로
+    막혔다"와 실제 판정이 어긋난다."""
+    return ai_access.named(robots_txt or "", ua)
 
 
 def ai_bot_blocks(conn: sqlite3.Connection, project_id: int, *,
@@ -1558,27 +1562,13 @@ def _reason_ai_bot(r: dict, ctx: dict) -> str:
 def robots_blocks(robots_txt: str, url: str, agent: str = "Googlebot") -> str | None:
     """이 주소를 막는 robots.txt 줄. 안 막으면 None.
 
-    막히는지의 판정은 표준 파서(urllib.robotparser)에 맡기고, 막힐 때만 어느 줄인지
-    찾는다 — 매칭 규칙을 두 벌 만들면 "막힌다는데 줄은 못 찾는다" 같은 모순이 난다.
-    색인 막힘 요청문이 이 한 줄을 못 대서, 지금까지 원인 후보를 짐작으로 세웠다.
+    판정과 "어느 줄인가"가 한 자리(ai_access.blocking_rule)에서 나온다 — RFC 9309 방식:
+    봇 토큰 전체 일치로 묶음을 고르고(이름 묶음이 있으면 `*` 는 안 본다), 그 안에서 가장
+    긴 줄이 이기고 길이가 같으면 Allow 다. 예전에는 판정은 urllib.robotparser, 줄 찾기는
+    따로여서 "막힌다는데 줄은 못 찾는다"가 났고, 그 파서는 `User-agent: bot` 을 GPTBot 의
+    묶음으로 읽고 파일에서 먼저 나온 줄을 썼다.
     """
-    txt = robots_txt or ""
-    if not txt.strip():
-        return None
-    rp = robotparser.RobotFileParser()
-    rp.parse(txt.splitlines())
-    if rp.can_fetch(agent, url):
-        return None
-    path = urlsplit(url).path or "/"
-    best = ""
-    for line in txt.splitlines():
-        key, _, val = line.partition(":")
-        if key.strip().lower() != "disallow":
-            continue
-        rule = val.split("#")[0].strip()
-        if rule and path.startswith(rule.rstrip("*")) and len(rule) > len(best):
-            best = rule
-    return f"Disallow: {best}" if best else "robots.txt 가 이 주소를 막습니다(어느 줄인지는 못 짚었습니다)"
+    return ai_access.blocking_rule(robots_txt or "", url, agent)
 
 
 # 이보다 오래 안 고친 글은 "낡았을 수 있다"고 말한다. 판정이 아니라 확인 지시라
@@ -8143,7 +8133,8 @@ def _selfcheck() -> None:
     assert "빙 검색 전체" in _reason_ai_bot(_bing, {})
     # 옛 꼴(UA 문자열 목록) — 읽되 용도는 모름이고, 모름은 기회가 아니다
     assert _ai_bot_entry("OAI-SearchBot") == {"ua": "OAI-SearchBot", "vendor": None,
-                                              "purpose": None, "engine": None}
+                                              "purpose": None, "engine": None,
+                                              "may_ignore": False}
     assert _ai_bot_entry({"ua": "X", "purpose": "시험"})["purpose"] is None   # 모르는 용도도 모름
     _real_ai_bots = globals()["ai_bots"]
     globals()["ai_bots"] = lambda: tuple(map(_ai_bot_entry, ["GPTBot", "OAI-SearchBot"]))
