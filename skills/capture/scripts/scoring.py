@@ -11,6 +11,7 @@ self-check:  python scoring.py
 기회 적재:   python scoring.py load <project>   (striking·ctr_gap·… 계산 → opportunities upsert)
 """
 import datetime
+import functools
 import json
 import math
 import re
@@ -297,8 +298,12 @@ def tokens(s: str) -> list[str]:
     return [t for t in re.split(r"[^0-9a-zA-Z가-힣]+", (s or "").lower()) if t]
 
 
+@functools.lru_cache(maxsize=65536)
 def host_of(url: str) -> str:
-    """URL에서 호스트만. 스킴·www·포트·경로를 벗긴다."""
+    """URL에서 호스트만. 스킴·www·포트·경로를 벗긴다.
+
+    순수 함수라 캐시한다 — 대시보드 한 번에 같은 상위 주소 수천 개를 플랫폼·언론·마켓 목록
+    수백 개와 견주느라 수백만 번 불렸다(2026-11-24 통합본 gather 84초 중 60초)."""
     h = re.sub(r"^[a-z]+://", "", (url or "").strip().lower())
     h = h.split("/")[0].split("?")[0].split("#")[0].split(":")[0]
     return h[4:] if h.startswith("www.") else h
@@ -308,6 +313,22 @@ def owns(domain: str, own: str) -> bool:
     """domain 이 own 자신이거나 그 하위 도메인인가. 네 군데에 복제돼 있던 두 줄."""
     d, o = host_of(domain), host_of(own)
     return bool(d and o) and (d == o or d.endswith("." + o))
+
+
+@functools.lru_cache(maxsize=256)
+def _host_set(hosts: tuple) -> frozenset:
+    return frozenset(h for h in (host_of(str(x)) for x in hosts) if h)
+
+
+def owns_any(domain: str, hosts) -> bool:
+    """any(owns(domain, h) for h in hosts) 와 같은 판정 — 목록을 다 훑지 않고 domain 의
+    상위 이름들(a.b.c → a.b.c · b.c · c)을 집합에서 찾는다."""
+    d = host_of(domain or "")
+    if not d:
+        return False
+    s = _host_set(hosts if isinstance(hosts, tuple) else tuple(hosts))
+    parts = d.split(".")
+    return any(".".join(parts[i:]) in s for i in range(len(parts)))
 
 
 def scope_of(path) -> str:
@@ -5860,7 +5881,7 @@ def third_party_platforms() -> tuple[str, ...]:
 def is_third_party(domain: str, platforms=None) -> bool:
     """하위 도메인까지 — ko.wikipedia.org·m.blog.naver.com 도 그 플랫폼이다(owns 규칙)."""
     plats = third_party_platforms() if platforms is None else platforms
-    return any(owns(domain, p) for p in plats)
+    return owns_any(domain, plats)
 
 
 # 언론 — 챗봇이 신문·방송·매거진을 대신 인용하면 그것도 "내 페이지를 고쳐라"가 틀린
@@ -5893,7 +5914,7 @@ def is_press(domain: str, outlets=None) -> bool:
     """하위 도메인까지 — health.chosun.com 도 chosun.com 이다. 제3자 플랫폼이 먼저다
     (news.naver.com 은 포털이다) — 부르는 쪽이 is_third_party 를 먼저 본다."""
     outs = press_outlets() if outlets is None else outlets
-    return any(owns(domain, p) for p in outs)
+    return owns_any(domain, outs)
 
 
 def _rival_key(host: str, platforms) -> str:

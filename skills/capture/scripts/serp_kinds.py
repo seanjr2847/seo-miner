@@ -126,6 +126,7 @@ def _lists() -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[s
             _cfg_hosts("marketplaces"), _cfg_hosts("seo_tool_sites"))
 
 
+@functools.lru_cache(maxsize=65536)
 def _site_kind(d: str) -> str | None:
     """도메인이 속한 '사이트 종류' 까닭 — 주소 꼴(archive)은 여기서 안 본다."""
     plats, press, markets, tools = _lists()
@@ -135,9 +136,9 @@ def _site_kind(d: str) -> str | None:
         return "press"
     if is_public(d):
         return "public"
-    if any(scoring.owns(d, m) for m in markets):
+    if scoring.owns_any(d, markets):
         return "market"
-    if any(scoring.owns(d, m) for m in tools):
+    if scoring.owns_any(d, tools):
         return "seo_tool"
     return None
 
