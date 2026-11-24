@@ -837,6 +837,9 @@ def fetch(url: str, timeout: int | None = None) -> dict:
     return audit_html(url, r.text, r.status)
 
 
+_FETCH = fetch      # 진짜 가져오기 — 검사가 fetch 를 갈아 끼웠으면 브라우저도 안 띄운다(render)
+
+
 # ── 막힌 페이지 대신 읽기 — DataForSEO On-Page content_parsing ────────────────
 # 데이터센터 IP 를 봇으로 보는 사이트(gucci.com)는 fetch 가 한 장도 못 본다. 그때 DataForSEO
 # 가 대신 열어 본문 구조(제목·H1·H2·단어 수)를 준다. 이번 달 할 일(plays)의 증거 읽기와 이
@@ -1007,7 +1010,9 @@ def collect(project: str, *,
         fresh_ok = _recent_ok(conn, p["id"], PAGE_DFS_FRESH_DAYS)
         lock = threading.Lock()
         spend = {"n": 0, "cost": 0.0, "off": ""}
-        rnd = render.Session()     # 렌더 엔진이 없으면(호스팅) 아무것도 안 한다
+        # 렌더 엔진이 없으면(호스팅) 아무것도 안 한다. 가짜 fetch(검사)면 끈다 — 지어낸
+        # 주소로 진짜 브라우저를 띄우지 않는다.
+        rnd = render.Session("auto" if fetch is _FETCH else None)
 
         def get(url: str) -> dict:
             # 일꾼 스레드 — 네트워크만(Brain 을 안 만진다). 막혔으면: 최근에 잘 읽은 주소는
