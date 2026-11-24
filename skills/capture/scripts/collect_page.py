@@ -723,14 +723,11 @@ SAME_AS_TIMEOUT = 6         # 초 — 주소 하나
 
 def check_link(url: str, timeout: float | None = None) -> int | None:
     """주소 하나의 HTTP 상태. 못 열면 None(모름 — 죽었다고 하지 않는다). 본문은 안 받는다."""
-    import requests
+    # 남의 페이지가 적어 둔 주소다 — http_adapter 의 주소 검사(사설·메타데이터 차단)를 거친다.
     try:
-        r = requests.get(url, headers=UA, timeout=timeout or SAME_AS_TIMEOUT,
-                         allow_redirects=True, stream=True)
+        return http_adapter.probe(url, headers=UA, timeout=timeout or SAME_AS_TIMEOUT)
     except Exception:
         return None
-    r.close()
-    return r.status_code
 
 
 def check_same_as(rows: list[dict], domain: str) -> int:
