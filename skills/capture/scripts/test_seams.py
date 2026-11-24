@@ -3074,7 +3074,7 @@ const stIxStop = () => null, stBlocked = () => 0;
         f"심각한 갈래가 있는데 띠가 그것을 말하지 않는다 — 많은 쪽을 골랐다: {p['msg']}")
 
 
-def test_seam_site_crawl_facts_lines_come_from_the_server():
+def test_seam_crawlfacts_lines_come_from_the_server():
     """[사이트 점검]의 「크롤이 사이트에 대해 본 것」은 서버가 만든 줄을 그리기만 한다.
 
     만드는 쪽은 collect_crawl.fact_lines(→ crawl_runs.facts_json), 그리는 쪽은 site.html 의
