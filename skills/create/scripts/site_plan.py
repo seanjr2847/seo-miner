@@ -85,6 +85,24 @@ TREES: dict[str, tuple] = {
         (0, "배송·반품·교환", "사고 난 뒤 어떻게 되나", ("WebPage",)),
         (0, "고르는 법·관리법 글", "사기 전에 묻는 질문", ("Article", "BreadcrumbList")),
     ),
+    # 매체 — 글이 상품이다. 섹션이 주제 허브, 글쓴이 페이지가 신뢰의 근거(저자·자격).
+    "publisher": (
+        (0, "섹션", "어떤 주제를 다루나 — 섹션마다 한 장", ("CollectionPage", "BreadcrumbList")),
+        (1, "기사·글", "질문·사건 하나", ("Article", "BreadcrumbList")),
+        (0, "글쓴이", "누가 썼나(자격·경력) — 사람마다 한 장", ("ProfilePage", "Person")),
+        (0, "편집 원칙·정정", "어떻게 확인하고 고치나", ("AboutPage",)),
+        (0, "소개", "누가 내는 매체인가", ("AboutPage",)),
+    ),
+    # 대행사 — 서비스를 파는 조직. 사례가 증거다.
+    "agency": (
+        (0, "서비스 허브", "무엇을 해 주나", ("CollectionPage",)),
+        (1, "서비스 상세", "그 서비스 하나 — 대상·과정·범위", ("Service", "BreadcrumbList")),
+        (0, "사례", "누구에게 무엇을 했나 — 사례마다 한 장", ("CollectionPage",)),
+        (1, "사례 상세", "문제·한 일·결과", ("Article", "BreadcrumbList")),
+        (0, "사람", "누가 맡는가(자격·경력)", ("Person",)),
+        (0, "글 허브", "고객이 묻는 질문에 답하는 글 목록", ("CollectionPage",)),
+        (1, "글", "질문 하나에 답하는 글", ("Article", "BreadcrumbList")),
+    ),
 }
 # 사이트 종류의 정본은 dashboard.PROJECT_TYPES 다 — 종류가 늘면 여기서 바로 걸린다(뼈대 없이 내보내지 않는다).
 assert set(TREES) == set(dashboard.PROJECT_TYPE_IDS), set(dashboard.PROJECT_TYPE_IDS) ^ set(TREES)
