@@ -436,7 +436,31 @@ def check_paid_keys(stage_name: str) -> tuple[bool, str]:
             return False, ("키가 없어 건너뜁니다. DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD "
                           "를 넣으면 경쟁사는 잡는데 나는 없는 검색어를 찾습니다. "
                           "발급: https://dataforseo.com")
+    elif stage_name in TYPED_STAGES:
+        # 좌표를 직접 준 지역 업체(무료 OSM 만)는 수집기를 바로 부르는 길이다 — 체인은 키로 가른다
+        if not serp_adapter.has_dataforseo():
+            return False, STAGE_BY_NAME[stage_name].module.NO_KEY
     return True, ""
+
+
+# 사이트 종류가 맞을 때만 도는 유료 단계 → 그 종류. 키가 없어 건너뛸 때 사유를 runs 에 남기는데,
+# 종류가 다른 사이트에는 남기지 않는다(웹 서비스 사이트의 기록에 '지역 업체: 키 없음'이 쌓인다).
+TYPED_STAGES = {"local": collect_local.SITE_TYPE, "merchant": collect_merchant.SITE_TYPE}
+
+
+def note_no_key(project: str, kind: str, reason: str) -> None:
+    """키가 없어 건너뛴 종류 전용 단계의 사유를 runs 한 줄로 — 그 종류의 사이트에만.
+    화면(지역 업체·쇼핑 카드)이 이 문장을 그대로 말한다. 기록이 실패해도 수집은 간다."""
+    try:
+        conn = db.connect()
+        try:
+            ptype = db.get_project(conn, project)["type"]
+        finally:
+            conn.close()
+    except Exception:       # noqa: BLE001 — 미등록 사이트 등. 기록할 자리가 없다
+        return
+    if ptype == TYPED_STAGES.get(kind):
+        note_blocked(project, kind, reason)
 
 
 def _stage_names(raw: str | None, label: str, valid: tuple[str, ...]) -> set[str]:
@@ -606,6 +630,8 @@ def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
     if stage.is_paid:
         has_keys, paid_skip_msg = check_paid_keys(stage.name)
         if not has_keys:
+            if not dry_run and stage.name in TYPED_STAGES:
+                note_no_key(project, stage.name, paid_skip_msg)
             return _skip(paid_skip_msg)
         if stage.name in blocked:
             # 카나리아가 이미 답을 알고 있다 — 402 를 100번 사러 가지 않는다.

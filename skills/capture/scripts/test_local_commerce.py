@@ -406,6 +406,32 @@ def test_stage_wiring():
     assert all(collect_local.platforms(c) for c, _ in serp_adapter.LOCALES)
 
 
+def test_chain_notes_no_key_only_for_that_site_type():
+    """체인(run_all)에서 키가 없으면 수집기를 부르지 않고 건너뛴다 — 사유는 그 종류의 사이트에만
+    runs 로 남는다(웹 서비스 사이트의 기록에 '지역 업체: 키 없음'이 쌓이지 않는다)."""
+    conn, lb = _site("clinic8", "local_business")
+    conn.close()
+    conn, sa = _site("saas8", "saas")
+    conn.close()
+    keys = {k: os.environ.pop(k) for k in ("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD")}
+    try:
+        for name in ("clinic8", "saas8"):
+            for st in ("local", "merchant"):
+                boom = lambda **k: (_ for _ in ()).throw(AssertionError("키가 없는데 수집기를 불렀다"))
+                stg = run_all.STAGE_BY_NAME[st]._replace(fn=boom)
+                r = run_all._run_stage(stg, name, dry_run=False, skip_set=set(), only_set=set(),
+                                       opts={})
+                assert r.ok and r.skipped and "DataForSEO" in r.reason, (name, st, r)
+    finally:
+        os.environ.update(keys)
+    conn = db.connect()
+    got = [(r["project_id"], r["kind"]) for r in conn.execute(
+        "SELECT project_id, kind FROM runs WHERE project_id IN (?,?)", (lb, sa))]
+    assert got == [(lb, "local")], got
+    assert "DataForSEO" in collect_local.last_note(conn, lb, "local")
+    conn.close()
+
+
 def test_task_helpers():
     """과제형 도우미 — 늦는 과제는 상한까지 두드리고 waiting 으로 남긴다."""
     seq = {"/a": [("waiting", None), ("done", [1])], "/b": [("waiting", None)] * 9}
