@@ -157,6 +157,15 @@ def notify(project: str, items: list[tuple[int, list[str]]], *, key: str | None 
         if not host or not key_file_ok(host, key):
             out["skipped"].append(f"{host or '(주소 없음)'}: 키 파일 https://{host}/{key[:4]}….txt 가 "
                                   f"없거나 내용이 키와 달라 보내지 않습니다(주소 {len(keys)}개)")
+            # 키 파일을 올린 뒤의 머지 반영이 다시 보게 대기로 둔다(안 뜬 주소와 같은 횟수 상한).
+            for k in keys:
+                v = want[k]
+                v["tries"] = int(v.get("tries") or 0) + 1
+                if host and v["tries"] < RETRY_MAX:
+                    led["pending"][k] = v
+                    out["pending"] += 1
+                else:
+                    led["pending"].pop(k, None)
             continue
         ready = []
         for k in keys:

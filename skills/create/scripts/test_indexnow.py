@@ -69,6 +69,8 @@ site["keyfile"] = None
 r = indexnow.notify("t", [(1, ["https://t.com/a/"])], key=KEY)
 assert r["sent"] == 0 and "키 파일" in r["skipped"][0] and not posts, r
 assert KEY not in r["skipped"][0], "사유 문장에 키 전체를 찍지 않는다"
+# 키 파일을 나중에 올리면 다음 머지 반영이 다시 본다 — 대기로 남는다.
+assert r["pending"] == 1 and ledger()["pending"]["t#1|https://t.com/a/"]["tries"] == 1, r
 site["keyfile"] = "other-key-000000"
 assert indexnow.notify("t", [(1, ["https://t.com/a/"])], key=KEY)["sent"] == 0 and not posts
 site["keyfile"] = "﻿" + KEY + "\n"            # BOM·끝 개행은 같은 키다
