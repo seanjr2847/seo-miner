@@ -19,7 +19,8 @@ GA4 의 '키 이벤트' 같은 한 벌의 정의가 없다 — 0 으로 채우�
   · POST {host}/api/projects/{project_id}/query/  본문 {"query": {"kind": "HogQLQuery",
     "query": "..."}, "name": "..."}  인증 `Authorization: Bearer <personal API key>`
     (권한: Query Read). 호스트는 US `https://us.posthog.com`, EU `https://eu.posthog.com`.
-  · 응답 {"results": [[...], ...], "columns": [...]} — 행은 배열이다.
+  · 응답 {"results": [[...], ...]} — 행은 배열이다. 문서가 약속하는 칸은 results 뿐이라
+    그것만 읽는다(칸 순서는 SELECT 순서).
   · LIMIT 을 안 쓰면 100행, 쓰면 5만 행까지. OFFSET 은 개인 키로 400 이다(그래서 한 번에 받는다).
   · sessions 표의 세션 속성: $entry_pathname · $entry_current_url · $channel_type(유기 검색은
     'Organic Search') · $is_bounce · $session_duration · $pageview_count · $start_timestamp ·

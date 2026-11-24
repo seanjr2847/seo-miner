@@ -26,6 +26,7 @@ find_browser() 가 None 이고 감사 행은 한 글자도 안 바뀐다(js_shel
     tap-targets(48px)를 이 감사로 바꿨다. 문장 안 인라인 링크는 규칙의 예외라 안 센다.
     간격 예외(주변이 비어 있으면 통과)는 안 본다 — 그래서 "실패"가 아니라 "개수"다.
     https://dequeuniversity.com/rules/axe/4.10/target-size
+    https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html (인라인·간격 예외)
     https://github.com/GoogleChrome/lighthouse/releases/tag/v12.0.0
   · 전면 광고: 구글은 화면 비율 문턱을 주지 않는다("Don't obscure the entire page with
     interstitials"). 그래서 판정하지 않고 고정 요소가 첫 화면을 덮는 비율만 적는다.
