@@ -188,6 +188,9 @@ WATCH_AIO_KW = "요약관찰Q7"   # 서치콘솔 행 없이 순위 확인으로�
 # AI 에서 온 방문의 빈 상태 둘 — 로컬 대상에서만 사이트를 바꿔 한 번씩 더 연다(ZERO_SITE 는
 # 로컬 Brain 에만 있다). 문구는 <b> 제목만 본다: 소스(<script>)는 check() 가 떼고 보므로
 # 렌더러가 그 분기를 실제로 탔을 때만 걸린다.
+VIT_RES = "heroZ7.jpg"               # 속도 진단: LCP 요소·렌더 차단에만 나오는 자원 이름
+SITEMAP_PATH = "sitemapQ5.xml"       # 서치콘솔 사이트맵 목록에만 나오는 주소
+AI_CH_MISS = "newaiZ3.example"       # GA4 는 AI Assistant 로 세는데 우리 목록에 없는 출처
 ZERO_SITE = "gamma-site"             # GA4 연결됨 + 쟀고 0
 AI_VISITS_NOGA4 = "GA4를 연결하면 여기서 잽니다"
 AI_VISITS_ZERO = "AI에서 온 방문이 아직 없습니다"
@@ -290,6 +293,29 @@ MUSTS = [
     # 기준을 넘긴다. "1개"가 아니라 "2개"면 데스크톱까지 느리다고 말한 것이다.
     (r"<b>1개</b>가 기준을 넘겼습니다", "속도 섹션이 기준 초과를 잘못 셌다"),
     (r"이 페이지의 실제 사용자", "속도 표가 현장·실험실 출처를 안 밝혔다"),
+    # 현장 TTFB — 기준(scoring.TTFB_GOOD_MS)을 넘긴 900ms 는 빨갛게, 안 넘긴 210ms 는 아니다
+    (r'class="num bad">900ms<', "속도 표가 기준을 넘긴 현장 TTFB 를 안 짚었다"),
+    (r'class="num ok">210ms<', "속도 표가 기준 안의 TTFB 를 넘겼다고 칠했다"),
+    # 지난 측정 대비 — 같은 주소·기기·범위의 앞 측정보다 LCP 가 40% 나빠졌다
+    (r"3\.0초 → 4\.2초 \(\+40%\)", "속도 표가 지난 측정 대비 나빠진 것을 안 보였다"),
+    # 페이지별 진단 — 자원 이름·이름표(정본 collect_vitals.DIAG_AUDITS)·접근성·agentic·판·썸네일·추세
+    (re.escape(VIT_RES), "속도 진단이 걸린 자원 이름을 안 그렸다"),
+    (r'id="vit-more"(?:(?!</section>).)*?렌더 차단 자원', "속도 진단이 이름표를 d.diag_audits 에서 못 받았다"),
+    (r'id="vit-more"(?:(?!</section>).)*?접근성</b> <span class="num">87/100',
+     "속도 진단이 접근성 점수를 안 그렸다"),
+    (r"글자와 바탕의 대비가 낮음 3곳", "접근성 실패 항목이 한국어 이름표(d.cat_audits)로 안 섰다"),
+    (r'에이전트 준비도</b> <span class="num">2/4', "agentic-browsing 참고 칸이 X/N 으로 안 섰다"),
+    (r"Lighthouse 13\.6\.0", "잰 Lighthouse 판을 안 보였다"),
+    (r'<img class="vshot" src="data:image/', "'구글이 연 모습' 썸네일이 안 섰다"),
+    (r"현장 추세 · 2026-01-03 부터 주마다", "CrUX 주별 추세가 안 섰다"),
+    # 서치콘솔 사이트맵 — 앞 회차 대비 오류 증감
+    (re.escape(SITEMAP_PATH), "제출된 사이트맵 목록이 안 섰다"),
+    (r'id="ix-sitemaps"(?:(?!</section>).)*?<small class="bad">\+3</small>',
+     "사이트맵 오류가 앞 회차 대비 늘어난 것을 안 보였다"),
+    # GA4 — 채널 그룹(유기 스냅샷이 없어도 선다)·AI 채널 대조·전환 이벤트 미설정
+    (r"<b>전환 이벤트 미설정\.</b>", "속성 전체 전환이 0 인데 '전환 이벤트 미설정'이라고 안 말했다"),
+    (r'id="an-channels-body"(?:(?!</section>).)*?<span>AI Assistant</span><b>10</b>', "채널 그룹 목록이 안 섰다"),
+    (re.escape(AI_CH_MISS) + r" 4", "GA4 는 AI 로 세는데 우리 목록에 없는 출처를 안 짚었다"),
     (r"해결된 것 <b>0</b>건|새로 생긴 것 <b>1</b>건", "크롤 회차 비교 요약이 안 나왔다"),
     (re.escape(AI_PROMPT), "AI 인용 화면이 질문 목록을 안 그렸다"),
     # 시장별 — 질문이 사이트에 한 벌(기본 시장 말)이라 시장 5개 사이트도 한국어로만 물었고
@@ -1023,6 +1049,7 @@ def _axes(conn, pid: int) -> None:
          "field_verdict": "FAST", "field_lcp_ms": 1800, "field_inp_ms": 90,
          "field_cls": 0.02, "field_ttfb_ms": 210,
          "lab_score": 93, "lab_lcp_ms": 1900, "lab_cls": 0.02, "lab_tbt_ms": 40}])
+    _w04(conn, pid, d, _vurl)
     conn.execute("INSERT INTO keyword_gap(project_id,checked_date,keyword,domain,position,"
                  "our_position,volume,kind) VALUES(?,?,?,?,2,NULL,2400,'missing')",
                  (pid, d, GAP_KW, GAP_RIVAL))
@@ -1090,6 +1117,53 @@ def _axes(conn, pid: int) -> None:
     db.write_ga4_ai_referrals(conn, pid, d, 28, ["chatgpt.com", "perplexity.ai"],
                               [("chatgpt.com", AI_VISIT_PAGE, AI_VISIT_N - 21, 3),
                                ("perplexity.ai", AI_VISIT_PAGE, 21, 0)])
+
+
+def _w04(conn, pid: int, d: str, vurl: str) -> None:
+    """구글 데이터·속도·분석 축 — 진단·지난 측정 대비·썸네일·CrUX 추세·색인 근거·사이트맵·GA4 채널.
+    값마다 화면에만 나오는 표식(VIT_RES·SITEMAP_PATH·AI_CH_MISS)이나 이 픽스처에만 있는 숫자를 쓴다."""
+    import db
+    diag = {"lcp": {"snippet": f'<img src="/img/{VIT_RES}" loading="lazy">', "lazy": True,
+                    "phases": {"ttfb": 610, "load_delay": 1900, "load": 800, "render_delay": 820}},
+            "items": [{"id": "render-blocking-resources", "fail": True, "ms": 450, "kb": 0, "n": 1,
+                       "val": None, "items": [f"https://{SITES[1]}.example/css/{VIT_RES}.css"]},
+                      {"id": "dom-size", "fail": True, "ms": 0, "kb": 0, "n": 1, "val": 2412, "items": []},
+                      {"id": "third-party-summary", "fail": False, "ms": 0, "kb": 0, "n": 1,
+                       "val": None, "items": ["Tag Manager"]}]}
+    cat = {"accessibility": {"score": 87, "fail": [{"id": "color-contrast", "n": 3},
+                                                   {"id": "brand-new-audit", "n": 0}]},
+           "best-practices": {"score": 96, "fail": []}}
+    conn.execute("UPDATE page_vitals SET diag_json=?, cat_json=?, agentic_json=?, lh_version='13.6.0'"
+                 " WHERE project_id=? AND url=? AND strategy='mobile'",
+                 (json.dumps(diag, ensure_ascii=False), json.dumps(cat),
+                  json.dumps({"pass": 2, "total": 4, "fail": ["llms-txt", "ard-schema"]}), pid, vurl))
+    # 앞 측정 — 같은 범위(이 페이지 값)에서 LCP 3.0초였다 → 지금 4.2초(+40%)
+    db.write_page_vitals(conn, pid, "2026-05-20", [
+        {"url": vurl, "strategy": "mobile", "error": None, "origin_fallback": 0,
+         "field_lcp_ms": 3000, "field_inp_ms": 300, "field_cls": 0.24, "field_ttfb_ms": 880,
+         "lab_score": 45}])
+    db.write_page_vital_shots(conn, pid, d, [
+        {"url": vurl, "strategy": "mobile", "shot": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="}])
+    db.write_crux_history(conn, pid, [(vurl, 0, "PHONE", "lcp_ms", end, v) for end, v in (
+        ("2026-01-03", 2600.0), ("2026-03-07", 3100.0), ("2026-05-30", 4200.0))])
+    # 색인 — 하나는 색인됐고 하나는 못 들어갔다. 못 들어간 쪽은 구글이 찾은 길이 없다.
+    db.write_index_status(conn, pid, d, [
+        {"url": vurl, "verdict": "PASS", "coverage_state": "Submitted and indexed",
+         "referring_urls_json": json.dumps([f"https://{SITES[1]}.example/"]), "crawled_as": "MOBILE",
+         "sitemaps_json": "[]"},
+        {"url": f"https://{SITES[1]}.example/lost", "verdict": "NEUTRAL",
+         "coverage_state": "Discovered - currently not indexed", "robots_txt_state": "ALLOWED",
+         "page_fetch_state": "SUCCESSFUL", "referring_urls_json": "[]", "sitemaps_json": "[]",
+         "crawled_as": "MOBILE"}])
+    sm = {"path": f"https://{SITES[1]}.example/{SITEMAP_PATH}", "type": "sitemap", "is_index": 0,
+          "is_pending": 0, "last_downloaded": "2026-05-30T00:00:00Z", "warnings": 0, "submitted": 120}
+    db.write_gsc_sitemaps(conn, pid, "2026-05-20", [{**sm, "errors": 2}])
+    db.write_gsc_sitemaps(conn, pid, d, [{**sm, "errors": 5}])
+    # GA4 — 채널 조회만 된 사이트(유기 스냅샷 없음). 전체 세션 130 에 전환 0 = 전환 이벤트 미설정.
+    db.write_ga4_channels(conn, pid, d, 28, [("Organic Search", 30, 25, 0.0), ("Direct", 90, 70, 0.0),
+                                             ("AI Assistant", 10, 9, 0.0)], (130, 98, 0.0))
+    db.write_ga4_ai_channel(conn, pid, d, 28, [("chatgpt.com", 6, True), (AI_CH_MISS, 4, False)])
+    db.write_ga4_daily(conn, pid, [("2026-05-30", 12, 10, 0), ("2026-05-31", 18, 15, 0)])
 
 
 def _plays(conn, pid: int) -> None:

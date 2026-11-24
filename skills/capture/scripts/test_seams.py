@@ -1037,17 +1037,26 @@ def test_seam_20_speed_thresholds_single_source():
     site = (ctx["views"] / "site.html").read_text("utf-8")
     assert "R.lcp_good_ms" in site and "R.inp_good_ms" in site and "R.cls_good" in site, (
         "site.html 이 속도 기준을 페이로드에서 안 받는다")
+    assert "R.ttfb_good_ms" in site, "site.html 이 TTFB 기준을 페이로드에서 안 받는다"
+    # 요청문의 기준 줄도 같은 상수다 — 줄에 숫자를 직접 적으면 판정과 두 벌이 된다
+    import inspect
+
+    import brief
+    bl = inspect.getsource(brief._vitals_lines)
+    for const in ("LCP_GOOD_MS", "INP_GOOD_MS", "CLS_GOOD", "TTFB_GOOD_MS"):
+        assert f"scoring.{const}" in bl, f"brief 기준 줄이 scoring.{const} 를 안 읽는다"
     # 속도 섹션 안에 기준 숫자 리터럴이 없어야 한다
     i = site.index("속도 (Core Web Vitals)")
     j = site.index("let ST_AUDITS", i)
-    for lit in ("2500", "2.5", "200ms 이내", "0.1 이내"):
+    for lit in ("2500", "2.5", "200ms 이내", "0.1 이내", "800ms"):
         assert lit not in site[i:j], f"속도 기준 숫자가 화면에 박혀 있다: {lit}"
     # gather() 가 실제로 실어 보내는 값을 본다 — 소스에 그렇게 적혀 있는지가 아니라.
     rules = _gather("_seam20").get("rules") or {}
     for key, const in (("lcp_good_ms", "LCP_GOOD_MS"), ("inp_good_ms", "INP_GOOD_MS"),
-                       ("cls_good", "CLS_GOOD")):
+                       ("cls_good", "CLS_GOOD"), ("ttfb_good_ms", "TTFB_GOOD_MS")):
         assert rules.get(key) == getattr(scoring, const), (
             f"gather() 의 rules 가 {key} 를 scoring.{const} 로 안 싣는다: {rules.get(key)!r}")
+    assert scoring.TTFB_GOOD_MS == 800, "TTFB '좋음' 경계(web.dev/articles/ttfb)와 다르다"
     assert (scoring.LCP_GOOD_MS, scoring.INP_GOOD_MS, scoring.CLS_GOOD) == (2500, 200, 0.1), (
         "구글이 공개한 기준값과 다르다 — 바꿀 이유가 있으면 여기 주석에 적는다")
 

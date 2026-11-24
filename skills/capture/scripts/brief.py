@@ -1203,6 +1203,53 @@ def _vitals_matter(ctx: dict, url: str | None, kind: str, shape: str) -> bool:
     return not rows or not all(r.get("field_verdict") == "FAST" and not r.get("error") for r in rows)
 
 
+def _vital_val(metric: str, v) -> str:
+    """지표 값 표기 — LCP 는 초, INP·TTFB 는 ms, CLS 는 그대로."""
+    if metric in ("LCP", "lcp_ms"):
+        return _ms(v)
+    if metric in ("CLS", "cls"):
+        return _n(v)
+    return f"{_n(round(v) if isinstance(v, float) else v)}ms"
+
+
+_CRUX_NAMES = (("lcp_ms", "LCP"), ("inp_ms", "INP"), ("cls", "CLS"), ("ttfb_ms", "TTFB"))
+
+
+def _vitals_history_lines(ctx: dict, url: str | None) -> list[str]:
+    """속도 줄에 붙는 '전과 견준 것' — 지난 측정 대비 나빠진 것(scoring.vitals_regressions)과
+    CrUX 주별 추세(scoring.crux_trend). 재료가 없으면 아무 줄도 안 만든다."""
+    L = []
+    reg = (ctx.get("vitals_regress") or {}).get(url or "") or {}
+    trend = ctx.get("crux_trend") or {}
+    own = trend.get(url or "")
+    from urllib.parse import urlsplit
+    host = urlsplit(url or "")
+    series = own or trend.get(f"{host.scheme}://{host.netloc}") or {}
+    import collect_vitals          # 기기 → CrUX 표기의 정본
+    for dev, name in (("mobile", "모바일"), ("desktop", "데스크톱")):
+        g = reg.get(dev)
+        if g:
+            parts = [f"{c['metric']} {_vital_val(c['metric'], c['prev'])} → "
+                     f"{_vital_val(c['metric'], c['cur'])}(+{c['pct']}%"
+                     + (", 기준 넘음" if c.get("over") else "") + ")" for c in g.get("changes") or []]
+            if g.get("lab"):
+                parts.append(f"실험실 점수 {g['lab']['prev']} → {g['lab']['cur']}"
+                             f"(-{g['lab']['drop']}점)")
+            L.append(f"  - {name} 지난 측정({g.get('prev_date') or '날짜 미상'}) 대비 나빠짐: "
+                     + " · ".join(parts))
+        by = series.get(collect_vitals.CRUX_FORM[dev]) or {}
+        said = []
+        for col, label in _CRUX_NAMES:
+            tn = scoring.crux_then_now(by.get(col))
+            if tn:
+                said.append(f"{label} {_vital_val(col, tn['then'][1])}({tn['then'][0]}) → "
+                            f"{_vital_val(col, tn['now'][1])}({tn['now'][0]})")
+        if said:
+            L.append(f"  - {name} 현장 추세(CrUX 주별 p75{'' if own else ' · 사이트 전체'}): "
+                     + " · ".join(said))
+    return L
+
+
 def _vitals_lines(ctx: dict, url: str | None) -> list[str]:
     """이 페이지의 속도 — 기기별로 나란히. 없으면 아무 줄도 안 만든다.
 
@@ -1228,6 +1275,8 @@ def _vitals_lines(ctx: dict, url: str | None) -> list[str]:
                    else "이 페이지의 실제 사용자 28일치")
             L.append(f"  - {name} 현장({src}): LCP {_ms(r.get('field_lcp_ms'))} · "
                      f"INP {_n(r.get('field_inp_ms'))}ms · CLS {_n(r.get('field_cls'))}"
+                     + (f" · TTFB {_n(r['field_ttfb_ms'])}ms"
+                        if r.get("field_ttfb_ms") is not None else "")
                      + (f" · 구글 판정 {r['field_verdict']}" if r.get("field_verdict") else ""))
         else:
             L.append(f"  - {name} 현장: 실제 사용자 표본이 모자라 값이 없습니다"
@@ -1235,8 +1284,10 @@ def _vitals_lines(ctx: dict, url: str | None) -> list[str]:
         L.append(f"  - {name} 실험실(지금 1회): 점수 {_n(r.get('lab_score'))}/100 · "
                  f"LCP {_ms(r.get('lab_lcp_ms'))} · CLS {_n(r.get('lab_cls'))} · "
                  f"TBT {_n(r.get('lab_tbt_ms'))}ms")
+    L += _vitals_history_lines(ctx, url)
     L.append(f"  - 기준: LCP {_ms(scoring.LCP_GOOD_MS)} 이내 · INP {scoring.INP_GOOD_MS}ms "
-             f"이내 · CLS {scoring.CLS_GOOD} 이내. 고친 뒤 바로 움직이는 것은 실험실 "
+             f"이내 · CLS {scoring.CLS_GOOD} 이내 · TTFB {scoring.TTFB_GOOD_MS}ms 이내"
+             "(현장 값만). 고친 뒤 바로 움직이는 것은 실험실 "
              "값이고, 현장 값은 28일이 지나야 따라옵니다.")
     return L
 
@@ -2552,6 +2603,8 @@ def _ev_device(o, ctx, pages):
                  f"{scoring.INP_GOOD_MS}ms"],
                 ["CLS (현장)", _n(m.get("field_cls")), _n(d.get("field_cls")),
                  str(scoring.CLS_GOOD)],
+                ["TTFB (현장)", f"{_n(m.get('field_ttfb_ms'))}ms", f"{_n(d.get('field_ttfb_ms'))}ms",
+                 f"{scoring.TTFB_GOOD_MS}ms"],
                 ["점수 (실험실)", _n(m.get("lab_score")), _n(d.get("lab_score")), "90"],
                 ["LCP (실험실)", cell(m, "lab_lcp_ms"), cell(d, "lab_lcp_ms"),
                  _ms(scoring.LCP_GOOD_MS)],
@@ -2571,7 +2624,33 @@ def _ev_index(o, ctx, pages):
         return []
     said = " · ".join(x for x in (r.get("coverage_state"), r.get("verdict")) if x)
     return [f"- 구글 응답(URL 검사): {said or '-'} · 갈래: {r.get('bucket')}"]\
-        + ([f"- 세부: {r['detail']}"] if r.get("detail") else [])
+        + ([f"- 세부: {r['detail']}"] if r.get("detail") else [])\
+        + _index_evidence_lines(ctx, o["target"])
+
+
+def _index_evidence_lines(ctx: dict, url: str) -> list[str]:
+    """URL 검사가 같이 준 근거(scoring.index_evidence) — 구글이 이 주소를 어디서 알았나,
+    어느 크롤러로 읽었나, 구조화 데이터를 어떻게 판정했나. 안 받은 행은 아무 줄도 안 만든다."""
+    ev = (ctx.get("index_evidence") or {}).get(url) or {}
+    L = []
+    ref, sm = ev.get("referring") or [], ev.get("sitemaps") or []
+    if ev.get("found") == "none":
+        L.append("- 구글이 이 주소를 찾은 길: 사이트맵에도 없고, 이 주소를 가리키는 페이지도 "
+                 "구글이 모릅니다. 구글이 다시 찾아올 길이 없는 상태입니다.")
+    elif ev.get("found") == "sitemap":
+        L.append(f"- 구글이 이 주소를 찾은 길: 사이트맵({', '.join(sm[:2])})뿐입니다. 이 주소를 "
+                 "가리키는 페이지는 구글이 모릅니다.")
+    elif ev.get("found") == "links":
+        L.append(f"- 구글이 이 주소를 찾은 길: 가리키는 페이지 {_n(ev.get('referring_n'))}개"
+                 f"({', '.join(ref[:3])})"
+                 + (f" · 사이트맵 {', '.join(sm[:2])}" if sm else " · 사이트맵에는 없음"))
+    if ev.get("crawled_as"):
+        L.append("- 구글이 읽은 크롤러: " + ("모바일" if ev["crawled_as"] == "MOBILE" else "데스크톱")
+                 + (f" · 마지막 크롤 {str(ev['last_crawled'])[:10]}" if ev.get("last_crawled") else ""))
+    line = scoring.rich_results_line(ev.get("rich"))
+    if line:
+        L.append(f"- {scoring.GOOGLE_VERDICT_TAG}(URL 검사): {line}")
+    return L
 
 
 def _ev_coverage(o, ctx, pages):
