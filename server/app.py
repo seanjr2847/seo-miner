@@ -49,6 +49,7 @@ import db
 import doctor    # setup 스킬의 진단 — dashboard 가 이미 skills/setup/scripts 를 sys.path 에 얹는다
 import exports
 import gen_prompts
+import http_adapter   # 주소 판정(is_public_ip) 한 벌 — 등록 검사와 가져오기가 같이 쓴다
 import identity
 import pages
 import remote      # graft — 로컬 플러그인이 올린 측정치를 테넌트 brain 에 더한다
@@ -588,9 +589,10 @@ def _site_url(raw) -> tuple[str, str]:
         infos = socket.getaddrinfo(host, None)
     except OSError:
         infos = []          # 아직 안 열린 도메인일 수 있다 — 막지 않는다(peek 이 '못 열었다'고 말한다)
+    # 여기는 등록 때 한 번 보는 빠른 거절일 뿐이다 — 실제 방어는 가져올 때마다 도는
+    # http_adapter 의 주소 검사다(리다이렉트·등록 뒤 DNS 변경은 여기서 못 본다). 판정은 한 벌.
     for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if not ip.is_global:
+        if not http_adapter.is_public_ip(info[4][0]):
             raise HTTPException(status_code=400, detail="공개된 사이트 주소만 등록할 수 있습니다.")
     return f"{scheme}://{host}/", host.removeprefix("www.")
 

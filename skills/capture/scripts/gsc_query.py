@@ -110,8 +110,12 @@ def search(service, prop: str, start: str, end: str, dims: list, limit: int,
     return rows
 
 
-def totals(rows: list) -> dict:
-    """행 합계 — 비교(compare)가 두 창을 한 줄로 요약할 때 쓴다.
+def rows_sum(rows: list) -> dict:
+    """**돌려받은 행만** 더한 값 — 사이트 합계가 아니다(그건 true_totals).
+
+    행은 --limit 에서 잘리고(클릭 순 상위 N), 검색어·페이지로 묶으면 API 가 일부 데이터를
+    떨군다. 그래서 이 값은 늘 진짜 합계보다 작거나 같다 — 예전에는 이것을 `totals` 라는
+    이름으로 내보내 "지난 28일 클릭 합계"로 읽혔다.
 
     ctr·position 은 합이 아니라 노출 가중 평균이다. 단순 평균을 내면 노출 3짜리
     키워드가 노출 3만짜리와 같은 무게를 가져 값이 통째로 거짓이 된다.
@@ -122,6 +126,39 @@ def totals(rows: list) -> dict:
            if imp else None)
     return {"clicks": clicks, "impressions": imp,
             "ctr": (clicks / imp) if imp else None, "position": pos}
+
+
+def true_totals(service, prop: str, start: str, end: str, dims: list,
+                filters: list, state: str) -> dict:
+    """같은 창·같은 필터의 **진짜 합계** — 차원 없이 한 번 더 묻는다.
+
+    차원을 안 주면 API 가 전부를 한 행으로 합쳐 준다("If no dimensions are specified, all
+    values will be combined into a single row"), 필터는 묶지 않는 차원에도 걸 수 있다("You
+    can filter by any dimension listed here, even if you are not grouping by that dimension")
+    — https://developers.google.com/webmaster-tools/v1/searchanalytics/query
+
+    집계 기준은 행과 맞춘다. 페이지로 묶거나 거르면 행은 페이지 기준(byPage)으로 세어진다
+    ("If you group or filter by page, you cannot aggregate by property" — 같은 문서). 그때
+    합계만 속성 기준으로 받으면 행과 합계가 서로 다른 것을 센다. 그래서 행에 page 차원이
+    있으면 합계도 byPage 로 청한다(차원 없는 byPage 는 공식 가이드의 '정확한 합계' 틀이다
+    — https://developers.google.com/webmaster-tools/v1/how-tos/all-your-data).
+    응답의 실제 기준은 `aggregation` 에 그대로 싣는다.
+    """
+    body = {"startDate": start, "endDate": end, "dataState": state}
+    if filters:
+        body["dimensionFilterGroups"] = filters
+    if "page" in dims:
+        body["aggregationType"] = "byPage"
+    resp = service.searchanalytics().query(siteUrl=prop, body=body).execute()
+    r = (resp.get("rows") or [{}])[0]
+    return {"clicks": r.get("clicks") or 0, "impressions": r.get("impressions") or 0,
+            "ctr": r.get("ctr"), "position": r.get("position"),
+            "aggregation": resp.get("responseAggregationType")}
+
+
+def _top_rows(rows: list, limit: int) -> dict:
+    """행 합(rows_sum)에 '몇 행을 더한 것인지'를 붙인다 — 읽는 쪽이 합계로 착각하지 않게."""
+    return {**rows_sum(rows), "rows": len(rows), "limit": min(limit, MAX_ROWS)}
 
 
 def cmd_properties(a) -> dict:
@@ -135,10 +172,13 @@ def cmd_properties(a) -> dict:
 def cmd_search(a) -> dict:
     prop, (start, end) = resolve_property(a), window(a)
     dims = [d.strip() for d in a.dim.split(",") if d.strip()]
-    rows = search(get_service(), prop, start, end, dims, a.limit,
-                  parse_filters(a.filter), a.state)
+    svc, filters = get_service(), parse_filters(a.filter)
+    rows = search(svc, prop, start, end, dims, a.limit, filters, a.state)
+    # totals = 창 전체의 진짜 합계(차원 없는 질의). top_rows_sum = 아래 rows 만 더한 값.
     return {"property": prop, "start": start, "end": end, "dimensions": dims,
-            "data_state": a.state, "totals": totals(rows), "rows": rows}
+            "data_state": a.state,
+            "totals": true_totals(svc, prop, start, end, dims, filters, a.state),
+            "top_rows_sum": _top_rows(rows, a.limit), "rows": rows}
 
 
 def cmd_compare(a) -> dict:
@@ -176,10 +216,17 @@ def cmd_compare(a) -> dict:
                                if b and b.get("position") and r["position"] else None),
             "new": b is None})
     changes.sort(key=lambda c: -abs(c["clicks_delta"]))
+    # 두 창의 totals 는 각각 진짜 합계다 — "지난달보다 클릭이 얼마" 는 이 둘로 말한다.
+    # 상위 N행의 합(top_rows_sum)끼리 빼면 순위권 밖으로 밀린 검색어의 클릭이 통째로 빠진다.
     return {"property": prop, "dimensions": dims, "data_state": a.state,
-            "current": {"start": cur_start, "end": cur_end, "totals": totals(cur)},
+            "current": {"start": cur_start, "end": cur_end,
+                        "totals": true_totals(svc, prop, cur_start, cur_end, dims,
+                                              filters, a.state),
+                        "top_rows_sum": _top_rows(cur, a.limit)},
             "previous": {"start": str(prev_start), "end": str(prev_end),
-                         "totals": totals(prev)},
+                         "totals": true_totals(svc, prop, str(prev_start), str(prev_end),
+                                               dims, filters, a.state),
+                         "top_rows_sum": _top_rows(prev, a.limit)},
             "changes": changes}
 
 
@@ -276,11 +323,80 @@ def _selfcheck() -> None:
     assert parse_filters(["page:https://x.com/a"])[0]["filters"][0]["expression"] \
         == "https://x.com/a"
 
-    t = totals([{"clicks": 1, "impressions": 10, "ctr": 0.1, "position": 30.0},
-                {"clicks": 9, "impressions": 90, "ctr": 0.1, "position": 10.0}])
+    t = rows_sum([{"clicks": 1, "impressions": 10, "ctr": 0.1, "position": 30.0},
+                  {"clicks": 9, "impressions": 90, "ctr": 0.1, "position": 10.0}])
     assert t["clicks"] == 10 and t["impressions"] == 100
     assert abs(t["position"] - 12.0) < 1e-9, t["position"]   # 단순평균 20 이면 거짓
     assert abs(t["ctr"] - 0.1) < 1e-9
+    _selfcheck_totals()
+
+
+def _selfcheck_totals() -> None:
+    """totals 는 창 전체의 진짜 합계(차원 없는 질의), 상위 N행의 합은 top_rows_sum 이다.
+
+    가짜 서비스: 검색어 5개(클릭 50·40·30·20·10 = 150) + 검색어로 안 잡히는 클릭 50 = 200.
+    --limit 2 면 행은 2개(합 90)인데, 예전에는 그 90 이 `totals` 로 나갔다."""
+    calls = []
+    ALL = [("a", 50), ("b", 40), ("c", 30), ("d", 20), ("e", 10)]
+
+    class Q:
+        def __init__(self, body):
+            self.body = body
+
+        def execute(self):
+            b = self.body
+            calls.append(b)
+            if not b.get("dimensions"):
+                return {"rows": [{"clicks": 200, "impressions": 4000, "ctr": 0.05, "position": 8.5}],
+                        "responseAggregationType": b.get("aggregationType") or "byProperty"}
+            return {"rows": [{"keys": [k] * len(b["dimensions"]), "clicks": c,
+                              "impressions": c * 10, "ctr": 0.1, "position": 5.0}
+                             for k, c in ALL[: b["rowLimit"]]]}
+
+    class Svc:
+        def searchanalytics(self):
+            return self
+
+        def query(self, siteUrl, body):
+            return Q(body)
+
+    class A:
+        property, project = "sc-domain:x.com", None
+        start, end, days = "2026-01-01", "2026-01-28", 28
+        dim, limit, filter, state = "query", 2, ["page:contains:/blog/"], "all"
+
+    g = globals()
+    real = g["get_service"]
+    g["get_service"] = lambda: Svc()
+    try:
+        out = cmd_search(A())
+        assert out["totals"]["clicks"] == 200 and out["totals"]["impressions"] == 4000, out["totals"]
+        assert out["top_rows_sum"]["clicks"] == 90 and out["top_rows_sum"]["rows"] == 2, out["top_rows_sum"]
+        assert out["top_rows_sum"]["limit"] == 2
+        assert out["totals"]["aggregation"] == "byProperty", out["totals"]
+        tot = [b for b in calls if not b.get("dimensions")]
+        assert len(tot) == 1 and "rowLimit" not in tot[0] and "aggregationType" not in tot[0], tot
+        # 합계 질의도 같은 창·같은 필터·같은 확정 상태여야 한다 — 아니면 다른 것을 센다
+        assert tot[0]["dimensionFilterGroups"] == parse_filters(A.filter) and tot[0]["dataState"] == "all"
+        assert (tot[0]["startDate"], tot[0]["endDate"]) == ("2026-01-01", "2026-01-28")
+
+        calls.clear()
+        A.dim = "query,page"                       # 페이지로 묶으면 합계도 페이지 기준으로
+        out = cmd_search(A())
+        tot = [b for b in calls if not b.get("dimensions")]
+        assert tot[0].get("aggregationType") == "byPage" and out["totals"]["aggregation"] == "byPage", tot
+
+        calls.clear()
+        A.dim = "query"
+        cmp_ = cmd_compare(A())
+        for side, (st, en) in (("current", ("2026-01-01", "2026-01-28")),
+                               ("previous", ("2025-12-04", "2025-12-31"))):
+            assert cmp_[side]["totals"]["clicks"] == 200, cmp_[side]
+            assert cmp_[side]["top_rows_sum"]["clicks"] == 90, cmp_[side]
+            assert any(not b.get("dimensions") and (b["startDate"], b["endDate"]) == (st, en)
+                       for b in calls), (side, calls)
+    finally:
+        g["get_service"] = real
     print("gsc_query selfcheck ok")
 
 

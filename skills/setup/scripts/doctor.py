@@ -53,6 +53,11 @@ OPTIONAL_SKILLS = {
 #  깨끗한 머신에서 "7개 중 8개가 설치되어 있지 않습니다"를 찍었다.)
 ALL_SKILLS = {**MARKETING_SKILLS, **OPTIONAL_SKILLS}
 SKILLS_REPO = "https://github.com/coreyhaines31/marketingskills"
+# 그 저장소가 선언한 마켓플레이스·플러그인 이름(.claude-plugin/marketplace.json 의 name 과
+# plugins[].name). 설치(install_skills)와 탐지(find_skill)가 이 한 벌을 쓴다 — 플러그인 캐시는
+# <마켓플레이스>/<플러그인>/<버전>/skills/ 꼴이라, 이 두 이름이 곧 "위임 상대의 것"이라는 표식이다.
+SKILLS_MARKETPLACE = "marketingskills"
+SKILLS_PLUGIN = "marketing-skills"
 
 # 버킷 라벨 — doctor 화면과 산문이 **같은 말**을 쓰게 하는 정본. 산문이 이걸
 # 다시 타이핑하면 doctor 가 찍지도 않는 머리말을 찾게 만든다(실제로 그랬다:
@@ -262,7 +267,9 @@ GSC_FIX_WEB = {
 }
 
 
-def find_skill(name: str) -> bool:
+def find_skill(name: str, *, home: Path | None = None, cwd: Path | None = None) -> bool:
+    """위임 스킬 `name` 이 깔려 있나. home·cwd 는 검사가 갈아끼우는 자리(기본은 실제 홈·작업 폴더)."""
+    home, cwd = home or Path.home(), cwd or Path.cwd()
     # $CLAUDE_SKILLS_DIR 가 걸려 있으면 거기가 유일한 탐색 기준이다 (테스트 격리 및
     # 사용자 지정 경로). 없을 때만 기본 홈/플러그인 캐시/현재 작업 디렉토리를 순서대로 본다.
     env_dir = os.environ.get("CLAUDE_SKILLS_DIR")
@@ -270,21 +277,24 @@ def find_skill(name: str) -> bool:
         return (Path(env_dir) / name / "SKILL.md").exists()
 
     # 1. ~/.claude/skills/
-    if (Path.home() / ".claude" / "skills" / name / "SKILL.md").exists():
+    if (home / ".claude" / "skills" / name / "SKILL.md").exists():
         return True
 
-    # 2. ~/.claude/plugins/cache/*/*/*/skills/ (플러그인이 동봉한 경우)
-    cache = Path.home() / ".claude" / "plugins" / "cache"
+    # 2. 플러그인 캐시 — **위임 대상 팩의 것만** 센다(<마켓플레이스>/<플러그인>/<버전>/skills/).
+    #    예전에는 */*/*/skills 로 아무 팩이나 훑어서, claude-seo 의 `seo-audit`(주소 하나만
+    #    받는 다른 스킬)이 깔려 있으면 '설치됨'으로 셌다 — 위임이 조용히 어긋났다.
+    #    1·3 번 자리는 사용자가 직접 놓은 곳이라 팩 이름이 안 남는다(출처를 가릴 수 없다).
+    cache = home / ".claude" / "plugins" / "cache" / SKILLS_MARKETPLACE / SKILLS_PLUGIN
     if cache.exists():
         try:
-            for s_dir in cache.glob("*/*/*/skills"):
+            for s_dir in cache.glob("*/skills"):
                 if (s_dir / name / "SKILL.md").exists():
                     return True
         except Exception:
             pass
 
     # 3. <현재 작업 디렉토리>/.claude/skills/
-    if (Path.cwd() / ".claude" / "skills" / name / "SKILL.md").exists():
+    if (cwd / ".claude" / "skills" / name / "SKILL.md").exists():
         return True
 
     return False

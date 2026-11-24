@@ -5660,6 +5660,27 @@ def test_seam_202_ai_engine_table_single_source():
     assert not hits, f"엔진 표 사본: {hits}"
 
 
+def test_seam_w01_spend_cap_names_are_one_set_on_engine_and_hosted():
+    """지출 상한의 env 이름은 엔진(run_all.SPEND_CAPS)이 정본이고, 호스팅 설정(server/settings.py)
+    이 같은 이름을 전부 — 그리고 그것만 — 싣는다.
+
+    엔진은 그 이름의 env 를 직접 읽는다. 설정 목록에만 있고 엔진이 안 읽는 이름은 넣어도 아무 일도
+    안 일어나는 상한이고(운영자는 걸었다고 믿는다), 엔진만 아는 이름은 배포 문서에 없는 스위치다.
+    기본값은 전부 0(상한 없음) — 값은 운영자가 정한다."""
+    import run_all
+    sys.path.insert(0, str(ROOT / "server"))
+    import settings
+    engine = {name for name, _, _ in run_all.SPEND_CAPS}
+    hosted = {n for n in settings.SETTINGS if n.startswith("SEOMINER_SPEND_CAP_")}
+    assert engine == hosted, f"엔진만: {sorted(engine - hosted)} / 설정만: {sorted(hosted - engine)}"
+    assert len(run_all.SPEND_CAPS) == len(engine), "같은 이름이 두 번 있다"
+    assert {(s, w) for _, s, w in run_all.SPEND_CAPS} == set(run_all._SPEND_WORDS), \
+        "사유 문장이 없는 (범위, 창)이 있다"
+    for n in hosted:
+        assert settings.SETTINGS[n].default == "0" and not settings.SETTINGS[n].required, n
+        assert settings.num(n) == 0.0 or n in __import__("os").environ, n
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

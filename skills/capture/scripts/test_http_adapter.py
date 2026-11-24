@@ -20,6 +20,10 @@ import collect_crawl  # noqa: E402
 import collect_page  # noqa: E402
 import http_adapter  # noqa: E402
 
+# 이 파일은 127.0.0.1 의 로컬 서버로 잰다 — 운영 기본값(사설·루프백 차단)을 여기서만 푼다.
+# 차단 자체는 test_http_guard.py 가 본다.
+http_adapter.ALLOW_PRIVATE = True
+
 UA_A = {"User-Agent": "test/a"}
 UA_B = {"User-Agent": "test/b"}
 

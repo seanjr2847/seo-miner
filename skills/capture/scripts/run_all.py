@@ -47,10 +47,12 @@ StageResult 를 그대로 호출자에게 넘긴다.
 import argparse
 import functools
 import inspect
+import os
 import sys
 import threading
 from collections import namedtuple
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from datetime import datetime, timezone
 from pathlib import Path
 
 # db import를 통해 CAPTURE_HOME/env 자동 로딩 및 콘솔 UTF-8 설정 적용
@@ -505,6 +507,104 @@ def paid_estimate(name: str, project: str | None = None) -> float:
     return 0.0
 
 
+# ── 지출 상한 ───────────────────────────────────────────────────────────────
+# 잔액 카나리아는 "돈이 없어서 실패할 단계"만 막는다. 돈이 **있으면** 얼마든 쓴다 — 주기를
+# 잘못 잡았거나 사이트를 많이 붙였을 때 멈추는 자리가 없었다. 여기는 그 자리다:
+# runs.cost_estimate_usd 의 합(이미 쓴 돈)을 상한과 견줘, 넘었으면 유료 단계를 건너뛴다.
+#
+# 범위 둘 × 창 둘. 'tenant' 는 **이 보관함 전체**다 — 호스팅은 가입자마다 보관함이 하나라
+# 테넌트 한 명이고, 로컬은 이 PC 다. 창은 UTC 달력의 오늘·이번 달(runs.started_at 이 UTC 다).
+# 값은 환경 변수로 받고 **호출 시점에** 읽는다(호스팅에서 그 이름의 정본은 server/settings.py —
+# test_seams 가 두 쪽을 대조한다). 0·미설정·망가진 값은 '상한 없음'이다: 로컬은 사용자 자기
+# 돈이라 기본으로 막지 않고, 호스팅 운영자가 값을 넣는다.
+SPEND_CAPS = (
+    ("SEOMINER_SPEND_CAP_SITE_DAY_USD", "site", "day"),
+    ("SEOMINER_SPEND_CAP_SITE_MONTH_USD", "site", "month"),
+    ("SEOMINER_SPEND_CAP_TENANT_DAY_USD", "tenant", "day"),
+    ("SEOMINER_SPEND_CAP_TENANT_MONTH_USD", "tenant", "month"),
+)
+_SPEND_WORDS = {("site", "day"): "이 사이트의 오늘", ("site", "month"): "이 사이트의 이번 달",
+                ("tenant", "day"): "전체 사이트의 오늘", ("tenant", "month"): "전체 사이트의 이번 달"}
+
+
+def spend_caps() -> dict[tuple[str, str], float]:
+    """지금 걸려 있는 상한 {(범위, 창): 달러}. 0 이하·미설정·숫자가 아닌 값은 뺀다(상한 없음)."""
+    out: dict[tuple[str, str], float] = {}
+    for env, scope, window in SPEND_CAPS:
+        try:
+            v = float(os.environ.get(env) or 0)
+        except ValueError:
+            v = 0.0
+        if v > 0:
+            out[(scope, window)] = v
+    return out
+
+
+def spent_usd(conn, project_id: int | None, since: str) -> float:
+    """since(db.now 꼴 UTC) 부터 쓴 돈 — runs.cost_estimate_usd 의 합. project_id 가 None 이면 보관함 전체."""
+    sql, args = "SELECT COALESCE(SUM(cost_estimate_usd), 0) FROM runs WHERE started_at >= ?", [since]
+    if project_id is not None:
+        sql += " AND project_id = ?"
+        args.append(project_id)
+    return float(conn.execute(sql, args).fetchone()[0] or 0.0)
+
+
+def spend_blocked(conn, project: str | None, names, *, estimate=None, caps=None,
+                  now=None) -> dict[str, str]:
+    """지출 상한에 걸린 유료 단계 {단계: 사유}. names 는 돌릴 순서의 유료 단계 이름.
+
+    단계마다 '이미 쓴 돈 + 이번 런에서 앞 단계가 쓸 돈(추정)'을 상한과 견준다:
+      · 그 합이 상한 이상이면 막는다(이미 닿았다).
+      · 이 단계의 추정 비용을 알면(paid_estimate — ai·plays) 그것을 더해 넘는지도 본다.
+        추정이 없는 단계(DataForSEO)는 0 으로 친다 — 그래서 상한은 최대 런 한 번만큼 넘칠 수 있다.
+    판정은 런을 시작할 때 한 번이다(preflight). 도는 중에 다시 재지 않는다."""
+    caps = spend_caps() if caps is None else caps
+    if not caps:
+        return {}
+    estimate = estimate or paid_estimate
+    now = now or datetime.now(timezone.utc)
+    start = {"day": now.strftime("%Y-%m-%dT00:00:00Z"), "month": now.strftime("%Y-%m-01T00:00:00Z")}
+    pid = None
+    if project:
+        row = conn.execute("SELECT id FROM projects WHERE name=?", (project,)).fetchone()
+        pid = row[0] if row else None
+    used: dict[tuple[str, str], float] = {}
+    for (scope, window), _cap in caps.items():
+        if scope == "site" and pid is None:
+            continue                       # 사이트를 모르면 사이트 상한은 못 본다(테넌트 상한만)
+        used[(scope, window)] = spent_usd(conn, pid if scope == "site" else None, start[window])
+    blocked: dict[str, str] = {}
+    planned = 0.0
+    for n in names:
+        est = float(estimate(n, project) or 0.0)
+        for key, spent in used.items():
+            cap, have = caps[key], spent + planned
+            if have >= cap or have + est > cap:
+                blocked[n] = (f"지출 상한 — {_SPEND_WORDS[key]} 유료 지출 ${have:.2f}"
+                              + (f" + 이 단계 추정 ${est:.2f}" if est else "")
+                              + f" 이 상한 ${cap:.2f} 에 닿았습니다 (UTC 기준)")
+                break
+        else:
+            planned += est
+    return blocked
+
+
+def _spend_preflight(names: list[str], project: str | None) -> dict[str, str]:
+    """preflight 가 부르는 자리 — 보관함을 열어 spend_blocked 를 묻는다. 상한이 없으면 열지도 않는다.
+    읽기가 실패하면 아무것도 막지 않는다(카나리아와 같은 규칙 — 점검이 수집을 죽이면 안 된다)."""
+    if not names or not spend_caps():
+        return {}
+    try:
+        conn = db.connect()
+        try:
+            return spend_blocked(conn, project, names)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[사전점검] 지출 합계를 못 읽었습니다 ({e}) — 그대로 진행합니다.")
+        return {}
+
+
 def preflight(stages=STAGES, project: str | None = None) -> dict[str, str]:
     """유료 단계를 돌리기 전 한 번. 반환: {건너뛸 단계: 사유}.
 
@@ -544,6 +644,11 @@ def preflight(stages=STAGES, project: str | None = None) -> dict[str, str]:
                 print(f"[경고] {msg} — {n} 단계를 건너뜁니다.")
                 blocked[n] = msg
                 need -= paid_estimate(n, project)      # 안 쓸 돈 — 뒤 단계 몫에서 뺀다
+    # 지출 상한 — 잔액이 있어도 정해 둔 만큼만 쓴다. 이미 막힌 단계는 그 사유를 그대로 둔다.
+    for n, msg in _spend_preflight([s.name for s in stages if s.is_paid and s.name not in blocked],
+                                   project).items():
+        print(f"[경고] {msg} — {n} 단계를 건너뜁니다.")
+        blocked[n] = msg
     return blocked
 
 

@@ -39,8 +39,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import doctor  # noqa: E402
 
 MARKETPLACE_REPO = "coreyhaines31/marketingskills"
-MARKETPLACE_NAME = "marketingskills"
-PLUGIN_NAME = "marketing-skills"
+MARKETPLACE_NAME = doctor.SKILLS_MARKETPLACE      # 정본은 doctor — 찾는 쪽과 같은 이름이어야 한다
+PLUGIN_NAME = doctor.SKILLS_PLUGIN
 TIMEOUT_SECONDS = 300
 
 
