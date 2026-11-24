@@ -529,11 +529,12 @@ class _Page(HTMLParser):
         self.og: list[str] = []
         self.mixed = self.http_links = self.empty_links = 0
         self.anchors: list[str] = []             # 링크 글자(앞 ANCHOR_KEEP 개) — 일반 앵커는 끝에 센다
-        self._a: dict | None = None              # 지금 열린 <a>: {"text": [], "label": bool}
+        # (이름 주의: 크롤의 하위 클래스 _CrawlPage 가 _a·alts 를 제 뜻으로 쓴다 — 겹치면 서로 덮는다)
+        self._lnk: dict | None = None              # 지금 열린 <a>: {"text": [], "label": bool}
         self.paths: set[str] = set()             # 사이트 안 링크의 경로 — 소개·연락처 링크가 있나
         self.author_link = False                 # rel=author 링크 또는 /author/ 로 가는 링크
         self.images_decor = 0                    # 장식 이미지(aria-hidden·role=presentation/none)
-        self.alts: list[str] = []
+        self.alt_texts: list[str] = []
         self.micro: list[str] = []               # Microdata(itemscope itemtype) 의 schema.org 유형
         self.rdfa: list[str] = []                # RDFa(typeof) 의 schema.org 유형
         self._rdfa_vocab = False
@@ -629,7 +630,7 @@ class _Page(HTMLParser):
             elif not alt:
                 self.images_no_alt += 1
             else:
-                self.alts.append(alt[:120])
+                self.alt_texts.append(alt[:120])
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
@@ -641,7 +642,7 @@ class _Page(HTMLParser):
             self._end_p()
         if tag == "p" and self._q is not None:
             self._end_q()
-        if tag == "a" and self._a is not None:
+        if tag == "a" and self._lnk is not None:
             self._end_a()
         if self._grab == tag or (self._grab == "ld" and tag == "script") \
                 or (self._grab == "title" and tag == "title"):
@@ -748,10 +749,10 @@ class _Page(HTMLParser):
             self._meta_extra(a)
         elif tag == "a":
             self._start_a(a)
-        if self._a is not None and tag != "a" and (
+        if self._lnk is not None and tag != "a" and (
                 a.get("aria-label", "").strip() or a.get("title", "").strip()
                 or (tag == "img" and a.get("alt", "").strip())):
-            self._a["label"] = True              # 글자는 없어도 이름이 있는 링크(아이콘·그림 링크)
+            self._lnk["label"] = True              # 글자는 없어도 이름이 있는 링크(아이콘·그림 링크)
         src = a.get(_SUBRESOURCE.get(tag, ""), "") if tag in _SUBRESOURCE else (
             a.get("href", "") if tag == "link" and "stylesheet" in a.get("rel", "").lower() else "")
         if self.secure and src.strip().lower().startswith("http://"):
@@ -778,7 +779,7 @@ class _Page(HTMLParser):
             self.modified = _date(content)
 
     def _start_a(self, a: dict) -> None:
-        if self._a is not None:
+        if self._lnk is not None:
             self._end_a()                        # 안 닫힌 <a> 뒤에 또 <a>
         href = a.get("href", "").strip()
         if href.lower().startswith("tel:"):
@@ -800,11 +801,11 @@ class _Page(HTMLParser):
                 self.http_links += 1             # https 사이트가 제 페이지를 http 로 건다
         if "author" in a.get("rel", "").lower().split():
             self.author_link = True
-        self._a = {"text": [], "label": bool(a.get("aria-label", "").strip()
+        self._lnk = {"text": [], "label": bool(a.get("aria-label", "").strip()
                                              or a.get("title", "").strip())}
 
     def _end_a(self) -> None:
-        cur, self._a = self._a, None
+        cur, self._lnk = self._lnk, None
         text = " ".join("".join(cur["text"]).split())
         if not text and not cur["label"]:
             self.empty_links += 1
@@ -823,8 +824,8 @@ class _Page(HTMLParser):
             self._sec_wait = False
 
     def _signals_data(self, data: str) -> None:
-        if self._a is not None:
-            self._a["text"].append(data)
+        if self._lnk is not None:
+            self._lnk["text"].append(data)
         if self._q is not None:
             self._q.append(data)
         if self._in_chrome():
@@ -848,7 +849,7 @@ class _Page(HTMLParser):
         """문서 끝 — 안 닫힌 문단·링크·구간을 마감한다. 여러 번 불러도 같다."""
         if self._q is not None:
             self._end_q()
-        if self._a is not None:
+        if self._lnk is not None:
             self._end_a()
         if self._sec_wait:
             self.sec_leads.append(0)
@@ -956,7 +957,7 @@ def _signals(p: "_Page", url: str, headers: dict | None, gaps: dict) -> dict:
                  "lorem": len(page_lang.LOREM.findall(" ".join(p._text))),
                  "paras": p.paras, "long_paras": p.long_paras, "sec_leads": p.sec_leads[:20]},
         "img": {"decorative": p.images_decor,
-                "junk_alt": sum(page_lang.is_junk_alt(a, lang) for a in p.alts)},
+                "junk_alt": sum(page_lang.is_junk_alt(a, lang) for a in p.alt_texts)},
         "markup": {"microdata": sorted(set(p.micro)), "rdfa": sorted(set(p.rdfa))},
         "nap": _nap_compare(p.ld_blocks, p.tels, " ".join(p._text), p.address_tags > 0),
         # E-E-A-T 로 셀 수 있는 것만 — 있다/없다. 점수로 합치지 않는다(가중치를 지어내야 한다)
@@ -1244,7 +1245,7 @@ def fetch(url: str, timeout: int | None = None) -> dict:
     except Exception as e:
         return {"url": url, "status": None, "error": f"{type(e).__name__}: {e}"[:200]}
     if r.status >= 400 or "html" not in r.content_type.lower():
-        return {"url": url, "status": r.status, "final_url": r.final_url,
+        return {"url": url, "status": r.status,
                 "error": f"HTTP {r.status} · {r.content_type or '?'}"}
     # 응답 헤더는 받은 응답(requests)에만 있다 — 검사용 가짜 전송은 헤더가 없다(= 없음)
     hdr = getattr(getattr(r, "_resp", None), "headers", None) or {}
