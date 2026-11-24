@@ -153,3 +153,18 @@ python scripts/dashboard.py --open               # 로컬 대시보드 (Ctrl+C�
 건너뛴다(실패가 아니다). 한도를 키우려면 구글 클라우드에서 무료 PageSpeed Insights API
 키를 만들어 `~/.capture/env` 에 `PAGESPEED_API_KEY=...` (호스팅은 Railway 변수 같은 이름).
 준비 상태 명부의 자리는 `skills/setup/scripts/doctor.py` 의 `CAPABILITIES` 중 `vitals`.
+
+## 9. GA4 대신 쓰는 분석 출처 (선택 — 무료)
+
+GA4 속성이 없는 사이트는 `/capture ga4` 가 다른 분석 도구에서 같은 꼴(랜딩 페이지별 유기
+세션·참여율·체류)로 받는다. 새 단계가 아니라 ga4 단계 안의 분기다 — GA4 가 연결돼 있으면
+이 길을 안 탄다. 지원하는 출처, 넣을 키 이름, 발급 안내 주소는 전부
+`skills/capture/scripts/analytics_alt.py` 의 `SOURCES` 가 정본이다(여기 다시 적지 않는다).
+키는 `~/.capture/env` 에 넣는다. 이 출처들은 전환·매출을 주지 않는다 — 그 칸은 비어 있고,
+'전환 0' 기회도 서지 않는다. 명부의 자리는 `CAPABILITIES` 중 `analytics_alt`.
+
+## 10. 헤드리스 렌더 (자동 — 크롬 계열 브라우저가 있을 때만)
+
+`/capture pages` 는 본문을 자바스크립트로 그리는 페이지를 이 컴퓨터의 크롬(또는 엣지)으로
+한 번 열어 다시 읽는다. 준비할 것은 없다: 브라우저가 없으면(호스팅 포함) 예전처럼 '확인
+필요'로 남는다. 끄는 법·브라우저 지정·한 회차 상한은 `skills/capture/scripts/render.py` 상단.

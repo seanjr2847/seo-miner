@@ -30,6 +30,7 @@ from pathlib import Path
 # doctor가 import해도 안전하다 — 진단하러 왔다가 Brain을 만들어 버리는 일도 없다.
 CAPTURE_SCRIPTS = Path(__file__).resolve().parents[2] / "capture" / "scripts"
 sys.path.insert(0, str(CAPTURE_SCRIPTS))
+import analytics_alt  # noqa: E402
 import collect_gsc  # noqa: E402
 import db  # noqa: E402
 import remote  # noqa: E402
@@ -249,6 +250,14 @@ CAPABILITIES = (
      # diagnose 의 keys["pagespeed"] 가 말한다.
      "cost": "무료", "keys": (), "url": "", "fix": None,
      "owner": "server", "blocking": False},
+    {"id": "analytics_alt", "name": "방문 분석 대체 출처",
+     "desc": "GA4 가 없는 사이트는 " + "·".join(s["name"] for s in analytics_alt.SOURCES)
+             + " 에서 방문·참여를 수집 (무료, 선택)",
+     # 속도 측정의 선택 키와 같은 축이다 — 키 없이도 아무것도 안 막히므로 keys 는 비운다
+     # (keys 가 있으면 '유료·발급처 필수' 축이다). 키 이름의 정본은 analytics_alt.SOURCES 이고,
+     # 넣었는지는 diagnose 의 keys[출처 id] 가 말한다. GA4 가 연결된 사이트는 이 길을 안 탄다.
+     "cost": "무료", "keys": (), "url": "", "fix": None,
+     "owner": "server", "blocking": False},
 )
 
 # 구글 연결이 잠겼을 때 **웹 사용자**에게 할 말. 키는 위 gsc fix 와 같은 3-상태다
@@ -436,6 +445,8 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         "serper": bool(os.environ.get("SERPER_API_KEY")),
         # 선택 키 — 없어도 속도 측정은 돈다. 있으면 PageSpeed 하루 한도가 커진다.
         "pagespeed": bool(os.environ.get("PAGESPEED_API_KEY")),
+        # 선택 키 — GA4 대신 쓰는 분석 출처(명부는 analytics_alt.SOURCES).
+        **{s["id"]: all(os.environ.get(k) for k in s["keys"]) for s in analytics_alt.SOURCES},
         # 이름은 옛날 그대로지만(대시보드가 이 키를 먹는다) 뜻은 "구글이 실제로
         # 붙었나"다 — 인증 파일이 놓였나가 아니다.
         "gsc_service_account": gsc_conn,
@@ -456,6 +467,7 @@ def diagnose(project: str = "", *, probe: bool = False) -> dict:
         "gsc": core_ok and all(deps_gsc.values()) and gsc_linked,
         "rank": core_ok and (keys["dataforseo"] or keys["serper"]),
         "vitals": core_ok,
+        "analytics_alt": core_ok,
     }
     gsc_fix_state = ("deps" if gsc_mode and not all(deps_gsc.values())
                      else "pending" if gsc_pending else "none")
