@@ -81,6 +81,19 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in (
             desc="백링크 재측정 주기(일). 0 이면 끈다"),
     Setting("SEOMINER_MAIL_FROM", default="seo-miner <onboarding@resend.dev>",
             desc="알림 메일 발신자"),
+    # 유료 단계 지출 상한(달러). 0 = 상한 없음. 엔진(run_all.preflight)이 **같은 이름의 env 를
+    # 직접** 읽는다(SEOMINER_MAX_KEYWORDS 와 같은 길) — 여기는 "이 배포에 뭘 넣나"의 목록이고,
+    # 이름의 정본은 run_all.SPEND_CAPS 다(test_seams 가 두 쪽을 대조한다). 견주는 값은 테넌트
+    # 보관함의 runs.cost_estimate_usd 합이고, 넘으면 그 유료 단계만 건너뛰고 사유를 runs 에 남긴다.
+    # 기본값을 0 으로 둔 이유: 얼마가 맞는지는 운영자가 요금제를 보고 정할 값이라 코드가 지어내지 않는다.
+    Setting("SEOMINER_SPEND_CAP_SITE_DAY_USD", default="0",
+            desc="사이트 하나가 하루(UTC)에 쓰는 유료 수집 비용 상한($). 0 이면 없음"),
+    Setting("SEOMINER_SPEND_CAP_SITE_MONTH_USD", default="0",
+            desc="사이트 하나가 한 달(UTC 달력)에 쓰는 유료 수집 비용 상한($). 0 이면 없음"),
+    Setting("SEOMINER_SPEND_CAP_TENANT_DAY_USD", default="0",
+            desc="가입자 한 명(사이트 전부)이 하루(UTC)에 쓰는 유료 수집 비용 상한($). 0 이면 없음"),
+    Setting("SEOMINER_SPEND_CAP_TENANT_MONTH_USD", default="0",
+            desc="가입자 한 명(사이트 전부)이 한 달(UTC 달력)에 쓰는 유료 수집 비용 상한($). 0 이면 없음"),
 
     # --- 선택 (없으면 그 기능이 꺼진다) ----------------------------------------
     Setting("SESSION_SECRET",
