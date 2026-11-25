@@ -3449,7 +3449,8 @@ def test_ai_prompts_are_asked_per_market():
         return {"content": json.dumps([{"prompt": f"{lang} 질문 하나 무엇?", "category": "추천"},
                                        {"prompt": f"{lang} 질문 둘 무엇?", "category": "비교"}])}
     assert gen_prompts.plan_markets(conn, "mk_ai", missing_only=True) == ["ko-KR", "en-US", "ja-JP"]
-    rows = gen_prompts.suggest_markets("mk_ai", ["ko-KR", "en-US"], conn=conn, ask=fake_ask)
+    rows = gen_prompts.suggest_markets("mk_ai", ["ko-KR", "en-US"], conn=conn, ask=fake_ask,
+                                       fetch_real=False)   # 셸의 DataForSEO 키로 실제 호출하지 않게
     assert asked == ["ko-KR", "en-US"], asked
     assert {r["locale"] for r in rows} == {"ko-KR", "en-US"}, rows
     gen_prompts.save(conn, "mk_ai", rows)

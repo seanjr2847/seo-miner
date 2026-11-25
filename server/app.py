@@ -783,10 +783,9 @@ def api_ai_prompts(body: dict = Depends(_body), project: str = Depends(_project_
     # 시장마다 그 시장 말로 짓는다. locale 을 주면 그 시장 하나, 안 주면 켜진 질문이 없는
     # 시장 전부 — 그런 시장이 없으면(다 채워져 있으면) 시장 전부에 더 짓는다. 다시 만들기
     # (replace)는 시장 전부다: 옛 판을 끄면 모든 시장의 옛 질문이 꺼지기 때문이다.
-    try:
-        gen_prompts.require_key()
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    # OpenRouter 키를 미리 요구하지 않는다 — 질문은 AI 가 실제로 받은 질문(DataForSEO)을 먼저 쓰고
+    # 모자란 자리만 짓는다(gen_prompts.suggest). 지어야 하는데 키도 실제 질문도 없으면 suggest 가
+    # RuntimeError 를 올리고 아래에서 503 으로 사유를 보낸다.
     try:
         loc = str(body.get("locale") or "").strip() or None
         locs = gen_prompts.plan_markets(c, project, locale=loc,

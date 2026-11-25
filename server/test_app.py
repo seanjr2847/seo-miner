@@ -526,10 +526,11 @@ def demo() -> None:
             app.dependency_overrides.pop(_kick_dep, None)
 
         # 질문 만들기 — 웹에는 `/capture add` 를 칠 채팅이 없어서 생긴 자리다.
-        # 키가 없으면 조용히 빈 목록이 아니라 503 + 사유(화면이 그대로 보여 준다).
+        # Brain 이 아직 없는 사이트는 아무것도 심지 않고 사유를 돌려준다. (키가 없을 때의 503 은
+        # Brain 이 선 뒤에 본다 — 실제 질문이 있으면 키 없이도 질문이 생기므로 미리 막지 않는다.)
         saved_key = os.environ.pop("OPENROUTER_API_KEY", None)
         r = c.post("/api/ai/prompts", json={"project": "p1"})
-        assert r.status_code == 503 and "OPENROUTER_API_KEY" in r.json()["detail"], r.text
+        assert r.status_code in (404, 422) and "등록" in r.json()["detail"], r.text
         assert c.post("/api/ai/prompts", json={"project": "없는사이트"}).status_code == 404,             "남의 사이트에 질문을 심을 수 있다"
 
         # Brain 이 아직 없는 사이트 — 지어내지 말고 404 여야 한다.
@@ -721,7 +722,6 @@ def demo() -> None:
         gen_prompts.save = lambda conn, project, rows: made.extend(rows) or len(rows)
         retired, real_retire = [], gen_prompts.retire_outdated
         gen_prompts.retire_outdated = lambda conn, project: retired.append(project) or 7
-        # 키 확인은 시장을 고르기 전에 창구가 한다 — 가짜 suggest 라도 키는 있어야 지나간다
         os.environ["SEOMINER_OPENROUTER_API_KEY"] = "fake-test-key"
         try:
             r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1})
@@ -772,6 +772,21 @@ def demo() -> None:
                 bc.commit()
             finally:
                 bc.close()
+
+        # 실제 질문도 없고 키도 없으면 503 + 사유 — 빈 목록으로 조용히 지나가지 않는다.
+        # 실제 질문 받기는 막는다(셸에 DataForSEO 키가 있으면 검사가 실제로 부른다).
+        real_rq = gen_prompts.real_questions
+        gen_prompts.real_questions = lambda *a, **k: "llm_questions=off(test)"
+        saved_or = (os.environ.pop("OPENROUTER_API_KEY", None),
+                    os.environ.pop("SEOMINER_OPENROUTER_API_KEY", None))
+        try:
+            r = c.post("/api/ai/prompts", json={"project": "p1", "limit": 1})
+            assert r.status_code == 503 and "OPENROUTER_API_KEY" in r.json()["detail"], r.text
+        finally:
+            gen_prompts.real_questions = real_rq
+            for k, v in zip(("OPENROUTER_API_KEY", "SEOMINER_OPENROUTER_API_KEY"), saved_or):
+                if v:
+                    os.environ[k] = v
 
         r = c.get("/api/ai/prompts?project=p1")
         assert r.status_code == 200 and r.json()["prompts"] == [], r.text
