@@ -543,14 +543,38 @@ DFS_STAGES = ("metrics", "rank", "ai", "competitors", "backlinks", "local", "mer
 OPENROUTER_STAGES = ("plays",)
 
 
-def paid_estimate(name: str, project: str | None = None) -> float:
-    """추정 비용을 아는 단계의 이번 회차 추정 비용($) — 잔액 카나리아·지출 상한이 견줄 값.
-    정본은 각 수집기. ai 는 DataForSEO 잔액과, plays 는 OpenRouter 잔액과 견준다."""
+def paid_estimate(name: str, project: str | None = None, opts: dict | None = None) -> float:
+    """유료 단계의 이번 회차 추정 비용($) — 잔액 카나리아·지출 상한이 견줄 값.
+    정본은 각 수집기. plays 는 OpenRouter 잔액과, 나머지(DFS_STAGES)는 DataForSEO 잔액과 견준다.
+    ai 는 질문 표에서 바로 세고, 다른 DataForSEO 단계는 그 수집기의 --dry-run 이 내는 값이다."""
     if name == "plays":
         return plays.estimate_usd()
     if name == "ai":
         return collect_ai.estimate_usd(project)
+    if name in DFS_STAGES and project:
+        return dry_estimate(name, project, opts)
     return 0.0
+
+
+def dry_estimate(name: str, project: str, opts: dict | None = None) -> float:
+    """수집기를 dry-run 으로 불러 그 추정 비용(StageResult.cost)을 받는다 — 순위·검색량·경쟁사·
+    백링크·지도·쇼핑은 각자 이번에 살 대상(오늘 잰 것·최근에 산 것 빼고)을 세어 dry-run 에서
+    `noop(cost=…)` 로 돌려준다. 여기서 그 계산을 다시 하면 두 벌이 된다.
+
+    dry-run 은 호출 0건·쓰기 0건이다. 출력은 삼킨다(런 로그에 계획표가 두 번 찍히지 않게).
+    실패하면 0 — 추정을 못 했다고 단계를 막지 않는다(카나리아와 같은 규칙)."""
+    import contextlib
+    import io
+    stage = STAGE_BY_NAME.get(name)
+    if stage is None:
+        return 0.0
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            r = stage.fn(project=project, dry_run=True, **(opts or {}))
+        return round(float(getattr(r, "cost", 0.0) or 0.0), 4)
+    except Exception as e:
+        log.warning("[%s] 비용 추정 실패: %s", name, e)
+        return 0.0
 
 
 # ── 지출 상한 ───────────────────────────────────────────────────────────────
@@ -601,8 +625,8 @@ def spend_blocked(conn, project: str | None, names, *, estimate=None, caps=None,
 
     단계마다 '이미 쓴 돈 + 이번 런에서 앞 단계가 쓸 돈(추정)'을 상한과 견준다:
       · 그 합이 상한 이상이면 막는다(이미 닿았다).
-      · 이 단계의 추정 비용을 알면(paid_estimate — ai·plays) 그것을 더해 넘는지도 본다.
-        추정이 없는 단계(DataForSEO)는 0 으로 친다 — 그래서 상한은 최대 런 한 번만큼 넘칠 수 있다.
+      · 이 단계의 추정 비용(paid_estimate)을 더해 넘는지도 본다. 추정을 못 한 단계는 0 으로
+        친다 — 그래서 상한은 그만큼 넘칠 수 있다.
     판정은 런을 시작할 때 한 번이다(preflight). 도는 중에 다시 재지 않는다."""
     caps = spend_caps() if caps is None else caps
     if not caps:
@@ -635,7 +659,7 @@ def spend_blocked(conn, project: str | None, names, *, estimate=None, caps=None,
     return blocked
 
 
-def _spend_preflight(names: list[str], project: str | None) -> dict[str, str]:
+def _spend_preflight(names: list[str], project: str | None, estimate=None) -> dict[str, str]:
     """preflight 가 부르는 자리 — 보관함을 열어 spend_blocked 를 묻는다. 상한이 없으면 열지도 않는다.
     읽기가 실패하면 아무것도 막지 않는다(카나리아와 같은 규칙 — 점검이 수집을 죽이면 안 된다)."""
     if not names or not spend_caps():
@@ -643,7 +667,7 @@ def _spend_preflight(names: list[str], project: str | None) -> dict[str, str]:
     try:
         conn = db.connect()
         try:
-            return spend_blocked(conn, project, names)
+            return spend_blocked(conn, project, names, estimate=estimate)
         finally:
             conn.close()
     except Exception as e:
@@ -651,7 +675,8 @@ def _spend_preflight(names: list[str], project: str | None) -> dict[str, str]:
         return {}
 
 
-def preflight(stages=STAGES, project: str | None = None) -> dict[str, str]:
+def preflight(stages=STAGES, project: str | None = None,
+              opts: dict | None = None) -> dict[str, str]:
     """유료 단계를 돌리기 전 한 번. 반환: {건너뛸 단계: 사유}.
 
     호출(DataForSEO user_data, OpenRouter auth/key·credits)이 다 무료라 dry-run 에서도
@@ -663,12 +688,28 @@ def preflight(stages=STAGES, project: str | None = None) -> dict[str, str]:
     $0.14 까지 떨어진 채 할 일이 402 를 맞고서야 알았다. OpenRouter 단계(OPENROUTER_STAGES)가
     여럿이면 앞 단계의 몫을 빼고 뒤 단계를 본다. AI 인용 확인은 2026-11-24 부터 DataForSEO 로
     묻는다 — DataForSEO 잔액 점검(DFS_STAGES)이 본다.
+
+    DataForSEO 단계는 **이 런에서 도는 순서대로** 잔액을 나눠 갖는다: 앞 단계의 추정 몫을 뺀
+    나머지가 이 단계의 추정보다 적으면 시작하지 않는다(뒤 단계는 계속 본다 — 더 싼 단계는
+    남은 돈으로 돈다). 잔액이 도중에 바닥나면 실제로도 뒤 단계가 402 로 죽는다 — 그 결과를
+    돈 쓰기 전에 미리 내는 것이다.
     """
     blocked: dict[str, str] = {}
+    opts = opts or {}
     paid = {s.name for s in stages if s.is_paid}
+    memo: dict[str, float] = {}
+
+    def est(n: str, _project=None) -> float:
+        # 단계마다 한 번만 잰다 — dry-run 추정은 Brain 을 읽으므로 잔액·지출 상한이 같이 쓴다.
+        if n not in memo:
+            memo[n] = float(paid_estimate(n, project, opts.get(n)) or 0.0)
+        return memo[n]
+
     # rank 는 serper 로도 돈다 — 지금 쓸 제공자가 DataForSEO 일 때만 잔액이 문제다.
-    dfs = [n for n in DFS_STAGES
-           if n in paid and (n != "rank" or serp_adapter.detect_provider() == "dataforseo")]
+    # 순서는 이 런의 단계 순서(stages)다 — 실제로 돈이 나가는 순서.
+    dfs = [s.name for s in stages
+           if s.name in DFS_STAGES and s.name in paid
+           and (s.name != "rank" or serp_adapter.detect_provider() == "dataforseo")]
     if dfs and serp_adapter.has_dataforseo():
         try:
             bal = serp_adapter.dataforseo_balance()
@@ -680,29 +721,36 @@ def preflight(stages=STAGES, project: str | None = None) -> dict[str, str]:
                   f"충전: https://app.dataforseo.com")
             for n in dfs:
                 blocked[n] = f"DataForSEO 잔액 없음 (${bal:.2f})"
-        # AI 인용 확인은 추정 비용을 안다 — 잔액이 그보다 적으면 시작하지 않는다. 2026-11-24
-        # 호스팅 theotherskin: 잔액 ~$9 로 360건(추정 $16)을 시작해 242건째에 402 로 끊겼다.
-        # 잔액은 이 런을 시작할 때의 값이다(같은 런의 앞 단계 몫은 빼지 않는다).
-        elif bal is not None and "ai" in dfs:
-            need = paid_estimate("ai", project)
-            if need and bal < need:
-                msg = f"DataForSEO 잔액 ${bal:.2f} < 이번 AI 인용 확인 추정 ${need:.2f}"
-                print(f"[경고] {msg} — ai 단계를 건너뜁니다. 충전: https://app.dataforseo.com")
-                blocked["ai"] = msg
+        # 잔액이 $1 은 넘어도 이번 단계 추정보다 적으면 시작하지 않는다. 2026-11-24 호스팅
+        # theotherskin: 잔액 ~$9 로 AI 인용 360건(추정 $16)을 시작해 242건째에 402 로 끊겼고,
+        # 뒤이은 경쟁사 단계도 402 로 죽었다.
+        elif bal is not None:
+            left = bal
+            for n in dfs:
+                need = est(n)
+                if need and left < need:
+                    took = bal - left
+                    msg = (f"DataForSEO 잔액 ${bal:.2f}"
+                           + (f" 에서 이 런의 앞 단계 몫 ${took:.2f} 을 빼면 ${left:.2f}" if took > 0.005 else "")
+                           + f" < 이번 {stage.STAGE_LABELS[n]['t']} 추정 ${need:.2f}")
+                    print(f"[경고] {msg} — {n} 단계를 건너뜁니다. 충전: https://app.dataforseo.com")
+                    blocked[n] = msg
+                else:
+                    left -= need
     # OpenRouter 를 쓰는 단계는 같은 키 하나를 본다 — 한 번만 묻는다.
     orr = [n for n in OPENROUTER_STAGES if n in paid]
     if orr and serp_adapter.has_openrouter():
         need = 0.0
         for n in orr:
-            need += paid_estimate(n, project)
+            need += est(n)
             ok, msg = collect_ai.openrouter_ok(need)
             if not ok:
                 print(f"[경고] {msg} — {n} 단계를 건너뜁니다.")
                 blocked[n] = msg
-                need -= paid_estimate(n, project)      # 안 쓸 돈 — 뒤 단계 몫에서 뺀다
+                need -= est(n)                         # 안 쓸 돈 — 뒤 단계 몫에서 뺀다
     # 지출 상한 — 잔액이 있어도 정해 둔 만큼만 쓴다. 이미 막힌 단계는 그 사유를 그대로 둔다.
     for n, msg in _spend_preflight([s.name for s in stages if s.is_paid and s.name not in blocked],
-                                   project).items():
+                                   project, estimate=est).items():
         print(f"[경고] {msg} — {n} 단계를 건너뜁니다.")
         blocked[n] = msg
     return blocked
@@ -781,12 +829,13 @@ def _run_stage(stage, project: str, *, dry_run: bool, skip_set: set[str],
         return collector.failed(f"이 단계에서 오류가 났습니다 ({e})")
 
 
-def _ask_preflight(fn, to_run, project: str) -> dict[str, str]:
-    """돈 쓰는 단계가 남아 있을 때만 카나리아를 부른다. 기본 카나리아에는 사이트를 넘겨
-    추정 비용을 사이트 크기로 잡는다 — 주입된 가짜(fn(stages))는 예전 모양 그대로 부른다."""
+def _ask_preflight(fn, to_run, project: str, opts: dict | None = None) -> dict[str, str]:
+    """돈 쓰는 단계가 남아 있을 때만 카나리아를 부른다. 기본 카나리아에는 사이트와 단계별
+    노브(opts — 추정이 이번 런과 같은 한도로 세도록)를 넘긴다 — 주입된 가짜(fn(stages))는
+    예전 모양 그대로 부른다."""
     if not any(s.is_paid for s in to_run):
         return {}
-    return fn(to_run, project=project) if fn is _PREFLIGHT else fn(to_run)
+    return fn(to_run, project=project, opts=opts) if fn is _PREFLIGHT else fn(to_run)
 
 
 RAN_REASON = "바로 앞 런에서 이미 돌아 건너뜁니다"
@@ -1036,7 +1085,7 @@ def run_chain(
         fresh = set(fresh or ())
         to_run = [s for s in table
                   if s.name not in skip_set and s.name not in ran and s.name not in fresh]
-        blocked = _ask_preflight(preflight, to_run, project)
+        blocked = _ask_preflight(preflight, to_run, project, opts)
         _wal()
         return _run_groups(project, table, dry_run=dry_run, skip_set=skip_set, opts=opts,
                            blocked=blocked, ran=ran, on_stage=on_stage, before=before,
@@ -1049,7 +1098,7 @@ def run_chain(
     # 돈 쓰는 단계가 하나라도 남아 있으면 그 앞에서 무료로 한 번 묻는다.
     to_run = [s for s in stages
               if s.name not in skip_set and (not only_set or s.name in only_set)]
-    blocked = _ask_preflight(preflight, to_run, project)
+    blocked = _ask_preflight(preflight, to_run, project, opts)
 
     for idx, stage in enumerate(stages, start=1):
         # gsc 가 실패했을 때 나머지 단계는 실행하지 않고 중단 상태로 기록
@@ -1224,14 +1273,22 @@ def _check_preflight() -> None:
     import io
     g = globals()
     saved = (serp_adapter.has_openrouter, serp_adapter.has_dataforseo,
-             serp_adapter.dataforseo_balance, collect_ai.openrouter_ok, g["paid_estimate"])
+             serp_adapter.dataforseo_balance, serp_adapter.detect_provider,
+             collect_ai.openrouter_ok, g["paid_estimate"])
     left = {"v": 1.5, "dfs": 50.0}
     serp_adapter.has_openrouter = lambda: True
     serp_adapter.has_dataforseo = lambda: True
     serp_adapter.dataforseo_balance = lambda: left["dfs"]
+    serp_adapter.detect_provider = lambda: "dataforseo"
     collect_ai.openrouter_ok = lambda need=0.0: (
         (True, "ok") if need <= left["v"] else (False, f"OpenRouter 잔액 ${left['v']:.2f}"))
-    g["paid_estimate"] = lambda n, project=None: {"plays": 1.0, "ai": 12.0}.get(n, 0.0)
+    price = {"plays": 1.0, "ai": 12.0}
+    asked: list = []
+
+    def fake_estimate(n, project=None, opts=None):
+        asked.append((n, opts))
+        return price.get(n, 0.0)
+    g["paid_estimate"] = fake_estimate
     try:
         both = [STAGE_BY_NAME["ai"], STAGE_BY_NAME["plays"]]
         assert "ai" not in OPENROUTER_STAGES and "ai" in DFS_STAGES, "AI 인용은 DataForSEO 로 묻는다"
@@ -1249,6 +1306,32 @@ def _check_preflight() -> None:
             assert set(got) == {"ai"} and "$9.04" in got["ai"] and "$12.00" in got["ai"], got
             left["dfs"] = 12.5
             assert preflight(both) == {}, "잔액이 추정보다 많은데 막았다"
+
+            # DataForSEO 단계 여럿은 도는 순서대로 잔액을 나눠 갖는다 — 2026-11-24 theotherskin
+            # 은 AI 인용이 잔액을 다 쓰고 뒤이은 경쟁사 단계가 402 로 죽었다.
+            price.update({"metrics": 0.5, "rank": 2.0, "competitors": 0.1})
+            four = [STAGE_BY_NAME[n] for n in ("metrics", "rank", "ai", "competitors")]
+            left["dfs"] = 9.04
+            got = preflight(four)
+            assert set(got) == {"ai"}, f"싼 뒤 단계(경쟁사 $0.10)는 남은 돈으로 돈다: {got}"
+            assert "$9.04" in got["ai"] and "$2.50" in got["ai"] and "$6.54" in got["ai"] \
+                and "AI 인용 확인" in got["ai"] and "$12.00" in got["ai"], got["ai"]
+            left["dfs"] = 2.0
+            got = preflight(four)
+            assert set(got) == {"rank", "ai"}, f"앞 단계(검색량 $0.50)의 몫을 빼고 본다: {got}"
+            assert "순위 확인" in got["rank"] and "$1.50" in got["rank"], got["rank"]
+            left["dfs"] = 15.0
+            assert preflight(four) == {}, "다 들어가는데 막았다"
+            # 추정은 단계마다 한 번 — 잔액·지출 상한이 같은 값을 쓴다 — 그리고 이번 런의 노브로 센다
+            asked.clear()
+            preflight(four, opts={"rank": {"max_keywords": 7}})
+            assert sorted(n for n, _ in asked) == ["ai", "competitors", "metrics", "rank"], asked
+            assert dict(asked)["rank"] == {"max_keywords": 7}, asked
+            # serper 로 재는 순위는 DataForSEO 잔액을 안 쓴다
+            serp_adapter.detect_provider = lambda: "serper"
+            left["dfs"] = 2.0
+            assert set(preflight(four)) == {"ai"}, "serper 순위가 DataForSEO 잔액을 나눠 가졌다"
+            serp_adapter.detect_provider = lambda: "dataforseo"
         # 막힌 단계는 기록이 남는다 — 건너뜀이 로그에만 있으면 왜 안 돌았는지 아무도 모른다
         c = db.connect()
         c.execute("INSERT OR IGNORE INTO projects(name, domain, locale) VALUES('pf','pf.kr','ko-KR')")
@@ -1269,7 +1352,44 @@ def _check_preflight() -> None:
         c.close()
     finally:
         (serp_adapter.has_openrouter, serp_adapter.has_dataforseo,
-         serp_adapter.dataforseo_balance, collect_ai.openrouter_ok, g["paid_estimate"]) = saved
+         serp_adapter.dataforseo_balance, serp_adapter.detect_provider,
+         collect_ai.openrouter_ok, g["paid_estimate"]) = saved
+    _check_dry_estimate()
+
+
+def _check_dry_estimate() -> None:
+    """DataForSEO 단계의 추정은 그 수집기의 dry-run 이 낸 값이다 — 두 끝을 함께 본다:
+    수집기 쪽은 dry-run 에서 noop(cost=…) 로 추정을 돌려주고, 여기는 그 값을 출력 없이 받는다."""
+    import contextlib
+    import io
+    for n in DFS_STAGES:
+        if n == "ai":
+            continue                           # ai 는 질문 표에서 바로 센다(collect_ai.estimate_usd)
+        src = inspect.getsource(STAGE_BY_NAME[n].module)
+        assert "noop(cost=" in src, f"{n} 수집기의 dry-run 이 추정 비용을 안 돌려준다 — 잔액 점검이 0 으로 본다"
+    real = STAGE_BY_NAME["competitors"]
+    seen: dict = {}
+
+    def fake(project, dry_run=False, **kw):
+        seen.update(project=project, dry_run=dry_run, **kw)
+        print("[gap] 계획표 — 런 로그에 다시 찍히면 안 된다")
+        return collector.skipped(cost=0.42)
+    STAGE_BY_NAME["competitors"] = real._replace(fn=fake)
+    try:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            got = paid_estimate("competitors", "p1", {"limit": 3})
+        assert got == 0.42, got
+        assert seen == {"project": "p1", "dry_run": True, "limit": 3}, seen
+        assert out.getvalue() == "", f"추정의 계획표가 런 로그로 샜다: {out.getvalue()!r}"
+
+        def boom(project, dry_run=False, **kw):
+            raise RuntimeError("Brain 을 못 읽음")
+        STAGE_BY_NAME["competitors"] = real._replace(fn=boom)
+        assert paid_estimate("competitors", "p1") == 0.0, "추정이 실패했다고 단계를 막았다"
+        assert paid_estimate("competitors", None) == 0.0, "사이트를 모르는데 수집기를 불렀다"
+    finally:
+        STAGE_BY_NAME["competitors"] = real
 
 
 def _check_groups() -> None:

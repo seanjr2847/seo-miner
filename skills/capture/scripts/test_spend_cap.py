@@ -160,7 +160,7 @@ def test_balance_canary_still_wins_its_own_reason():
              run_all.paid_estimate)
     serp_adapter.has_openrouter, serp_adapter.has_dataforseo = (lambda: True), (lambda: False)
     collect_ai.openrouter_ok = lambda need=0.0: (False, "OpenRouter 잔액 $0.14")
-    run_all.paid_estimate = lambda n, project=None: 0.5
+    run_all.paid_estimate = lambda n, project=None, opts=None: 0.5
     try:
         with caps(site_day=1), contextlib.redirect_stdout(io.StringIO()):
             b = run_all.preflight([run_all.STAGE_BY_NAME["plays"]], project="a")

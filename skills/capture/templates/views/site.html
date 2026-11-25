@@ -1593,10 +1593,12 @@ function vitSpark(pts, good) {
     <polyline points="${pts.map((p, i) => sx(i) + "," + sy(p[1])).join(" ")}" class="vsp-l"/></svg>`;
 }
 
-function vitTrend(d, url, dev) {
-  const T = d.crux_trend || {}, form = (d.crux_form || {})[dev];
-  let own = true, by = (T[url] || {})[form];
-  if (!by) { own = false; try { by = (T[new URL(url).origin] || {})[form]; } catch (e) { by = null; } }
+function vitOrigin(url) {
+  try { return new URL(url).origin; } catch (e) { return ""; }
+}
+
+// 한 기기의 주별 추세 칸들. by = crux_trend[대상][기기 표기] — 칸이 없으면 "".
+function vitTrendBox(d, by, label) {
   if (!by) return "";
   const R = d.rules || {};
   const good = {lcp_ms: R.lcp_good_ms, inp_ms: R.inp_good_ms, cls: R.cls_good, ttfb_ms: R.ttfb_good_ms};
@@ -1610,8 +1612,42 @@ function vitTrend(d, url, dev) {
   }).filter(Boolean);
   if (!cells.length) return "";
   const first = VIT_CRUX.map(([k]) => (by[k] || [])[0]).filter(Boolean).map(p => p[0]).sort()[0];
-  return `<div class="vtrs"><span class="micro">현장 추세 · ${esc(first)} 부터 주마다${
-    own ? "" : " · 사이트 전체 값"}</span>${cells.join("")}</div>`;
+  return `<div class="vtrs"><span class="micro">${label ? label + " · " : ""}${esc(first)} 부터 주마다</span>${
+    cells.join("")}</div>`;
+}
+
+// 페이지 칸의 추세 — 그 페이지 **자기** 값만. 표본이 모자라 사이트 전체 값을 받는 페이지는
+// 여기서 그리지 않는다: 페이지마다 같은 꺾은선이 기기 수만큼 되풀이됐다(theotherskin 5쪽×2기기
+// = 같은 그림 10벌). 사이트 전체 값은 vitOriginTrends 가 한 번만 그린다.
+function vitTrend(d, url, dev) {
+  const form = (d.crux_form || {})[dev];
+  return vitTrendBox(d, ((d.crux_trend || {})[url] || {})[form], "현장 추세");
+}
+
+// 사이트 전체 현장 추세 — 자기 값이 없는 페이지가 기대는 오리진마다 한 번, 기기별 칸.
+function vitOriginTrends(d) {
+  const T = d.crux_trend || {}, F = d.crux_form || {};
+  const users = {};                                    // 오리진 → 그 값을 받는 페이지들
+  Object.keys(d.vitals || {}).forEach(url => {
+    const by = d.vitals[url] || {}, org = vitOrigin(url);
+    if (!org || !T[org]) return;
+    ["mobile", "desktop"].forEach(dev => {
+      if (by[dev] && !by[dev].error && !(T[url] || {})[F[dev]] && T[org][F[dev]])
+        (users[org] = users[org] || new Set()).add(url);
+    });
+  });
+  const orgs = Object.keys(users).sort();
+  return orgs.map(org => {
+    const cols = ["mobile", "desktop"].map(dev => {
+      const box = vitTrendBox(d, T[org][F[dev]], "");     // 제목이 이미 '현장 추세'다
+      return box ? `<div class="vmc"><h4>${VIT_DEV[dev]}</h4>${box}</div>` : "";
+    }).filter(Boolean);
+    if (!cols.length) return "";
+    const n = users[org].size;
+    return `<h3 class="subh">사이트 전체 현장 추세${orgs.length > 1 ? ` <code>${esc(new URL(org).host)}</code>` : ""}
+      <br><small>속도를 잰 페이지 ${num(n)}개가 이 값을 씁니다. 페이지마다 따로 모을 만큼 크롬 방문이 많지 않습니다</small></h3>
+      <div class="vmcs">${cols.join("")}</div>`;
+  }).join("");
 }
 
 // 한 기기의 진단 — LCP 요소·줄일 시간 순 진단·접근성·권장사항·agentic(참고)·Lighthouse 판
@@ -1667,9 +1703,10 @@ function vitMore(d) {
     if (!cols.length) return "";
     return `<details class="vmore"><summary>${stUrl(url)}</summary><div class="vmcs">${cols.join("")}</div></details>`;
   }).filter(Boolean);
-  if (!out.length) return "";
-  return `<h3 class="subh">페이지별 진단 <br><small>구글이 연 모습 · 줄일 수 있는 시간이 큰 순 · 현장 추세</small></h3>`
-    + out.join("");
+  const site = vitOriginTrends(d);
+  if (!out.length) return site;
+  return site + `<h3 class="subh">페이지별 진단 <br><small>구글이 연 모습 · 줄일 수 있는 시간이 큰 순${
+    out.some(x => x.includes('class="vtrs"')) ? " · 현장 추세" : ""}</small></h3>` + out.join("");
 }
 
 function renderVitals(d) {
