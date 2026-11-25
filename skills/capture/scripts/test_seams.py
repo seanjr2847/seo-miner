@@ -6772,6 +6772,34 @@ def test_seam_dfsllm_ai_citation_asks_dataforseo_and_every_gate_agrees():
         "질문 만들기는 지시가 500자를 넘어 OpenRouter 에 남아야 한다"
 
 
+def test_seam_branded_prompt_is_one_judgement():
+    """브랜드 질문 판정은 scoring.prompt_branded 한 벌이다 — 만드는 쪽(gen_prompts.vet: 몫·갈래),
+    묻는 쪽(collect_ai.prompt_samples: 표본 1회), 세는 쪽(dashboard._axis_ai: 머리 숫자·추이)이
+    각자 이름 목록을 맞대면 화면의 "브랜드 질문 N개"와 실제로 한 번만 물은 질문이 어긋난다.
+    화면(aicite)은 판정하지 않고 페이로드의 branded·ai_split·ub_* 를 쓴다."""
+    for mod, fn in (("gen_prompts", "vet"), ("collect_ai", "prompt_samples"),
+                    ("dashboard", "_axis_ai")):
+        src = _py_func((SCRIPTS / f"{mod}.py").read_text("utf-8"), fn)
+        assert "scoring.prompt_branded(" in src, f"{mod}.{fn} 이 브랜드를 따로 판정한다"
+    for mod, fn in (("gen_prompts", "suggest"), ("collect_ai", "collect"), ("dashboard", "_axis_ai")):
+        src = _py_func((SCRIPTS / f"{mod}.py").read_text("utf-8"), fn)
+        assert "scoring.brand_names(" in src, f"{mod}.{fn} 이 이름 목록을 따로 짠다"
+    view = (SCRIPTS.parent / "templates" / "views" / "aicite.html").read_text("utf-8")
+    assert "d.ai_split" in view and "ub_cite_rate" in view and "r.branded" in view
+    assert "brand_aliases" not in view and "aliases_of" not in view, "화면이 브랜드를 판정한다"
+    # 질문을 짓는 재료에 실제 질문이 실린다 — 받는 쪽(serp_extras)과 읽는 쪽(gen_prompts._asked)이
+    # 같은 종류 이름·같은 꼴(by_locale)을 쓴다
+    assert "llm_questions" in serp_extras_kinds()
+    asked = _py_func((SCRIPTS / "gen_prompts.py").read_text("utf-8"), "_asked")
+    assert '"llm_questions"' in asked and '"by_locale"' in asked, asked
+    assert "ai_real_questions" in db.SETTING_KEYS
+
+
+def serp_extras_kinds() -> set:
+    import serp_extras
+    return set(serp_extras.SITE_KINDS)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

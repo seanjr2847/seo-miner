@@ -20,6 +20,7 @@ self-check:  python serp_extras.py
 """
 import statistics
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -53,7 +54,14 @@ DEFAULT = ",".join(k for k, v in KINDS.items() if v["default"])
 # rank 단계가 아니다 — llm_mentions 는 AI 인용 확인 단계(collect_ai)의 하위 걸음이다.
 SITE_KINDS: dict[str, dict] = {
     "llm_mentions": {"name": "LLM 언급 집계", "usd": 0.10, "fresh_days": 30},
+    # AI 가 실제로 받은 질문 원문 + 질문별 AI 검색량(LLM Mentions search_mentions). 받는 쪽은
+    # 질문 만들기(gen_prompts)다 — 지어낸 질문 대신 실제로 들어온 질문을 재료로 싣는다.
+    # 값 꼴은 {"by_locale": {시장: {checked_at, platform, targets, questions}}} — 시장마다 따로 받는다.
+    # 단가: 과제 $0.1 + 행 $0.001 × 최대 100행(가격표 2026-11-25).
+    "llm_questions": {"name": "AI 가 받은 실제 질문", "usd": 0.20, "fresh_days": 30},
 }
+LLM_Q_LIMIT = 100               # 한 번에 받는 질문 수(행 과금)
+LLM_Q_KEEP = 40                 # 시장마다 남기는 질문 수(AI 검색량 큰 순)
 # 의도 축 → 사람 말. 축 이름의 정본은 scoring.classify_intent 의 반환값 넷이다.
 AXIS_NAME = {"info": "정보", "navigational": "탐색", "commercial": "비교·조사",
              "transactional": "구매"}
@@ -283,6 +291,67 @@ def llm_mentions(conn, project, keywords, locale: str) -> tuple[dict | None, flo
     data["targets"] = [t["keyword"] for t in targets]
     db.write_serp_extra(conn, project["id"], None, "llm_mentions", data)
     return data, cost, f"llm_mentions={len(data['top'])}"
+
+
+def llm_platform(locale: str) -> str:
+    """search_mentions 의 플랫폼 — ChatGPT 질문은 미국·영어만 있다(locations_and_languages,
+    2026-11-25 확인: 2840/en 만 chat_gpt). 나머지 시장(ko·ja·es·ar 포함)은 구글 AI 개요다."""
+    loc, lang, _ = serp_adapter.location(locale)
+    return "chat_gpt" if (loc == "United States" and lang == "en") else "google"
+
+
+def parse_llm_questions(result) -> list[dict]:
+    """search_mentions → [{question, ai_search_volume}] (AI 검색량 큰 순, 같은 질문 하나).
+
+    문서: https://docs.dataforseo.com/v3/ai_optimization/llm_mentions/search_mentions/live/
+      result[].items[] — 답변 하나에 한 항목. question·ai_search_volume 을 쓴다. 볼륨을 못 읽으면 None."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for it in _items(result):
+        q = " ".join(str(it.get("question") or "").split())
+        if not q or len(q) > 300 or q.casefold() in seen:
+            continue
+        seen.add(q.casefold())
+        v = it.get("ai_search_volume")
+        out.append({"question": q, "ai_search_volume": v if isinstance(v, (int, float)) else None})
+    out.sort(key=lambda x: -(x["ai_search_volume"] or 0))
+    return out[:LLM_Q_KEEP]
+
+
+def llm_questions(conn, project, keywords, locale: str) -> tuple[list | None, float, str]:
+    """이 시장에서 AI 가 실제로 받은 질문 — (질문 목록 | None, 실청구액, note).
+
+    주제는 그 시장에서 재는 검색어 최대 10개(질문 안에 그 낱말이 든 것 — 문서상 여러 대상은
+    한 목록으로 합쳐 온다). fresh_days 안에 받은 시장은 다시 안 받고 받아 둔 것을 준다.
+    키가 없거나 검색어가 없으면 받지 않고 까닭을 note 로 돌려준다. 실패는 부르는 쪽이 삼킨다."""
+    spec = SITE_KINDS["llm_questions"]
+    pid = project["id"]
+    got = (db.serp_extras(conn, pid, "llm_questions").get(None) or {}).get("data") or {}
+    by = dict(got.get("by_locale") or {})
+    old = by.get(locale) or {}
+    try:
+        age = (datetime.now(timezone.utc)
+               - datetime.fromisoformat(str(old.get("checked_at")).replace("Z", "+00:00"))).days
+    except (TypeError, ValueError):
+        age = None
+    if old.get("questions") is not None and age is not None and age < spec["fresh_days"]:
+        return old["questions"], 0.0, "llm_questions=fresh"
+    if not serp_adapter.has_dataforseo():
+        return None, 0.0, "llm_questions=skipped(DataForSEO 키 없음)"
+    targets = [{"keyword": str(k)[:250], "search_scope": ["question"]}
+               for k in list(dict.fromkeys(str(k).strip() for k in keywords))[:10] if k]
+    if not targets:
+        return None, 0.0, "llm_questions=skipped(검색어 없음)"
+    plat = llm_platform(locale)
+    res, cost = serp_adapter.post_dataforseo(
+        "/ai_optimization/llm_mentions/search_mentions/live",
+        [{"target": targets, **_geo(locale), "platform": plat,
+          "order_by": ["ai_search_volume,desc"], "limit": LLM_Q_LIMIT}], timeout=130)
+    qs = parse_llm_questions(res)
+    by[locale] = {"checked_at": db.now(), "platform": plat,
+                  "targets": [t["keyword"] for t in targets], "questions": qs}
+    db.write_serp_extra(conn, pid, None, "llm_questions", {"by_locale": by})
+    return qs, cost, f"llm_questions={len(qs)}"
 
 
 def payload(conn, project_id: int) -> dict:

@@ -595,6 +595,45 @@ def test_llm_mentions_is_site_level_once_a_month():
     conn.close()
 
 
+def test_llm_questions_are_real_questions_per_market_once_a_month():
+    """AI 가 실제로 받은 질문(search_mentions) — 시장마다 따로 받아 합쳐 두고, 30일 안엔 다시 안 받는다.
+    ChatGPT 질문은 미국·영어만 있어 나머지 시장은 구글 AI 개요로 묻는다."""
+    conn = db.connect()
+    p = _project(conn, "w05_llmq")
+    calls = []
+
+    def fake(path, body, timeout=None):
+        calls.append((path, body))
+        assert path.endswith("/llm_mentions/search_mentions/live"), path
+        return [{"items": [
+            {"question": "강남  써마지 잘하는 곳 어디야?", "ai_search_volume": 90},
+            {"question": "써마지 몇 샷이 적당해?", "ai_search_volume": 400},
+            {"question": "강남 써마지 잘하는 곳 어디야?", "ai_search_volume": 90},   # 같은 질문
+            {"question": "", "ai_search_volume": 5},
+            {"question": "써마지 통증 심해?", "ai_search_volume": None}]}], 0.105
+
+    qs, cost, note = _with_dfs(fake, lambda: serp_extras.llm_questions(
+        conn, p, ["써마지", "써마지", "울쎄라"], "ko-KR"))
+    assert note == "llm_questions=3" and cost == 0.105, note
+    body = calls[0][1][0]
+    assert body["platform"] == "google" and body["order_by"] == ["ai_search_volume,desc"], body
+    assert body["target"] == [{"keyword": "써마지", "search_scope": ["question"]},
+                              {"keyword": "울쎄라", "search_scope": ["question"]}], body
+    assert [q["question"] for q in qs] == ["써마지 몇 샷이 적당해?", "강남 써마지 잘하는 곳 어디야?",
+                                          "써마지 통증 심해?"], qs
+    _q, _c, note_en = _with_dfs(fake, lambda: serp_extras.llm_questions(conn, p, ["thermage"], "en-US"))
+    assert calls[-1][1][0]["platform"] == "chat_gpt" and note_en == "llm_questions=3"
+    by = serp_extras.payload(conn, p["id"])["llm_questions"]["data"]["by_locale"]
+    assert set(by) == {"ko-KR", "en-US"}, "두 번째 시장이 첫 시장을 덮어썼다"
+    n = len(calls)
+    q2, c2, note2 = _with_dfs(fake, lambda: serp_extras.llm_questions(conn, p, ["써마지"], "ko-KR"))
+    assert note2 == "llm_questions=fresh" and c2 == 0 and len(calls) == n and q2 == qs
+    _q, _c, note3 = _with_dfs(fake, lambda: serp_extras.llm_questions(
+        conn, _project(conn, "w05_llmq2"), ["가"], "ko-KR"), key=False)
+    assert note3 == "llm_questions=skipped(DataForSEO 키 없음)"
+    conn.close()
+
+
 # ── 수집기 끝에서 끝까지 ──────────────────────────────────────────────────────
 
 def test_rank_stage_writes_the_new_columns_and_leaves_extras_off_for_serper():

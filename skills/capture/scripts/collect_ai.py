@@ -62,6 +62,14 @@ def engines(names: list[str] | None = None) -> dict[str, dict]:
     return {k: table[k] for k in names if k in table}
 
 
+def prompt_samples(row, names, samples: int) -> int:
+    """이 질문을 엔진마다 몇 번 묻나 — 브랜드 질문은 1, 나머지는 표본 수(ai_samples).
+    판정은 scoring.prompt_branded 한 벌이다(화면의 브랜드/비브랜드 나눔과 같다)."""
+    keys = row.keys() if hasattr(row, "keys") else row
+    aim = row["aim"] if "aim" in keys else None
+    return 1 if scoring.prompt_branded(row["prompt"], row["category"], aim, names) else max(1, samples)
+
+
 def estimate_usd(project: str | None) -> float:
     """이번 AI 인용 확인의 추정 비용 — 켠 질문 수(상한 안) × 표본 × 엔진 단가 합.
     사이트를 못 읽으면 상한·기본 엔진으로 잡는다(모르면 넉넉하게)."""
@@ -76,7 +84,17 @@ def estimate_usd(project: str | None) -> float:
                 p = db.get_project(conn, project)
                 # 상한은 시장마다다(collect) — 시장마다 켠 질문 수를 상한으로 자른 합.
                 n = sum(min(m["active"], cap) for m in db.ai_prompt_markets(conn, p["id"]))
-                chosen = db.project_cfg(conn, p).get("surfaces_ai")
+                cfg = db.project_cfg(conn, p)
+                chosen = cfg.get("surfaces_ai")
+                if samples > 1:
+                    # 브랜드 질문은 한 번만 묻는다(prompt_samples) — 켠 질문을 같은 판정으로 센다.
+                    names = scoring.brand_names(scoring.aliases_of(cfg))
+                    per = [prompt_samples(r, names, samples) for r in conn.execute(
+                        "SELECT prompt, category, aim FROM ai_prompts WHERE project_id=? "
+                        "AND is_active=1", (p["id"],))]
+                    if per and n:
+                        # 상한으로 잘린 만큼은 평균 표본으로 친다
+                        samples = sum(per) / len(per)
             finally:
                 conn.close()
         except Exception:
@@ -365,7 +383,7 @@ def collect(project: str, *,
         pick = ("WITH last AS (SELECT c.prompt_id, MAX(r.finished_at) at FROM ai_checks c "
                 "JOIN runs r ON r.id=c.run_id WHERE " + scoring.ai_run_done("r") +
                 " GROUP BY c.prompt_id) "
-                "SELECT p.id, p.prompt, p.category, COALESCE(p.locale, ?) locale "
+                "SELECT p.id, p.prompt, p.category, p.aim, COALESCE(p.locale, ?) locale "
                 "FROM ai_prompts p "
                 "LEFT JOIN last l ON l.prompt_id=p.id "
                 "WHERE p.project_id=? AND p.is_active=1 {cat}"
@@ -374,7 +392,7 @@ def collect(project: str, *,
         if ids:
             ids_list = [int(x) for x in ids.split(",") if x.strip()]
             prompts = conn.execute(
-                f"""SELECT id, prompt, category, COALESCE(locale, ?) locale FROM ai_prompts
+                f"""SELECT id, prompt, category, aim, COALESCE(locale, ?) locale FROM ai_prompts
                      WHERE project_id=? AND id IN ({','.join('?' * len(ids_list))}) ORDER BY id""",
                 (markets[0], p["id"], *ids_list)).fetchall()
         else:
@@ -405,10 +423,15 @@ def collect(project: str, *,
                   AND """ + collector.today_clause("r.started_at"),
             (p["id"],), force=force)
 
-        total_calls = len(prompts) * len(engines_d) * samples
+        # 표본(samples)은 비브랜드 질문에만 — 브랜드 질문은 설명이 맞는지 보는 점검이라 한 번이면
+        # 된다(prompt_samples). 표본을 2로 올려도 브랜드 몫만큼 덜 든다.
+        names = scoring.brand_names(scoring.aliases_of(cfg))
+        n_of = {row["id"]: prompt_samples(row, names, samples) for row in prompts}
+        total_calls = sum(n_of.values()) * len(engines_d)
         # 프롬프트마다 "아직 안 본" 작업 목록. 프롬프트 단위로 묶어 두는 이유는
         # 한 프롬프트가 끝날 때마다 진행 표시를 찍기 위해서다 (긴 런의 유일한 신호).
-        todo = [(row, [(engine, sample) for engine in engines_d for sample in range(samples)
+        todo = [(row, [(engine, sample) for engine in engines_d
+                       for sample in range(n_of[row["id"]])
                        if (row["id"], engine, sample) not in checked_today])
                 for row in prompts]
         calls_to_make = sum(len(tasks) for _, tasks in todo)

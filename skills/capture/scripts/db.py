@@ -1996,7 +1996,11 @@ SETTING_KEYS = ("brand_aliases", "tools", "foreign_brands", "place_aliases",
                 "auto_keywords",
                 # 유료 선택 수집을 사이트마다 켜고 끈다 — 순위에 덧붙는 종류(쉼표 글, 정본
                 # serp_extras.KINDS)와 LLM 언급 집계(0|1, collect_ai). 없으면 코드 기본값.
-                "serp_extras", "ai_llm_mentions")
+                "serp_extras", "ai_llm_mentions",
+                # 질문 만들기 때 AI 가 실제로 받은 질문을 받아 재료로 싣나(0|1, 기본 1 —
+                # 사람이 [질문 만들기]를 누를 때만 돌고 시장마다 30일에 한 번 ~$0.2,
+                # gen_prompts.real_questions)
+                "ai_real_questions")
 # 순위를 한 런에 몇 개까지 재나(limits.max_keywords 의 기본). 추적 키워드는 전부 재는
 # 것이 원칙이고, 이 수는 잘못 켠 수천 개에 돈을 붓지 않게 하는 안전장치다.
 # collect_serp 의 --max-keywords 기본이 이 값이다(두 벌로 적지 않는다).

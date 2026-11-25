@@ -35,7 +35,10 @@ import serp_adapter  # noqa: E402  (로케일 → 영어 언어·나라 이름)
 
 # 검색이 필요 없는 작업이다(:online 을 안 붙인다) — 질문을 짓는 것뿐이라 싸고 빠른
 # 모델로 충분하다. 인용 확인에 쓰는 엔진 표(skill_config.CONFIG["ai_engines"])와는 별개다.
-MODEL = "openai/gpt-4o-mini"
+# 4판부터 작은 모델(gpt-4o-mini)을 안 쓴다 — 3판 질문에 "江南市"(강남은 시가 아니다)·
+# "ディアダー皮膚科"(브랜드를 제멋대로 음차)·"كريم أوليديا"(주사를 크림이라 부름) 같은 오류가
+# 섞였다. 한 번 짓는 데 한 번 부르는 일이라 큰 모델이어도 몇 센트다(plays.PLAY_MODEL 과 같다).
+MODEL = "anthropic/claude-sonnet-5.5"
 # 질문 갈래는 여기 한 벌이고, 만드는 쪽(이 파일)·고르는 쪽(화면의 <select>)·받는
 # 쪽(server/app.py)이 전부 이걸 가리킨다. 셋으로 갈라져 있던 시절 실제로 어긋났다:
 # 화면만 "general" 을 선택지에 넣고 있었고 이 파일은 그 값을 몰랐다.
@@ -49,7 +52,15 @@ CATEGORY_CHOICES = CATEGORIES + (DEFAULT_CATEGORY,)
 #   · INTENT_LABELS     — 화면에 쓸 이름. 기본값 id("general")가 영문 그대로 목록에 떴다.
 #     호스팅 질문 목록 API(intent_labels)·대시보드 페이로드(ai_intent_labels)가 이걸 싣는다.
 INTENT_LABELS = {**{c: c for c in CATEGORIES}, DEFAULT_CATEGORY: "일반"}
-MIN_LEN, MAX_LEN = 6, 120
+# 실제 질문은 지어낸 질문보다 길다(누가·어디서·무슨 조건으로) — 120자는 맥락을 자른다.
+# 위 끝은 DataForSEO LLM Responses 의 user_prompt 상한(500자) 안이다.
+MIN_LEN, MAX_LEN = 6, 220
+# 브랜드 질문(이름을 넣은 질문)의 몫 상한 — 신규 획득이 아니라 설명 정확성 점검이라 적게 둔다
+# (Peec 기본 20%). 판정은 scoring.prompt_branded 한 벌.
+BRAND_SHARE = 0.2
+# "X 란 무엇인가" 꼴의 몫 상한. 병원 이름은 안 나오지만(언급 0) 우리 페이지가 출처로 붙는
+# 일은 오히려 잦았다(theotherskin 11-24 회차 인용 26% vs 그 밖 15%) — 없애지 않고 줄인다.
+DEFINE_SHARE = 0.25
 
 # 생성기 판 — 새 질문마다 ai_prompts.gen_version 으로 찍힌다(save). 판이 없던 동안,
 # 사이트를 모르고 지은 옛 질문 1~20번이 생성기를 고친 뒤에도 똑같이 활성으로 남아
@@ -63,8 +74,14 @@ MIN_LEN, MAX_LEN = 6, 120
 #          15개였다 — gucci 는 /beauty… 가 /handbags·/women 보다 앞이라 질문 7개 중 5개가
 #          뷰티였다. 이제 페이지는 노출·추정 검색량 순으로 섹션마다 돌아가며, 주제는
 #          추적 검색량 순으로 싣고, 서치콘솔이 없으면 추정 순위 검색어를 대신 싣는다.
+#   4    — 재료를 **사람이 실제로 물은 말**로 바꾼 판. 3판은 페이지 목록을 주재료로 받아 페이지
+#          제목을 질문으로 옮겼다(theotherskin 켜진 60개 중 29개) — 자사 목록으로 지은 질문 세트는
+#          실제보다 좋게 나온다(SISTRIX: 4곳 중 3곳). 이제 재료 순서는 AI 가 실제로 받은 질문
+#          (serp_extras.llm_questions) → AI 가 답하며 돌린 검색어(ai_checks.fanout_json) →
+#          서치콘솔 질문형 검색어이고, 페이지 목록은 겨냥(aim)을 맞추는 데만 쓴다. 브랜드 질문은
+#          BRAND_SHARE, 정의형은 DEFINE_SHARE 를 넘지 않게 거르고(vet), 장소·고르는 상황을 붙인다.
 # 짓는 방식을 바꾸면 이 수를 올린다 — 그 전 판 질문이 전부 "다시 만들기 권함"으로 뜬다.
-GEN_VERSION = 3
+GEN_VERSION = 4
 # 겨냥(ai_prompts.aim)의 꼴. 모델이 준 겨냥은 재료 목록에 **글자 그대로** 있어야만
 # 받는다(parse) — 없는 페이지를 겨냥했다고 적지 않는다.
 AIM_KINDS = ("page", "keyword", "cluster", "brand")
@@ -97,16 +114,36 @@ SYSTEM = (
     "language), phrased the way a real person there types into ChatGPT — full questions, "
     "not keywords, and never mention that this is a test. Keep the category values exactly "
     "as given even though they are Korean labels. "
-    f"Cover all {len(CATEGORIES)} categories: 추천 (asking for recommendations in this field), "
-    "비교 (comparing options), 문제해결 (solving the problem the site addresses), "
-    "브랜드 (asking about this brand by name). Most prompts must NOT name the brand — "
-    "the point is to find out who gets cited when the user does not already know us. "
-    "Ground every prompt in the page list you are given — that is what this site actually "
-    "offers. Prefer what is specific to this site (its own named offerings, the specific "
-    "problems it solves, the people behind it) over generic industry terms that every "
-    "competitor also targets. Never invent a service the page list does not show. "
-    "For 브랜드, ask about the site's own named services and people too, not just its name. "
-    "Every list is ordered by search demand, most first. Spread the prompts across the "
+    f"Cover all {len(CATEGORIES)} categories: 추천 (asking which provider, place or option to "
+    "pick), 비교 (comparing options or providers), 문제해결 (a person describing their own "
+    "problem and asking what to do), 브랜드 (asking about this brand by name). "
+    # 재료의 순서 — 실제로 물은 말이 먼저다. 페이지 목록은 무엇을 하는 곳인지 알고 겨냥을 고르는 데만.
+    "SOURCE OF WORDING: base the prompts on what people actually ask. Use, in this order of "
+    "preference, the lists 'Questions people actually asked AI', 'Searches the AI ran while "
+    "answering' and 'Search queries' — keep their concerns and their wording style, rewrite "
+    "them into a natural question, and do not copy them word for word when they are "
+    "fragments. The page list only tells you what this site offers and gives the aim; never "
+    "turn a page title or a menu name into a question, and never invent a service the page "
+    "list does not show. "
+    # 고르는 상황 — 답이 업체·장소·제품을 늘어놓게 되는 질문이어야 누가 인용되는지 보인다.
+    "SHAPE: most prompts must be decision questions whose answer would name providers, "
+    "places, products or sources (which to choose, where to go, which is better for whom, "
+    "what it costs, how long recovery takes, whether it is safe for me). At most a quarter "
+    "may be plain 'what is X' definitions. Give about half of the prompts the realistic "
+    "context a real asker adds — who they are and their constraint (for example age, skin "
+    "concern, budget, time available, visiting from abroad, fear of pain or downtime). "
+    "When the message gives a business location, write about half of the prompts with that "
+    "city or district in them and the rest without any place, so both can be compared. "
+    # 브랜드 — 적게, 따로, 정확성 점검으로.
+    "BRAND: only prompts in category 브랜드 may contain a brand name, and they must be at "
+    f"most {int(BRAND_SHARE * 100)}% of the prompts. 브랜드 prompts check whether the AI "
+    "describes this business correctly — ask about its specific services, doctors, location, "
+    "prices or reviews. Whenever you write a brand name, copy one of the given Brand names "
+    "exactly — never translate or transliterate it. Never write as if speaking to the "
+    "business itself ('do you offer', 'your clinic'). "
+    "Prefer what is specific to this site (its own named offerings and the specific problems "
+    "it solves) over generic industry terms that every competitor also targets. "
+    "Every list is ordered by demand, most first. Spread the prompts across the "
     "different topics and page sections roughly in proportion to that demand — no single "
     "topic or section may take more than a third of the prompts."
 )
@@ -285,6 +322,84 @@ def _tracked(conn, project_id: int, n: int, locale: str | None = None,
                                           lambda r: r["volume"])[:n]]
 
 
+# 질문형 검색어 — 사람이 AI 에 묻는 말에 가까운 서치콘솔 검색어. 낱말 넷 이상이거나 묻는 말이
+# 들었거나, 띄어 쓰지 않는 글(일본어)은 길이로 본다. 언어마다 다 거르려는 게 아니라 앞에 세우려는 것이다.
+_ASKY = re.compile(r"\?|？|\b(how|what|why|which|where|when|best|vs|worth|cost|price|near)\b"
+                   r"|어떻게|왜|뭐|무엇|어디|추천|차이|비용|가격|후기|효과|부작용|얼마"
+                   r"|おすすめ|違い|値段|効果|どこ|なぜ|cómo|qué|cuál|mejor|precio|كيف|ما|أفضل|سعر",
+                   re.I)
+
+
+def _questiony(q: str) -> bool:
+    q = str(q or "").strip()
+    return (len(q.split()) >= 4 or bool(_ASKY.search(q))
+            or (" " not in q and len(q) >= 12))
+
+
+def _fanout_queries(conn, project_id: int, locale: str, site0: str, n: int = 15) -> list[str]:
+    """AI 가 우리 질문에 답하며 실제로 돌린 검색어 — 이 시장 질문의 최근 두 회차, 많이 쓴 순.
+    사람이 칠 법한 말이고, 그 검색결과가 AI 가 고르는 출처 후보다(scoring._fanout_of 한 벌)."""
+    import scoring
+    runs = [r[0] for r in conn.execute(
+        """SELECT DISTINCT c.run_id FROM ai_checks c JOIN ai_prompts p ON p.id=c.prompt_id
+            WHERE p.project_id=? AND c.fanout_json IS NOT NULL
+            ORDER BY c.run_id DESC LIMIT 2""", (project_id,))]
+    if not runs:
+        return []
+    cnt: dict[str, int] = {}
+    for r in conn.execute(
+            f"""SELECT c.fanout_json FROM ai_checks c JOIN ai_prompts p ON p.id=c.prompt_id
+                 WHERE p.project_id=? AND COALESCE(p.locale, ?)=?
+                   AND c.run_id IN ({','.join('?' * len(runs))})""",
+            (project_id, site0, locale, *runs)):
+        for q in scoring._fanout_of(r["fanout_json"]):
+            cnt[q] = cnt.get(q, 0) + 1
+    return [q for q, _ in sorted(cnt.items(), key=lambda kv: (-kv[1], kv[0]))[:n]]
+
+
+def _asked(conn, project_id: int, locale: str, n: int = 25) -> list[str]:
+    """AI 가 실제로 받은 질문(serp_extras.llm_questions 가 받아 둔 것) — AI 검색량 큰 순."""
+    got = (db.serp_extras(conn, project_id, "llm_questions").get(None) or {}).get("data") or {}
+    qs = ((got.get("by_locale") or {}).get(locale) or {}).get("questions") or []
+    return [f"{x['question']}" + (f" ({x['ai_search_volume']}/mo)" if x.get("ai_search_volume") else "")
+            for x in qs[:n] if x.get("question")]
+
+
+def _place(conn, project_id: int) -> str | None:
+    """업체 위치(지역 단계가 받은 우리 업체 주소) — 장소를 넣은 질문과 뺀 질문을 둘 다 짓게 준다."""
+    r = conn.execute(
+        """SELECT address FROM local_places WHERE project_id=? AND role='self'
+              AND address IS NOT NULL AND TRIM(address)<>''
+            ORDER BY checked_date DESC, (source='gbp') DESC LIMIT 1""", (project_id,)).fetchone()
+    return r["address"] if r else None
+
+
+def real_questions(conn, project: str, locale: str) -> str:
+    """이 시장에서 AI 가 실제로 받은 질문을 받아 둔다(유료, 30일에 한 번) — runs 에 안 남는
+    질문 만들기의 한 걸음이라 note 만 돌려준다. 실패해도 질문 짓기는 계속한다(재료가 하나 빠질 뿐).
+    끄기: 사이트 설정 ai_real_questions=0."""
+    import serp_adapter
+    import serp_extras
+    p = db.get_project(conn, project)
+    if not int(db.project_cfg(conn, p).get("ai_real_questions", 1) or 0):
+        return "llm_questions=off"
+    site = db.site_locales(conn, p["id"])
+    mk = locale if len(site) > 1 else None
+    kws = [r["keyword"] for r in conn.execute(
+        """SELECT keyword FROM keywords WHERE project_id=? AND is_active=1
+              AND (? IS NULL OR COALESCE(locale, ?)=?)
+            ORDER BY (source='seed') DESC, COALESCE(volume, 0) DESC, id LIMIT 10""",
+        (p["id"], mk, site[0], mk))]
+    try:
+        _qs, cost, note = serp_extras.llm_questions(conn, p, kws, locale)
+        return note + (f" ${cost:.2f}" if cost else "")
+    except serp_adapter.Fatal as e:
+        return f"llm_questions=stopped({str(e)[:80]})"
+    except Exception as e:
+        print(f"[gen_prompts] 실제 질문 받기 실패: {e}", file=sys.stderr)
+        return f"llm_questions=failed({type(e).__name__})"
+
+
 def brief(conn, project: str, top_n: int = 15, locale: str | None = None) -> dict:
     """질문을 지을 재료 — 사이트가 이미 가진 사실만. 없으면 없는 대로 짓는다.
 
@@ -304,18 +419,26 @@ def brief(conn, project: str, top_n: int = 15, locale: str | None = None) -> dic
     cur, _, period, _ = scoring.snapshot_pair(conn, p["id"])
     queries = []
     if cur:
-        queries = [r["query"] for r in conn.execute(
+        # 노출 순으로 넉넉히 읽고 질문형을 앞에 세운다(4판) — 상위 노출은 대개 짧은 이름
+        # 검색어라 그대로 15개를 자르면 사람이 AI 에 묻는 말이 하나도 안 남는다.
+        got = [r["query"] for r in conn.execute(
             """SELECT g.query, SUM(g.impressions) imp FROM gsc_snapshots g
                 WHERE g.project_id=? AND g.snapshot_date=? AND g.period_days=?
                   AND (? IS NULL OR EXISTS (
                         SELECT 1 FROM keywords k WHERE k.project_id=g.project_id
                            AND k.keyword=g.query AND COALESCE(k.locale, ?)=?))
                 GROUP BY g.query ORDER BY imp DESC LIMIT ?""",
-            (p["id"], cur, period, mk, site[0], mk, top_n))]
+            (p["id"], cur, period, mk, site[0], mk, top_n * 20))]
+        asky = [q for q in got if _questiony(q)]
+        queries = (asky + [q for q in got if q not in asky])[:top_n]
     return {"name": p["name"], "domain": p["domain"], "type": p["type"],
             "locale": locale,
             "aliases": cfg.get("brand_aliases") or [],
             "queries": queries,
+            # 4판 재료 — 실제로 물은 말. 없으면 빈 목록이고 프롬프트가 "(none)"으로 받는다.
+            "asked": _asked(conn, p["id"], locale),
+            "fanout": _fanout_queries(conn, p["id"], locale, site[0]),
+            "place": _place(conn, p["id"]),
             # 서치콘솔이 없을 때만 — 있으면 실측이 이긴다(추정을 같이 실으면 같은 수요를
             # 두 번 센다).
             "ranked": [] if queries else _ranked(conn, p["id"], top_n),
@@ -369,16 +492,23 @@ def user_msg(b: dict, n: int) -> str:
     lang, country = serp_adapter.describe(b["locale"])
     ranked = (f"Search queries this site ranks for (estimated, by monthly volume): "
               f"{', '.join(b['ranked'])}\n") if b.get("ranked") else ""
+    asked = "\n".join(f"  {x}" for x in (b.get("asked") or [])) or "  (none yet)"
+    fan = "\n".join(f"  {x}" for x in (b.get("fanout") or [])) or "  (none yet)"
+    place = (f"Business location: {b['place']}\n") if b.get("place") else ""
     return (f"Site: {b['name']} ({b['domain']})\n"
             f"Kind: {b['type']}\n"
             f"Audience: {lang} speakers in {country} ({b['locale']}) — write in {lang}.\n"
-            f"Brand names: {alias}\n"
-            f"Search queries this site already gets impressions for: {q}\n"
+            f"Brand names (copy exactly, never translate): {alias}\n"
+            f"{place}"
+            f"Questions people actually asked AI on this topic (by AI search volume):\n{asked}\n"
+            f"Searches the AI ran while answering our earlier questions (most used first):\n{fan}\n"
+            f"Search queries this site already gets impressions for (question-like first): {q}\n"
             f"{ranked}"
             f"Keywords this site targets: {seeds}\n"
             f"Keywords this site tracks (spread across its topics): {tracked}\n"
             f"Topics this site tracks: {topics}\n"
-            f"Pages this site actually has (its services, in its own words):\n{pages}\n\n"
+            f"Pages this site actually has (what it offers — use for the aim only, never as "
+            f"wording):\n{pages}\n\n"
             f"Write exactly {n} prompts.")
 
 
@@ -434,6 +564,47 @@ def parse(text: str, allowed: dict[str, str] | None = None) -> list[dict]:
     return out
 
 
+# "X 란 무엇인가" 꼴 — 고르는 말(추천·차이·best …)이 같이 들었으면 정의형이 아니다.
+_DEFINE = re.compile(r"^\s*(what\s+(is|are)\b|what'?s\b|¿?\s*qu[ée]\s+(es|son)\b|ما\s+(هو|هي)\b)"
+                     r"|(란|이란)\s*(무엇|뭐)|뭐(야|예요|에요|죠|지)\s*\??\s*$|とは(何|なん)", re.I)
+_DECIDE = re.compile(r"\b(best|recommend|which|difference|differ|vs|versus|better|worth|cost|price"
+                     r"|mejor|diferencia|precio)\b|추천|차이|비교|가격|비용|어디|おすすめ|違い|比較|値段"
+                     r"|どこ|أفضل|الفرق|سعر", re.I)
+
+
+def definitional(prompt: str) -> bool:
+    """정의만 묻는 질문인가 — 답이 업체·출처를 늘어놓지 않는 꼴(병원 이름 언급 0)."""
+    p = str(prompt or "")
+    return bool(_DEFINE.search(p)) and not _DECIDE.search(p)
+
+
+def vet(rows: list[dict], names, n: int) -> list[dict]:
+    """모델이 지은 질문 → 몫을 지킨 질문(앞에서부터 n 개까지).
+
+    · 브랜드 이름이 든 질문은 갈래를 '브랜드'로 바로잡는다 — 다른 갈래에 섞이면 그 갈래 인용률이
+      부푼다(판정은 scoring.prompt_branded 한 벌). 브랜드 질문은 BRAND_SHARE 까지만.
+    · 정의형(definitional)은 DEFINE_SHARE 까지만.
+    모델에게는 몫보다 조금 더 짓게 하고(suggest), 넘친 것을 여기서 버린다."""
+    import scoring
+    bcap, dcap = max(1, int(n * BRAND_SHARE)), max(1, int(n * DEFINE_SHARE))
+    out: list[dict] = []
+    brand = define = 0
+    for r in rows:
+        if scoring.prompt_branded(r["prompt"], r.get("category"), r.get("aim"), names):
+            if brand >= bcap:
+                continue
+            brand += 1
+            r = {**r, "category": "브랜드"}
+        elif definitional(r["prompt"]):
+            if define >= dcap:
+                continue
+            define += 1
+        out.append(r)
+        if len(out) >= n:
+            break
+    return out
+
+
 def require_key() -> str:
     """OpenRouter 키 — 없으면 RuntimeError(사유 그대로 화면에 간다). 시장을 고르기 전에
     부른다: 키가 없으면 어느 시장도 못 짓는다."""
@@ -446,7 +617,7 @@ def require_key() -> str:
 
 
 def suggest(project: str, *, n: int = 20, conn=None, model: str = MODEL,
-            ask=None, locale: str | None = None) -> list[dict]:
+            ask=None, locale: str | None = None, fetch_real: bool = True) -> list[dict]:
     """질문 n개를 지어 돌려준다. 저장은 하지 않는다(save 가 한다).
 
     Args:
@@ -455,6 +626,8 @@ def suggest(project: str, *, n: int = 20, conn=None, model: str = MODEL,
         locale: 묻을 시장(사이트 시장 중 하나). 없으면 사이트 기본 시장. 행마다 실린다
         conn: 이미 열린 Brain 연결 — 주면 그것을 쓰고 닫지 않는다
         model: OpenRouter 모델 슬러그
+        fetch_real: 짓기 전에 그 시장에서 AI 가 실제로 받은 질문을 받아 둔다(real_questions —
+             유료 ~$0.2, 시장마다 30일에 한 번, 사이트 설정 ai_real_questions=0 이면 안 받는다)
         ask: fn(model, prompt, api_key, locale) -> {"content": ...}
              기본값은 collect_ai.ask_openrouter — 자체점검이 여기를 갈아끼운다. AI 인용 확인
              (collect_ai.ask)은 DataForSEO 로 묻지만, 이 지시는 사이트 소개를 통째로 실어
@@ -471,15 +644,23 @@ def suggest(project: str, *, n: int = 20, conn=None, model: str = MODEL,
     own = conn is None
     conn = conn or db.connect()
     try:
+        if fetch_real:
+            # AI 가 실제로 받은 질문 — 받아 두면 brief 가 재료로 싣는다. 못 받아도 계속 짓는다.
+            loc = locale or db.site_locales(conn, db.get_project(conn, project)["id"])[0]
+            print(f"[gen_prompts] {loc}: {real_questions(conn, project, loc)}", file=sys.stderr)
         b = brief(conn, project, locale=locale)
     finally:
         if own:
             conn.close()
+    import scoring
+    names = scoring.brand_names([b["name"], *b["aliases"]])
+    # 몫(vet)으로 버릴 만큼 조금 더 짓게 한다.
+    ask_n = min(40, n + max(2, n // 3))
     # SYSTEM 을 프롬프트 앞에 붙여 보낸다 — collect_ai.ask_openrouter 의 system 자리는 "실제
     # 사용자처럼 답하라"라서 그대로 쓰면 질문이 아니라 답이 온다.
-    res = ask(model, SYSTEM + "\n\n" + user_msg(b, n), key, b["locale"])
+    res = ask(model, SYSTEM + "\n\n" + user_msg(b, ask_n), key, b["locale"])
     return [{**r, "locale": b["locale"]}
-            for r in parse(res.get("content", ""), targets(b))[:n]]
+            for r in vet(parse(res.get("content", ""), targets(b)), names, n)]
 
 
 def plan_markets(conn, project: str, *, locale: str | None = None,
@@ -767,6 +948,52 @@ def _selfcheck() -> None:
     assert "ranks for (estimated" in m and "구찌 가방" in m, m
     assert targets(gb).get("구찌 벨트") == "keyword:구찌 벨트", "추적 검색어를 겨냥으로 못 받는다"
     assert "no single topic" in SYSTEM, "프롬프트가 고르게 나누라고 말하지 않는다"
+
+    # ── 4판: 브랜드 판정·몫·정의형 ─────────────────────────────────────────────
+    import scoring
+    names = scoring.brand_names(["theotherskin", "디아더피부과", "The Other Dermatology Clinic"])
+    assert "The Other Dermatology" in names and "The Other" in names, names   # 업종 꼬리를 뗀 앞부분
+    br = lambda p, c="추천": scoring.prompt_branded(p, c, None, names)  # noqa: E731
+    assert br("What is the signature treatment offered by The Other Dermatology?")
+    assert br("¿Dónde se encuentra la clínica The Other en Seúl?")
+    assert br("디아더피부과 의료진은 어떤 분들인가요?") and br("Is THEOTHERSKIN legit?")
+    assert br("아무 말", "브랜드"), "갈래가 브랜드면 이름이 없어도 브랜드 질문이다"
+    assert not br("On the other hand, is Thermage better than Ultherapy?"), "일반 영어에 걸렸다"
+    assert not br("강남 리프팅 잘하는 피부과 추천해줘")
+    assert definitional("What is ABNOM and how does it work?")
+    assert definitional("オリディアとは何ですか？") and definitional("써마지란 무엇인가요?")
+    assert not definitional("What is the difference between Sofwave and Ultherapy?")
+    assert not definitional("What is the best clinic in Seoul for Ultherapy?")
+    made = ([{"prompt": f"What is treatment {i}?", "category": "문제해결", "aim": None} for i in range(6)]
+            + [{"prompt": f"Is The Other good for laser {i}?", "category": "추천", "aim": None}
+               for i in range(6)]
+            + [{"prompt": f"Which Seoul clinic is best for acne scars, option {i}?",
+                "category": "추천", "aim": None} for i in range(10)])
+    v = vet(made, names, 10)
+    assert len(v) == 10, v
+    assert sum(r["category"] == "브랜드" for r in v) == 2, "브랜드 몫(20%)을 안 지켰다"
+    assert sum(definitional(r["prompt"]) for r in v) == 2, "정의형 몫(25%)을 안 지켰다"
+    assert all(r["category"] == "브랜드" for r in v if "The Other" in r["prompt"]), \
+        "이름이 든 질문의 갈래를 바로잡지 않았다"
+
+    # 재료 — 실제로 물은 말(받아 둔 질문)·AI 가 돌린 검색어·업체 위치가 프롬프트에 실린다
+    db.write_serp_extra(conn, 1, None, "llm_questions", {"by_locale": {"ko-KR": {
+        "checked_at": db.now(), "platform": "google", "targets": ["배경음악"],
+        "questions": [{"question": "유튜브 영상에 쓸 무료 배경음악 어디서 받아?",
+                       "ai_search_volume": 320}]}}})
+    pid1 = conn.execute("SELECT id FROM ai_prompts WHERE project_id=1 ORDER BY id LIMIT 1"
+                        ).fetchone()[0]
+    conn.execute("INSERT INTO ai_checks(prompt_id, run_id, engine, cited, fanout_json) "
+                 "VALUES(?, 9, 'chatgpt', 0, ?)", (pid1, json.dumps(["저작권 없는 bgm 사이트"])))
+    conn.execute("INSERT INTO local_places(project_id, checked_date, source, role, place_key, "
+                 "address) VALUES(1, '2026-11-24', 'gbp', 'self', 'x', '서울 강남구 신사동')")
+    conn.commit()
+    b4 = brief(conn, "ecrett")
+    assert b4["asked"] == ["유튜브 영상에 쓸 무료 배경음악 어디서 받아? (320/mo)"], b4["asked"]
+    assert b4["fanout"] == ["저작권 없는 bgm 사이트"] and b4["place"] == "서울 강남구 신사동", b4
+    m4 = user_msg(b4, 5)
+    assert "actually asked AI" in m4 and "저작권 없는 bgm 사이트" in m4 and "신사동" in m4, m4
+    assert "use for the aim only" in m4, "페이지 목록을 말투 재료로 쓰지 말라는 말이 빠졌다"
     os.environ.pop("OPENROUTER_API_KEY", None)
     print("gen_prompts self-check ok")
 

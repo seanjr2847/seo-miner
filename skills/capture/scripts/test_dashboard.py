@@ -1479,6 +1479,43 @@ def test_gather_ai_health_reaches_the_screen():
     conn.close()
 
 
+def test_gather_ai_splits_branded_prompts_and_marks_set_changes():
+    """브랜드 질문은 머리 숫자에서 빠진다 — 이름을 넣어 물으면 AI 는 거의 늘 우리를 말해서
+    "모르는 사람이 물을 때 우리가 나오나"가 부풀었다(theotherskin 11-24: 브랜드 62%, 나머지 15%).
+    질문 묶음이 크게 바뀐 회차는 set_changed 로 실린다 — 그 앞뒤 차는 같은 자로 잰 변화가 아니다."""
+    conn, pid = _brain("aisplit")
+    db.set_project_settings(conn, pid, {"brand_aliases": ["The Other Dermatology Clinic"]})
+    conn.executemany("INSERT INTO ai_prompts(project_id, prompt, category) VALUES(?,?,?)",
+                     [(pid, "Is The Other Dermatology good?", "추천"),     # 이름이 든 추천 질문
+                      (pid, "best laser clinic in Seoul?", "추천"),
+                      (pid, "what to do about melasma?", "문제해결"),
+                      (pid, "새로 만든 질문 하나", "추천"), (pid, "새로 만든 질문 둘", "비교")])
+    ids = [r[0] for r in conn.execute("SELECT id FROM ai_prompts WHERE project_id=? ORDER BY id",
+                                      (pid,))]
+    # 마지막 회차의 ids[3] 은 링크만 붙고 본문에 이름이 없는 답이다(DataForSEO 로 흔하다)
+    for run_prompts, cited in ((ids[:3], {ids[0]}), (ids[:3], {ids[0], ids[1]}),
+                               (ids[3:], {ids[3]})):
+        with db.run(conn, pid, "ai") as r:
+            for q in run_prompts:
+                conn.execute("INSERT INTO ai_checks(prompt_id,run_id,engine,cited,mentioned) "
+                             "VALUES(?,?,'chatgpt',?,?)",
+                             (q, r.id, int(q in cited), int(q in cited and q != ids[3])))
+    d = dashboard.gather(conn, db.get_project(conn, "aisplit"))
+    t = d["ai_trend"]
+    assert [x["cite_rate"] for x in t] == [33.3, 66.7, 50.0], t
+    assert [x["ub_cite_rate"] for x in t] == [0.0, 50.0, 50.0], "브랜드 질문을 비브랜드 쪽에 셌다"
+    # 도넛 세 조각은 답변 단위로 센 값이라 합이 답변 수와 같다(인용 ⊄ 언급이어도)
+    mx = d["matrix"]
+    assert (sum(r["cited"] for r in mx), sum(r["named_only"] for r in mx),
+            sum(r["neither"] for r in mx), sum(r["total"] for r in mx)) == (1, 0, 1, 2), mx
+    assert [x["set_changed"] for x in t] == [False, False, True], t
+    sp = d["ai_split"]   # 최신 회차(질문 둘, 브랜드 없음)
+    assert sp["branded"]["checks"] == 0 and sp["unbranded"]["checks"] == 2, sp
+    # 최신 회차 줄마다 브랜드 표시가 실린다 — 화면은 판정하지 않고 이 값을 쓴다
+    assert all(r["branded"] is False for r in d["ai_by_prompt"]), d["ai_by_prompt"]
+    conn.close()
+
+
 def test_gather_ai_referrals_none_is_not_zero():
     """AI 에서 온 방문 — "안 쟀다"(None)와 "쟀고 0"([])이 페이로드에서 갈린다.
 

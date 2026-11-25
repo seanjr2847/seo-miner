@@ -1003,6 +1003,18 @@ def _axis_rank(conn, pid: int) -> dict:
     }
 
 
+# 앞 회차와 물은 질문이 이 비율(자카드) 밑으로 겹치면 "질문이 바뀐 회차"다.
+AI_SET_SAME = 0.8
+
+
+def _brand_aliases(conn, pid: int) -> list[str]:
+    p = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    if not p:
+        return []
+    cfg = db.project_cfg(conn, p)
+    return scoring.aliases_of({**cfg, "name": cfg.get("name") or p["name"]})
+
+
 def _axis_ai(conn, pid: int) -> dict:
     """AI 인용 축 (collect_ai) — 엔진×카테고리 인용률, 빠진 질문, 검색×AI 교차."""
     ai_run = scoring.latest_ai_run(conn, pid)   # 답변 전문(ai_answers)도 같은 런을 읽는다
@@ -1011,8 +1023,13 @@ def _axis_ai(conn, pid: int) -> dict:
     cite_share, ai_by_prompt = [], []
     if ai_run:
         matrix = q(conn,
+            # named_only·neither 는 답변 단위로 센다 — DataForSEO 로 묻고부터(v1.164) 링크는
+            # 붙었는데 본문에 이름이 없는 답이 흔해서 "인용 ⊂ 언급"이 깨졌다. 합에서 빼 구하면
+            # 도넛이 인용 80·이름만 0·없음 214(합 294, 실제 242)처럼 어긋났다.
             """SELECT c.engine, p2.category, SUM(c.cited) cited,
-                      SUM(c.mentioned) mentioned, COUNT(*) total
+                      SUM(c.mentioned) mentioned, COUNT(*) total,
+                      SUM(c.mentioned=1 AND COALESCE(c.cited,0)=0) named_only,
+                      SUM(COALESCE(c.cited,0)=0 AND COALESCE(c.mentioned,0)=0) neither
                  FROM ai_checks c JOIN ai_prompts p2 ON p2.id=c.prompt_id
                 WHERE c.run_id=? GROUP BY 1,2 ORDER BY 1,2""", (ai_run["id"],))
         freq: dict[str, int] = {}
@@ -1057,16 +1074,49 @@ def _axis_ai(conn, pid: int) -> dict:
                 WHERE c.run_id=? AND c.cited=0 AND c.mentioned=0
                 GROUP BY p2.id ORDER BY p2.category LIMIT 20""", (ai_run["id"],))
 
+    # 브랜드 질문(이름을 넣은 질문)은 따로 센다 — 신규 획득 숫자가 아니라 설명 정확성 점검이다.
+    # 판정 정본은 scoring.prompt_branded. 화면 머리 숫자·추이는 비브랜드(ub_*)를 앞에 세운다.
+    names = scoring.brand_names(_brand_aliases(conn, pid))
+    prompt_kind = {r["id"]: scoring.prompt_branded(r["prompt"], r["category"], r["aim"], names)
+                   for r in conn.execute("SELECT id, prompt, category, aim FROM ai_prompts "
+                                         "WHERE project_id=?", (pid,))}
+    for r in ai_by_prompt:
+        r["branded"] = bool(prompt_kind.get(r["id"]))
+    ai_split = {k: {f: sum(int(r.get(f) or 0) for r in ai_by_prompt if r["branded"] == (k == "branded"))
+                    for f in ("checks", "cited", "mentioned")} | {
+                    "prompts": sum(1 for r in ai_by_prompt if r["branded"] == (k == "branded"))}
+                for k in ("unbranded", "branded")} if ai_by_prompt else None
+
     # 런별 인용률 추이 — 최신 런 1건(matrix)만 보면 개선/악화가 안 보인다.
-    ai_trend = q(conn,
-        """SELECT COALESCE(r.finished_at, r.started_at) t,
-                  SUM(c.cited) cited, SUM(c.mentioned) mentioned, COUNT(*) checks
-             FROM runs r JOIN ai_checks c ON c.run_id=r.id
-            WHERE r.project_id=? AND r.kind='ai'
-            GROUP BY r.id ORDER BY r.id""", (pid,))
-    for r in ai_trend:
-        r["cite_rate"] = round(100 * r["cited"] / r["checks"], 1)
-        r["mention_rate"] = round(100 * r["mentioned"] / r["checks"], 1)
+    # 회차마다 물은 질문 묶음이 크게 바뀌면(질문 다시 만들기) 그 앞뒤는 다른 표본이다 —
+    # set_changed 로 표시해 화면이 "질문이 바뀐 회차"라고 말한다(추세로 읽지 않게).
+    per_run: dict[int, dict] = {}
+    for row in conn.execute(
+            """SELECT r.id, COALESCE(r.finished_at, r.started_at) t, c.prompt_id,
+                      c.cited, c.mentioned
+                 FROM runs r JOIN ai_checks c ON c.run_id=r.id
+                WHERE r.project_id=? AND r.kind='ai' ORDER BY r.id""", (pid,)):
+        a = per_run.setdefault(row["id"], {"t": row["t"], "cited": 0, "mentioned": 0, "checks": 0,
+                                           "ub_cited": 0, "ub_mentioned": 0, "ub_checks": 0,
+                                           "ids": set()})
+        a["ids"].add(row["prompt_id"])
+        for pre in ("",) + (("ub_",) if not prompt_kind.get(row["prompt_id"]) else ()):
+            a[pre + "cited"] += int(row["cited"] or 0)
+            a[pre + "mentioned"] += int(row["mentioned"] or 0)
+            a[pre + "checks"] += 1
+    ai_trend, prev_ids = [], None
+    for a in per_run.values():
+        ids = a.pop("ids")
+        r = {**a, "cite_rate": round(100 * a["cited"] / a["checks"], 1),
+             "mention_rate": round(100 * a["mentioned"] / a["checks"], 1),
+             "ub_cite_rate": (round(100 * a["ub_cited"] / a["ub_checks"], 1)
+                              if a["ub_checks"] else None),
+             "ub_mention_rate": (round(100 * a["ub_mentioned"] / a["ub_checks"], 1)
+                                 if a["ub_checks"] else None),
+             "set_changed": bool(prev_ids is not None
+                                 and len(ids & prev_ids) < AI_SET_SAME * len(ids | prev_ids))}
+        prev_ids = ids
+        ai_trend.append(r)
 
     # ── 검색 × AI 교차. 재료는 위 두 블록이 이미 잡아 둔 것뿐이라 새 수집이 0이다:
     # 질문별 결과(같은 AI 런)와 GSC 스냅샷을 토큰 겹침으로 맞붙인다. 두 축을 한
@@ -1098,7 +1148,7 @@ def _axis_ai(conn, pid: int) -> dict:
         "ai_gap_rows": ai_gap_rows, "ai_markets": ai_markets,
         # 질문 갈래 id → 사람 말 — 정본은 gen_prompts.INTENT_LABELS(화면에 사본을 안 둔다)
         "ai_intent_labels": gen_prompts.INTENT_LABELS,
-        "missed": missed, "ai_trend": ai_trend,
+        "missed": missed, "ai_trend": ai_trend, "ai_split": ai_split,
         "ai_vs_search": ai_vs_search, "ai_outranked": ai_outranked,
         # 켜 둔 질문 중 끝난 확인에서 못 잰 것·오래된 것·옛 생성기가 지은 것의 개수와
         # 마지막 확인이 끊겼는지. 위 표들은 최신 런 하나만 보므로 거기 안 나오는 질문이

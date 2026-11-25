@@ -649,6 +649,55 @@ def aliases_of(cfg: dict) -> list[str]:
     return [a for a in [cfg.get("name", "")] + (cfg.get("brand_aliases") or []) if a]
 
 
+# ── 브랜드 질문 — 신규 획득이 아니라 설명 정확성 점검이다 ─────────────────────────
+# 브랜드 이름을 넣은 질문은 AI 가 거의 늘 우리를 말한다(호스팅 theotherskin 2026-11-24 회차:
+# 브랜드 질문 인용 62%, 나머지 15%). 한 숫자에 섞으면 "모르는 사람이 물을 때 우리가 나오나"가
+# 부풀어 보인다 — 업계 공통 규칙(Peec·Semrush·Ahrefs·SISTRIX)도 따로 센다.
+# 라틴 별칭의 업종 꼬리(Clinic·Dermatology …)를 뗀 앞부분도 이름으로 본다: 별칭이
+# "The Other Dermatology Clinic" 인데 질문은 "The Other Dermatology" 라고 쓴다.
+_BRAND_TAIL = {"clinic", "clinics", "dermatology", "skin", "hospital", "center", "centre",
+               "medical", "official", "store", "shop", "studio", "group", "co", "inc", "ltd",
+               "llc", "company"}
+
+
+def brand_names(aliases) -> list[str]:
+    """질문 속 브랜드 판정에 쓸 이름 — 별칭 + 라틴 별칭의 업종 꼬리를 뗀 앞부분(중복 없음)."""
+    out: list[str] = []
+    for a in aliases or ():
+        a = " ".join(str(a).split())
+        words = a.split()
+        while words:
+            s = " ".join(words)
+            if len(s) >= 2 and s not in out:
+                out.append(s)
+            if len(words) > 1 and words[-1].lower().strip(".,") in _BRAND_TAIL:
+                words = words[:-1]
+            else:
+                break
+    return out
+
+
+def prompt_branded(prompt: str, category=None, aim=None, names=()) -> bool:
+    """이 질문이 브랜드 질문인가 — 갈래가 '브랜드'이거나 겨냥이 brand 이거나, 이름이 들어 있다.
+
+    라틴 이름은 단어 경계로 본다. 띄어 쓴 이름·대문자로 시작하는 이름은 대소문자까지 맞아야
+    한다 — "The Other" 가 "on the other hand" 에 걸리지 않게. 붙여 쓴 소문자 이름(도메인 꼴
+    theotherskin)은 대소문자를 안 가린다. 라틴 밖 글자(디아더·이승주)는 그대로 포함을 본다."""
+    if category == "브랜드" or aim == "brand":
+        return True
+    text = str(prompt or "")
+    for n in names or ():
+        if not n:
+            continue
+        if n.isascii():
+            flags = 0 if (" " in n or n[:1].isupper()) else re.I
+            if re.search(r"(?<!\w)" + re.escape(n) + r"(?!\w)", text, flags):
+                return True
+        elif n.casefold() in text.casefold():
+            return True
+    return False
+
+
 # 답변 본문의 "목록 줄" — 번호(1. 2) ① (3))·글머리(- * • ·)·번호 붙은 제목(### 1.)·
 # 표의 행(| … |). 추천·비교 답은 후보를 거의 이 꼴로 늘어놓는다. 글머리 기호 뒤에는
 # 공백을 요구한다 — 문단 첫머리의 **굵은 글씨**를 목록으로 세지 않으려고.
