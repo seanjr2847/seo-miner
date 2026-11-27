@@ -802,6 +802,14 @@ def demo() -> None:
         assert [q["prompt"] for q in d["prompts"]] == ["밀리아 제거 잘하는 곳 어디야?"], d
         assert d["prompts"][0]["category"] == "추천" and d["active_total"] == 1, d
         assert edit(op="save", prompt="짧음").status_code == 400, "한 글자짜리도 질문이 된다"
+        # 시장을 골라 넣는다 — 사이트가 안 재는 시장은 400, 재는 시장은 그 시장으로 묻는다.
+        assert edit(op="save", prompt="Best clinic in Seoul for acne scars?",
+                    locale="xx-XX").status_code == 400, "재지 않는 시장에 질문이 들어간다"
+        d2 = edit(op="save", prompt="Best clinic in Seoul for acne scars?", locale="ko-KR").json()
+        assert [q["locale"] for q in d2["prompts"]
+                if q["prompt"] == "Best clinic in Seoul for acne scars?"] == ["ko-KR"], d2
+        assert edit(op="delete", ids=[q["id"] for q in d2["prompts"]
+                                      if q["prompt"].startswith("Best clinic")]).status_code == 200
         assert edit(op="save", prompt="같은 질문 또 넣기 되나요?").status_code == 200
         assert edit(op="save", prompt="같은 질문 또 넣기 되나요?").status_code == 409,             "중복 추가가 조용히 무시된다 — 화면은 아무 변화 없이 다시 그려진다"
         qid = d["prompts"][0]["id"]

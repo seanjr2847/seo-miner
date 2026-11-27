@@ -863,6 +863,13 @@ def api_ai_prompts_edit(b: dict = Depends(_body), project: str = Depends(_projec
 
     pid = db.get_project(c, project)["id"]
     view = _ai_prompts_view(c, project)
+    # 새 질문을 물을 시장 — 안 주면 예전처럼 기본 시장(site_locales 첫 것)이다. 시장을 못 고르면
+    # 영어 질문을 손으로 넣어도 기본 시장(예: 한국어·한국)의 검색 위치로 물어 엉뚱한 성적이 된다.
+    # 고치기(id)는 시장을 안 바꾼다 — 그 질문의 지난 답이 다른 시장의 것이 된다.
+    loc = str(b.get("locale") or "").strip() or None
+    if loc and loc not in db.site_locales(c, pid):
+        raise HTTPException(status_code=400,
+                            detail=f"이 사이트가 재는 시장이 아닙니다: {loc}. 설정에서 시장을 먼저 켜세요.")
     if op == "save":
         if not (gen_prompts.MIN_LEN <= len(text) <= gen_prompts.MAX_LEN):
             raise HTTPException(
@@ -871,7 +878,7 @@ def api_ai_prompts_edit(b: dict = Depends(_body), project: str = Depends(_projec
         try:
             if pid_edit:
                 db.update_ai_prompt(c, pid, pid_edit, text, cat or None)
-            elif db.add_ai_prompts(c, pid, [{"prompt": text,
+            elif db.add_ai_prompts(c, pid, [{"prompt": text, "locale": loc,
                                              "category": cat or "general"}]) == 0:
                 # 조용히 무시하면 화면은 아무 변화 없이 다시 그려진다 —
                 # 사용자는 자기가 뭘 잘못 눌렀는지 알 길이 없다.
